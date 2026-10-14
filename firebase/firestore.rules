@@ -65,6 +65,21 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Menü herkese açıktır (müşteri uygulaması giriş yapmadan da menüyü görür).
+    // Yazma yalnızca fonksiyonlardan: saveProduct, bulkUpdatePrices, syncOps(setSoldOut)…
+    match /categories/{id} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /products/{id} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /optionGroups/{id} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     match /auditLogs/{logId} {
       allow read: if isManagerPlus();
       allow write: if false;

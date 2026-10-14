@@ -29,6 +29,12 @@ const {
   nextTerminalLetter,
   normalizePhone,
   validateOpsBatch,
+  MenuError,
+  validateCategory,
+  validateProduct,
+  validateOptionGroup,
+  validatePriceRule,
+  applyPriceRule,
 } = require('./src/lib');
 
 initializeApp();
@@ -455,6 +461,43 @@ exports.savePermissions = onCall(async (request) => {
 // Desteklenmeyen işlemler "unsupported" döner ve terminalde kuyrukta kalır; böylece
 // sunucu güncellendiğinde kaybolmadan işlenir.
 const OP_HANDLERS = {
+  // Ürünü ya da tek bir seçeneği "tükendi" işaretler (2. ekran). Servis sırasında
+  // internet olmasa da terminalde yapılabilsin diye kuyruktan gelir.
+  // payload: { productId, soldOut } ya da { optionGroupId, optionId, soldOut }
+  async setSoldOut(tx, { op, terminalId, staff, matrix }) {
+    if (!staff) return { status: 'rejected', error: 'Personel bulunamadı.' };
+    if (!hasPermission(matrix, staff.role, 'markSoldOut', staff.permissions)) {
+      return { status: 'rejected', error: 'Tükendi işaretleme yetkisi yok.' };
+    }
+    const p = op.payload;
+    if (typeof p.soldOut !== 'boolean') return { status: 'rejected', error: 'soldOut true/false olmalıdır.' };
+    const stamp = { updatedAt: FieldValue.serverTimestamp() };
+    if (typeof p.productId === 'string' && p.productId) {
+      const ref = db.doc(`products/${p.productId}`);
+      const snap = await tx.get(ref);
+      if (!snap.exists) return { status: 'rejected', error: 'Ürün bulunamadı.' };
+      tx.update(ref, { soldOut: p.soldOut, ...stamp });
+      audit(tx, { action: 'sold_out', actor: op.staffId, target: `products/${p.productId}`,
+        after: { soldOut: p.soldOut }, terminalId, clientAt: parseClientTime(op.createdAt) });
+      return { status: 'ok' };
+    }
+    if (typeof p.optionGroupId === 'string' && typeof p.optionId === 'string') {
+      const ref = db.doc(`optionGroups/${p.optionGroupId}`);
+      const snap = await tx.get(ref);
+      if (!snap.exists) return { status: 'rejected', error: 'Seçenek grubu bulunamadı.' };
+      const options = snap.data().options || [];
+      if (!options.some((o) => o.id === p.optionId)) return { status: 'rejected', error: 'Seçenek bulunamadı.' };
+      tx.update(ref, {
+        options: options.map((o) => (o.id === p.optionId ? { ...o, soldOut: p.soldOut } : o)),
+        ...stamp,
+      });
+      audit(tx, { action: 'sold_out', actor: op.staffId, target: `optionGroups/${p.optionGroupId}/${p.optionId}`,
+        after: { soldOut: p.soldOut }, terminalId, clientAt: parseClientTime(op.createdAt) });
+      return { status: 'ok' };
+    }
+    return { status: 'rejected', error: 'Ürün ya da seçenek belirtilmedi.' };
+  },
+
   // Personelin PIN ile girişi. payload: { method: 'pin' }
   async staffLogin(tx, { op, staff, staffRef }) {
     if (!staff) return { status: 'rejected', error: 'Personel bulunamadı.' };
@@ -498,6 +541,7 @@ exports.syncOps = onCall(async (request) => {
     throw new HttpsError('invalid-argument', 'İşlem paketi geçersiz.');
   }
 
+  const matrix = await loadPermissionMatrix();
   const results = [];
   for (const op of ops) {
     const handler = OP_HANDLERS[op.op];
@@ -511,7 +555,7 @@ exports.syncOps = onCall(async (request) => {
       const [processed, staffSnap] = await Promise.all([tx.get(processedRef), tx.get(staffRef)]);
       if (processed.exists) return { status: 'duplicate' };
       const staff = staffSnap.exists ? staffSnap.data() : null;
-      const outcome = await handler(tx, { op, terminalId, staff, staffRef });
+      const outcome = await handler(tx, { op, terminalId, staff, staffRef, matrix });
       tx.set(processedRef, {
         op: op.op,
         terminalId,
@@ -529,4 +573,294 @@ exports.syncOps = onCall(async (request) => {
     updatedAt: FieldValue.serverTimestamp(),
   });
   return { results };
+});
+
+// ---------------------------------------------------------------------------
+// Menü (2. ekran)
+//
+// Menü düzenleme internet ister ve yalnızca editMenu yetkisiyle yapılır. Silme
+// fiziksel değildir (deleted: true); terminaller delta senkronla silineni de görür ve
+// eski adisyonlar bozulmaz. Yeni kayıtların sırası (order) oluşturulma zamanıdır; böylece
+// listenin sonuna düşer, reorderMenu ile 0..n olarak yeniden numaralanır.
+// ---------------------------------------------------------------------------
+
+function validated(fn, input) {
+  try {
+    return fn(input);
+  } catch (e) {
+    if (e instanceof MenuError) throw new HttpsError('invalid-argument', e.message);
+    throw e;
+  }
+}
+
+async function requireLive(ref, label) {
+  const snap = await ref.get();
+  if (!snap.exists || snap.data().deleted === true) {
+    throw new HttpsError('not-found', `${label} bulunamadı.`);
+  }
+  return snap;
+}
+
+async function liveProductsWhere(field, op, value) {
+  const snap = await db.collection('products').where(field, op, value).get();
+  return snap.docs.filter((d) => d.data().deleted !== true);
+}
+
+exports.saveCategory = onCall(async (request) => {
+  const actor = await requireStaff(request, 'editMenu');
+  const data = validated(validateCategory, request.data);
+  const id = request.data?.id;
+  const ref = id ? db.doc(`categories/${requireString(id, 'Kategori', { max: 128 })}`) : db.collection('categories').doc();
+  const before = id ? (await requireLive(ref, 'Kategori')).data() : null;
+  await db.runTransaction(async (tx) => {
+    if (before) {
+      tx.update(ref, { ...data, updatedAt: FieldValue.serverTimestamp() });
+    } else {
+      tx.set(ref, {
+        ...data,
+        order: Date.now(),
+        deleted: false,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+    audit(tx, { action: before ? 'category_update' : 'category_create', actor: actor.uid,
+      target: `categories/${ref.id}`, before: before ? { name: before.name } : null, after: { name: data.name } });
+  });
+  return { id: ref.id };
+});
+
+exports.deleteCategory = onCall(async (request) => {
+  const actor = await requireStaff(request, 'editMenu');
+  const ref = db.doc(`categories/${requireString(request.data?.id, 'Kategori', { max: 128 })}`);
+  const snap = await requireLive(ref, 'Kategori');
+  const products = await liveProductsWhere('categoryId', '==', ref.id);
+  if (products.length) {
+    throw new HttpsError('failed-precondition',
+      `Bu kategoride ${products.length} ürün var. Önce ürünleri başka kategoriye taşıyın ya da silin.`);
+  }
+  await db.runTransaction(async (tx) => {
+    tx.update(ref, { deleted: true, updatedAt: FieldValue.serverTimestamp() });
+    audit(tx, { action: 'category_delete', actor: actor.uid, target: `categories/${ref.id}`,
+      before: { name: snap.data().name } });
+  });
+  return { id: ref.id };
+});
+
+exports.saveProduct = onCall(async (request) => {
+  const actor = await requireStaff(request, 'editMenu');
+  const data = validated(validateProduct, request.data);
+  await requireLive(db.doc(`categories/${data.categoryId}`), 'Kategori');
+  if (data.optionGroupIds.length) {
+    const groups = await db.getAll(...data.optionGroupIds.map((g) => db.doc(`optionGroups/${g}`)));
+    if (groups.some((g) => !g.exists || g.data().deleted === true)) {
+      throw new HttpsError('not-found', 'Seçilen seçenek gruplarından biri bulunamadı.');
+    }
+  }
+  const id = request.data?.id;
+  const ref = id ? db.doc(`products/${requireString(id, 'Ürün', { max: 128 })}`) : db.collection('products').doc();
+  const before = id ? (await requireLive(ref, 'Ürün')).data() : null;
+  await db.runTransaction(async (tx) => {
+    if (before) {
+      tx.update(ref, { ...data, updatedAt: FieldValue.serverTimestamp() });
+    } else {
+      tx.set(ref, {
+        ...data,
+        soldOut: false,
+        deleted: false,
+        order: Date.now(),
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+    if (before && before.price !== data.price) {
+      audit(tx, { action: 'price_change', actor: actor.uid, target: `products/${ref.id}`,
+        before: { name: before.name, price: before.price }, after: { name: data.name, price: data.price } });
+    } else {
+      audit(tx, { action: before ? 'product_update' : 'product_create', actor: actor.uid,
+        target: `products/${ref.id}`, after: { name: data.name, price: data.price } });
+    }
+  });
+  return { id: ref.id };
+});
+
+exports.deleteProduct = onCall(async (request) => {
+  const actor = await requireStaff(request, 'editMenu');
+  const ref = db.doc(`products/${requireString(request.data?.id, 'Ürün', { max: 128 })}`);
+  const snap = await requireLive(ref, 'Ürün');
+  await db.runTransaction(async (tx) => {
+    tx.update(ref, { deleted: true, active: false, updatedAt: FieldValue.serverTimestamp() });
+    audit(tx, { action: 'product_delete', actor: actor.uid, target: `products/${ref.id}`,
+      before: { name: snap.data().name, price: snap.data().price } });
+  });
+  return { id: ref.id };
+});
+
+exports.saveOptionGroup = onCall(async (request) => {
+  const actor = await requireStaff(request, 'editMenu');
+  const data = validated(validateOptionGroup, request.data);
+  const id = request.data?.id;
+  const ref = id ? db.doc(`optionGroups/${requireString(id, 'Seçenek grubu', { max: 128 })}`) : db.collection('optionGroups').doc();
+  const before = id ? (await requireLive(ref, 'Seçenek grubu')).data() : null;
+  await db.runTransaction(async (tx) => {
+    if (before) {
+      tx.update(ref, { ...data, updatedAt: FieldValue.serverTimestamp() });
+    } else {
+      tx.set(ref, {
+        ...data,
+        order: Date.now(),
+        deleted: false,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+    audit(tx, { action: before ? 'option_group_update' : 'option_group_create', actor: actor.uid,
+      target: `optionGroups/${ref.id}`, after: { name: data.name, options: data.options.length } });
+  });
+  return { id: ref.id };
+});
+
+exports.deleteOptionGroup = onCall(async (request) => {
+  const actor = await requireStaff(request, 'editMenu');
+  const ref = db.doc(`optionGroups/${requireString(request.data?.id, 'Seçenek grubu', { max: 128 })}`);
+  const snap = await requireLive(ref, 'Seçenek grubu');
+  const products = await liveProductsWhere('optionGroupIds', 'array-contains', ref.id);
+  if (products.length) {
+    throw new HttpsError('failed-precondition',
+      `Bu grup ${products.length} üründe kullanılıyor (${products.slice(0, 3).map((p) => p.data().name).join(', ')}…). ` +
+      'Önce ürünlerden kaldırın.');
+  }
+  await db.runTransaction(async (tx) => {
+    tx.update(ref, { deleted: true, updatedAt: FieldValue.serverTimestamp() });
+    audit(tx, { action: 'option_group_delete', actor: actor.uid, target: `optionGroups/${ref.id}`,
+      before: { name: snap.data().name } });
+  });
+  return { id: ref.id };
+});
+
+const ORDERABLE = ['categories', 'products', 'optionGroups'];
+
+exports.reorderMenu = onCall(async (request) => {
+  await requireStaff(request, 'editMenu');
+  const { kind, ids } = request.data || {};
+  if (!ORDERABLE.includes(kind)) throw new HttpsError('invalid-argument', 'Geçersiz liste türü.');
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > 400 || ids.some((x) => typeof x !== 'string' || !x)) {
+    throw new HttpsError('invalid-argument', 'Sıralama listesi geçersiz.');
+  }
+  const refs = ids.map((x) => db.doc(`${kind}/${x}`));
+  const snaps = await db.getAll(...refs);
+  const batch = db.batch();
+  snaps.forEach((snap, i) => {
+    if (snap.exists) batch.update(snap.ref, { order: i, updatedAt: FieldValue.serverTimestamp() });
+  });
+  await batch.commit();
+  return { count: snaps.filter((s) => s.exists).length };
+});
+
+// Toplu fiyat güncelleme. dryRun: true ise yalnızca önizleme döner, hiçbir şey yazılmaz.
+// Seçenek fiyat farkları yalnızca yüzde kuralında ve pozitif farklarda güncellenir.
+exports.bulkUpdatePrices = onCall(async (request) => {
+  const actor = await requireStaff(request, 'editMenu');
+  const d = request.data || {};
+  const rule = validated(validatePriceRule, d.rule);
+  if (!Array.isArray(d.categoryIds) || d.categoryIds.length < 1 || d.categoryIds.length > 30 ||
+      d.categoryIds.some((x) => typeof x !== 'string' || !x)) {
+    throw new HttpsError('invalid-argument', 'En az bir kategori seçin (en fazla 30).');
+  }
+  const products = await liveProductsWhere('categoryId', 'in', d.categoryIds);
+  const productChanges = products
+    .map((p) => ({ id: p.id, name: p.data().name, before: p.data().price, after: applyPriceRule(p.data().price, rule) }))
+    .filter((c) => c.after !== c.before)
+    .sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+
+  const optionChanges = [];
+  const groupUpdates = new Map();
+  if (d.includeOptions === true && rule.mode === 'percent') {
+    const groupIds = [...new Set(products.flatMap((p) => p.data().optionGroupIds || []))];
+    const groups = groupIds.length ? await db.getAll(...groupIds.map((g) => db.doc(`optionGroups/${g}`))) : [];
+    for (const g of groups) {
+      if (!g.exists || g.data().deleted === true) continue;
+      let changed = false;
+      const options = (g.data().options || []).map((o) => {
+        if (!(o.priceDelta > 0)) return o;
+        const after = applyPriceRule(o.priceDelta, rule);
+        if (after === o.priceDelta) return o;
+        changed = true;
+        optionChanges.push({ groupId: g.id, optionId: o.id, name: `${g.data().name} · ${o.name}`, before: o.priceDelta, after });
+        return { ...o, priceDelta: after };
+      });
+      if (changed) groupUpdates.set(g.id, options);
+    }
+  }
+
+  const result = { products: productChanges, options: optionChanges, rule };
+  if (d.dryRun === true) return result;
+  if (productChanges.length + groupUpdates.size === 0) return result;
+  if (productChanges.length + groupUpdates.size > 450) {
+    throw new HttpsError('resource-exhausted', 'Tek seferde en fazla 450 kayıt güncellenebilir; kategorileri bölün.');
+  }
+
+  const batch = db.batch();
+  for (const c of productChanges) {
+    batch.update(db.doc(`products/${c.id}`), { price: c.after, updatedAt: FieldValue.serverTimestamp() });
+  }
+  for (const [groupId, options] of groupUpdates) {
+    batch.update(db.doc(`optionGroups/${groupId}`), { options, updatedAt: FieldValue.serverTimestamp() });
+  }
+  batch.set(db.collection('auditLogs').doc(), {
+    action: 'bulk_price_update',
+    actor: actor.uid,
+    target: 'products',
+    rule,
+    categoryIds: d.categoryIds,
+    count: productChanges.length,
+    changes: productChanges.slice(0, 200),
+    optionChanges: optionChanges.slice(0, 100),
+    at: FieldValue.serverTimestamp(),
+  });
+  await batch.commit();
+  return result;
+});
+
+// Terminaldeki eski (yerel) menünün buluta tek seferlik aktarımı. Bulutta menü varsa reddedilir.
+// payload: { categories: [{ localId, name, color, station, stampEligible }],
+//            products:   [{ localId, localCategoryId, name, price }] }
+exports.importMenu = onCall(async (request) => {
+  const actor = await requireStaff(request, 'editMenu');
+  const d = request.data || {};
+  if (!Array.isArray(d.categories) || !Array.isArray(d.products) || d.categories.length < 1 ||
+      d.categories.length > 50 || d.products.length > 400) {
+    throw new HttpsError('invalid-argument', 'Aktarılacak menü geçersiz.');
+  }
+  const existing = await db.collection('categories').where('deleted', '==', false).limit(1).get();
+  if (!existing.empty) {
+    throw new HttpsError('failed-precondition', 'Bulutta zaten bir menü var; aktarım yalnızca boş menüye yapılabilir.');
+  }
+  const batch = db.batch();
+  const categoryIds = {};
+  const productIds = {};
+  const now = Date.now();
+  d.categories.forEach((c, i) => {
+    const data = validated(validateCategory, c);
+    const ref = db.collection('categories').doc();
+    categoryIds[String(c.localId)] = ref.id;
+    batch.set(ref, { ...data, order: i, deleted: false, createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp() });
+  });
+  d.products.forEach((p, i) => {
+    const categoryId = categoryIds[String(p.localCategoryId)];
+    if (!categoryId) throw new HttpsError('invalid-argument', `"${p.name}" ürününün kategorisi listede yok.`);
+    const data = validated(validateProduct, { categoryId, name: p.name, price: p.price });
+    const ref = db.collection('products').doc();
+    productIds[String(p.localId)] = ref.id;
+    batch.set(ref, { ...data, soldOut: false, deleted: false, order: now + i,
+      createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
+  });
+  batch.set(db.collection('auditLogs').doc(), {
+    action: 'menu_import', actor: actor.uid, target: 'menu',
+    after: { categories: d.categories.length, products: d.products.length },
+    at: FieldValue.serverTimestamp(),
+  });
+  await batch.commit();
+  return { categories: categoryIds, products: productIds };
 });

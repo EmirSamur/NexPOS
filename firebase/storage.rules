@@ -1,0 +1,20 @@
+rules_version = '2';
+
+// Ürün fotoğrafları: herkes görür (müşteri uygulaması), yalnızca panele e-postayla giren
+// yönetici/müdür yükler. NexPOS fotoğrafı yüklemeden önce 800 px'e küçültür.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /products/{productId}/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.auth.token.get('role', '') in ['owner', 'manager']
+        && request.resource.size < 2 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow delete: if request.auth != null
+        && request.auth.token.get('role', '') in ['owner', 'manager'];
+    }
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

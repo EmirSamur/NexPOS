@@ -19,6 +19,7 @@ const PERMISSIONS = [
   'settings', // Sistem ayarları
   'viewReports', // Raporlar
   'manageUsers', // Kullanıcı tanımlama
+  'markSoldOut', // Ürünü "tükendi" işaretleme (internetsiz de çalışır)
 ];
 
 function allPermissions(value) {
@@ -31,11 +32,18 @@ const DEFAULT_PERMISSIONS = {
     ...allPermissions(true),
     settings: false,
   },
-  cashier: { ...allPermissions(false), openTable: true, discount: true, cash: true, expense: true },
+  cashier: {
+    ...allPermissions(false),
+    openTable: true,
+    discount: true,
+    cash: true,
+    expense: true,
+    markSoldOut: true,
+  },
   waiter: { ...allPermissions(false), openTable: true },
   courier: { ...allPermissions(false), openTable: true },
-  barista: allPermissions(false),
-  kitchen: allPermissions(false),
+  barista: { ...allPermissions(false), markSoldOut: true },
+  kitchen: { ...allPermissions(false), markSoldOut: true },
 };
 
 // İstemciden gelen matrisi temizler: bilinmeyen rol/yetki atılır, eksikler varsayılandan
@@ -152,7 +160,189 @@ function validateOpsBatch(ops) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Menü doğrulama (2. ekran)
+// Para her zaman kuruş cinsinden tam sayıdır: 9500 = 95,00 ₺.
+// Doğrulama hatası MenuError fırlatır; fonksiyonlar bunu invalid-argument'a çevirir.
+// ---------------------------------------------------------------------------
+
+class MenuError extends Error {}
+
+const MAX_PRICE = 10_000_000; // 100.000 ₺
+const TAX_RATES = [0, 1, 10, 20];
+const STATIONS = ['bar', 'kitchen'];
+const ALLERGENS = ['milk', 'gluten', 'nuts', 'soy', 'egg'];
+const ROUNDING_STEPS = [0, 100, 500, 1000]; // yok, 1 ₺, 5 ₺, 10 ₺
+
+function text(value, field, { min = 1, max = 80, optional = false } = {}) {
+  if ((value === undefined || value === null || value === '') && optional) return '';
+  if (typeof value !== 'string') throw new MenuError(`${field} geçersiz.`);
+  const t = value.trim();
+  if (t.length < min || t.length > max) throw new MenuError(`${field} ${min}-${max} karakter olmalıdır.`);
+  return t;
+}
+
+function kurus(value, field, { min = 0, max = MAX_PRICE } = {}) {
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new MenuError(`${field} kuruş cinsinden ${min}-${max} arası tam sayı olmalıdır.`);
+  }
+  return value;
+}
+
+function bool(value, fallback) {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function optionalInt(value, field, max) {
+  if (value === undefined || value === null || value === '') return null;
+  if (!Number.isInteger(value) || value < 0 || value > max) throw new MenuError(`${field} geçersiz.`);
+  return value;
+}
+
+function stringList(value, field, { maxItems = 10, maxLen = 24 } = {}) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > maxItems) throw new MenuError(`${field} en fazla ${maxItems} öğe olabilir.`);
+  const out = [];
+  for (const v of value) {
+    const t = text(v, field, { max: maxLen });
+    if (!out.includes(t)) out.push(t);
+  }
+  return out;
+}
+
+function validateCategory(input) {
+  const d = input || {};
+  const station = d.station ?? 'bar';
+  if (!STATIONS.includes(station)) throw new MenuError('İstasyon bar ya da mutfak olmalıdır.');
+  const color = d.color ?? '#6C5CE7';
+  if (typeof color !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(color)) throw new MenuError('Renk #RRGGBB biçiminde olmalıdır.');
+  return {
+    name: text(d.name, 'Kategori adı', { max: 40 }),
+    station,
+    color,
+    visibleInApp: bool(d.visibleInApp, true),
+    stampEligible: bool(d.stampEligible, false),
+  };
+}
+
+function validateFlavor(f) {
+  if (f === undefined || f === null) return null;
+  if (typeof f !== 'object' || Array.isArray(f)) throw new MenuError('Tat profili geçersiz.');
+  const scale = (v, field) => {
+    if (!Number.isInteger(v) || v < 1 || v > 5) throw new MenuError(`${field} 1-5 arası olmalıdır.`);
+    return v;
+  };
+  if (!['hot', 'iced'].includes(f.temperature)) throw new MenuError('Sıcaklık sıcak ya da soğuk olmalıdır.');
+  return {
+    strength: scale(f.strength, 'Sertlik'),
+    sweetness: scale(f.sweetness, 'Tatlılık'),
+    acidity: scale(f.acidity, 'Asidite'),
+    body: scale(f.body, 'Gövde'),
+    milk: bool(f.milk, false),
+    temperature: f.temperature,
+    notes: stringList(f.notes, 'Tat notaları', { maxItems: 8 }),
+  };
+}
+
+function validateProduct(input) {
+  const d = input || {};
+  const taxRate = d.taxRate ?? 10;
+  if (!TAX_RATES.includes(taxRate)) throw new MenuError(`KDV oranı ${TAX_RATES.join(', ')} olabilir.`);
+  const allergens = d.allergens ?? [];
+  if (!Array.isArray(allergens) || allergens.some((a) => !ALLERGENS.includes(a))) {
+    throw new MenuError('Alerjen listesi geçersiz.');
+  }
+  const optionGroupIds = d.optionGroupIds ?? [];
+  if (!Array.isArray(optionGroupIds) || optionGroupIds.length > 10 || optionGroupIds.some((x) => typeof x !== 'string' || !x)) {
+    throw new MenuError('Seçenek grupları geçersiz.');
+  }
+  const imageUrl = d.imageUrl ?? null;
+  if (imageUrl !== null && (typeof imageUrl !== 'string' || !/^https?:\/\//.test(imageUrl) || imageUrl.length > 1000)) {
+    throw new MenuError('Fotoğraf adresi geçersiz.');
+  }
+  return {
+    categoryId: text(d.categoryId, 'Kategori', { max: 128 }),
+    name: text(d.name, 'Ürün adı', { max: 60 }),
+    description: text(d.description, 'Açıklama', { max: 300, optional: true }),
+    price: kurus(d.price, 'Fiyat'),
+    taxRate,
+    imageUrl,
+    tags: stringList(d.tags, 'Etiketler'),
+    active: bool(d.active, true),
+    visibleInApp: bool(d.visibleInApp, true),
+    // null: kategoriden gelir
+    stampEligible: typeof d.stampEligible === 'boolean' ? d.stampEligible : null,
+    optionGroupIds: [...new Set(optionGroupIds)],
+    allergens: [...new Set(allergens)],
+    calories: optionalInt(d.calories, 'Kalori', 5000),
+    caffeineMg: optionalInt(d.caffeineMg, 'Kafein', 1000),
+    flavor: validateFlavor(d.flavor),
+  };
+}
+
+function validateOptionGroup(input) {
+  const d = input || {};
+  const selection = d.selection ?? 'single';
+  if (!['single', 'multi'].includes(selection)) throw new MenuError('Seçim türü tek ya da çoklu olmalıdır.');
+  if (!Array.isArray(d.options) || d.options.length < 1 || d.options.length > 30) {
+    throw new MenuError('Grupta 1-30 seçenek olmalıdır.');
+  }
+  const ids = new Set();
+  const options = d.options.map((o) => {
+    const id = text(o?.id, 'Seçenek kimliği', { max: 40 });
+    if (!/^[A-Za-z0-9_-]+$/.test(id) || ids.has(id)) throw new MenuError('Seçenek kimlikleri benzersiz olmalıdır.');
+    ids.add(id);
+    if (!Number.isInteger(o.priceDelta) || Math.abs(o.priceDelta) > MAX_PRICE) {
+      throw new MenuError('Seçenek fiyat farkı kuruş cinsinden tam sayı olmalıdır.');
+    }
+    return {
+      id,
+      name: text(o.name, 'Seçenek adı', { max: 40 }),
+      priceDelta: o.priceDelta,
+      active: bool(o.active, true),
+      soldOut: bool(o.soldOut, false),
+    };
+  });
+  const required = bool(d.required, false);
+  let min = Number.isInteger(d.min) ? d.min : required ? 1 : 0;
+  let max = Number.isInteger(d.max) ? d.max : selection === 'single' ? 1 : options.length;
+  if (selection === 'single') max = 1;
+  if (required && min < 1) min = 1;
+  if (min < 0 || max < 1 || min > max || max > options.length) throw new MenuError('En az / en çok değerleri tutarsız.');
+  return { name: text(d.name, 'Grup adı', { max: 40 }), selection, required, min, max, options };
+}
+
+// Toplu fiyat kuralı: { mode: 'percent' | 'amount', value, rounding }
+// percent: value yüzde (12 = %12, -10 = %10 indirim); amount: kuruş (+500 = +5 ₺).
+// rounding: kuruş adımı; sonuç bu adıma YUKARI yuvarlanır (0 = yuvarlama yok).
+function validatePriceRule(rule) {
+  const r = rule || {};
+  if (!['percent', 'amount'].includes(r.mode)) throw new MenuError('Değişim türü yüzde ya da tutar olmalıdır.');
+  if (typeof r.value !== 'number' || !Number.isFinite(r.value)) throw new MenuError('Değişim değeri geçersiz.');
+  if (r.mode === 'percent' && (r.value < -90 || r.value > 500)) throw new MenuError('Yüzde -90 ile 500 arasında olmalıdır.');
+  if (r.mode === 'amount' && (!Number.isInteger(r.value) || Math.abs(r.value) > MAX_PRICE)) {
+    throw new MenuError('Tutar kuruş cinsinden tam sayı olmalıdır.');
+  }
+  const rounding = r.rounding ?? 0;
+  if (!ROUNDING_STEPS.includes(rounding)) throw new MenuError('Yuvarlama adımı geçersiz.');
+  return { mode: r.mode, value: r.value, rounding };
+}
+
+function applyPriceRule(price, rule) {
+  let next = rule.mode === 'percent' ? Math.round(price * (1 + rule.value / 100)) : price + rule.value;
+  if (rule.rounding) next = Math.ceil(next / rule.rounding) * rule.rounding;
+  return Math.min(Math.max(next, 0), MAX_PRICE);
+}
+
 module.exports = {
+  MenuError,
+  ALLERGENS,
+  ROUNDING_STEPS,
+  validateCategory,
+  validateProduct,
+  validateOptionGroup,
+  validatePriceRule,
+  applyPriceRule,
   ROLES,
   PERMISSIONS,
   DEFAULT_PERMISSIONS,

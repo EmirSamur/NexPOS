@@ -3,7 +3,7 @@
   "private": true,
   "description": "Firestore kuralları ve Cloud Functions için emülatör testleri",
   "scripts": {
-    "test": "firebase emulators:exec --project demo-nexpos --only auth,firestore,functions \"node --test --test-concurrency=1 *.test.js\""
+    "test": "firebase emulators:exec --project demo-nexpos --only auth,firestore,functions,storage \"node --test --test-concurrency=1 *.test.js\""
   },
   "devDependencies": {
     "firebase": "^12.8.0",
