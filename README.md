@@ -2,7 +2,7 @@
 
 # NexPOS — Kafe & Restoran Yönetim Sistemi
 
-**Python · PySide6 · SQLite · OOP**
+**Python · PySide6 · SQLite · Firebase · OOP**
 
 Kafe ve restoran işletmelerinin masa takibi, sipariş yönetimi, finansal raporlama ve personel yetkilendirme süreçlerini tek bir merkezden yöneten masaüstü otomasyon yazılımı.
 
@@ -17,7 +17,7 @@ Kafe ve restoran işletmelerinin masa takibi, sipariş yönetimi, finansal rapor
 - [Dosya Yapısı](#dosya-yapısı)
 - [Kurulum](#kurulum)
 - [Kullanım](#kullanım)
-- [Demo Hesaplar](#demo-hesaplar)
+- [İlk Kurulum ve Giriş](#i̇lk-kurulum-ve-giriş)
 - [Proje Ekibi](#proje-ekibi)
 
 ---
@@ -46,9 +46,17 @@ Kafe ve restoran işletmelerinin masa takibi, sipariş yönetimi, finansal rapor
 - CSV dışa aktarma
 - Ctrl+B ile tek tıkla veritabanı yedekleme
 
+### Bulut ve Güvenlik (v4)
+- Veriler Firebase'de; kafedeki bilgisayar bir **terminal** olarak bağlanır ([KURULUM.md](KURULUM.md))
+- **İnternetsiz çalışma:** işlemler yerel kuyruğa yazılır, internet gelince otomatik gönderilir
+- **PIN ile giriş:** personel kartına dokun + 6 haneli PIN; 5 hatalı denemede kart kilitlenir
+- **Yetkili onayı:** yetkisiz işlemde (iskonto, iptal) müdür PIN'i istenir, kayıt altına alınır
+- **Gerçek yetki matrisi:** buluta kaydedilir, hem ekranlarda hem sunucuda uygulanır
+- Hareketsizlikte otomatik ekran kilidi, panelden terminal iptali
+
 ### Teknik
 - Rol tabanlı erişim kontrolü (RBAC) — her kullanıcı yalnızca kendi panelini görür
-- SHA-256 şifre doğrulama
+- PIN'ler sunucuda scrypt ile özetlenir; şifreler Firebase Authentication'da tutulur
 - QTimer ile 30 saniyelik otomatik masa doluluk güncelleme
 - Global crash handler — beklenmedik hatalar `crash_log.txt`'e yazılır
 - Tüm veritabanı işlemleri Foreign Key kısıtlı, cascade-safe
@@ -61,7 +69,8 @@ Kafe ve restoran işletmelerinin masa takibi, sipariş yönetimi, finansal rapor
 |---|---|
 | Programlama Dili | Python 3.10+ |
 | GUI Framework | PySide6 (Qt for Python) |
-| Veritabanı | SQLite 3 |
+| Bulut | Firebase (Firestore, Authentication, Cloud Functions) |
+| Yerel veritabanı | SQLite 3 (önbellek + çevrimdışı işlem kuyruğu) |
 | Mimari | Nesne Yönelimli Programlama (OOP) |
 | Stil | QSS (Qt Style Sheets) |
 
@@ -71,9 +80,17 @@ Kafe ve restoran işletmelerinin masa takibi, sipariş yönetimi, finansal rapor
 
 ```
 nexpos/
-├── main.py            # Uygulama giriş noktası — QMainWindow, login → panel yönlendirme
-├── database.py        # Tüm veritabanı işlemleri (CRUD, kimlik doğrulama, raporlama)
-├── login_screen.py    # Giriş ekranı ve kullanıcı doğrulama
+├── main.py            # Uygulama giriş noktası — eşleme → giriş → panel, senkron, otomatik kilit
+├── database.py        # Yerel veritabanı: CRUD, PIN girişi, bulut önbelleği, işlem kuyruğu
+├── login_screen.py    # Personel kartları + PIN ile giriş, yönetici e-posta girişi
+├── pairing_screen.py  # İlk kurulum: bilgisayarı kafeye (Firebase) bağlama
+├── auth_widgets.py    # PIN tuş takımı, personel kartı, senkron durum etiketi
+├── access.py          # Yetkili onayı ve panel işlemleri için yönetici oturumu
+├── admin_access_pages.py  # Kullanıcılar, Yetki Matrisi, Terminaller sayfaları
+├── cloud/             # Firebase REST istemcisi, senkron motoru, terminal eşleme
+├── firebase/          # Firestore kuralları, Cloud Functions ve emülatör testleri
+├── docs/              # Mimari ve veri modeli
+├── tests/             # pytest testleri
 ├── admin_panel.py     # Yönetici paneli (dashboard, ürün, masa, kullanıcı, raporlar)
 ├── user_panel.py      # Garson paneli (masa seçimi, sipariş, pano, ödeme)
 ├── widgets.py         # Özel UI bileşenleri (TableCard, OrderCard, StatCard, ToastNotification)
@@ -130,15 +147,15 @@ Bu yöntemde de `nexpos.db` veritabanı mevcutsa kullanılır; silinmişse veya 
 
 ## Kullanım
 
-Uygulama başlatıldığında giriş ekranı açılır. Kullanıcı adı (e-posta veya telefon) ve şifre girilerek sisteme giriş yapılır. Giriş başarılı olduğunda kullanıcı rolüne göre otomatik yönlendirme gerçekleşir:
+Uygulama başlatıldığında personel kartları görünür. Kişi kartına dokunup 6 haneli PIN'ini girer; rolüne göre yönlendirilir:
 
-- **Yönetici** girişi → Admin Paneli
-- **Garson** girişi → Garson Paneli
+- **Yönetici / Müdür** → Admin Paneli (oradan "Sipariş (Garson Ekranı)" ile garson paneline geçebilir)
+- **Kasa / Garson / Kurye / Barista / Mutfak** → Garson Paneli
 
 ### Temel İş Akışı (Garson)
 
 ```
-Giriş → Bölgeler → Masa Seç → Sipariş Oluştur → Mutfağa Gönder → Ödeme Al → Masa Kapandı
+Kartına dokun + PIN → Bölgeler → Masa Seç → Sipariş Oluştur → Mutfağa Gönder → Ödeme Al → Masa Kapandı
 ```
 
 ### Temel İş Akışı (Yönetici)
@@ -149,17 +166,14 @@ Giriş → Dashboard → Tanımlamalar (Masa / Menü) → Raporlar → Kullanıc
 
 ---
 
-## Demo Hesaplar
+## İlk Kurulum ve Giriş
 
-Veritabanı oluşturulduğunda aşağıdaki test hesapları hazır gelir:
+Demo e-posta/şifre hesapları kaldırıldı. Kurulum adımları [KURULUM.md](KURULUM.md) dosyasındadır:
 
-| Rol | E-posta | Şifre |
-|---|---|---|
-| Yönetici | admin@nexpos.com | admin123 |
-| Garson | cem@nexpos.com | garson123 |
-| Garson | elif@nexpos.com | garson123 |
-
-> Üretim ortamında bu şifrelerin değiştirilmesi önerilir.
+1. Firebase projesi açılır, kurallar ve fonksiyonlar yayınlanır.
+2. `createOwner.js` ile ilk yönetici oluşturulur.
+3. NexPOS ilk açılışta yönetici hesabıyla kafeye bağlanır.
+4. Personel panelden eklenir; herkes kendi kartı ve PIN'i ile giriş yapar.
 
 ---
 

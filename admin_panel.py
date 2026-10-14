@@ -14,10 +14,27 @@ from PySide6.QtGui import QFont, QColor, QDoubleValidator, QRegularExpressionVal
 from styles import COLORS, FONTS, ICONS
 from widgets import (StatCard, TableCard, ProductCard, SidebarButton,
                      ExpandableSection, PageHeader, BarChart, DonutChart, InfoDialog, add_shadow, ToastNotification)
+from admin_access_pages import StaffPage, PermissionsPage, TerminalsPage
+from cloud.permissions import PANEL_ROLES
 import database
+
+# Sayfa → görmek için gereken yetki (None: herkes). Sıra, self.pages sırasıyla aynıdır.
+PAGE_PERMISSIONS = [
+    'viewReports',   # 0 Dashboard
+    'editMenu',      # 1 Masa / Bölgeler
+    'editMenu',      # 2 Menü / Ürünler
+    'expense',       # 3 Gider
+    'expense',       # 4 Zayi
+    'viewReports',   # 5 İstatistikler
+    'manageUsers',   # 6 Kullanıcılar
+    'manageUsers',   # 7 Yetkiler
+    'settings',      # 8 Ayarlar
+    'settings',      # 9 Terminaller
+]
 
 class AdminPanel(QWidget):
     logout_signal = Signal()
+    open_pos_signal = Signal()
 
     def __init__(self, user_data, parent=None):
         super().__init__(parent)
@@ -49,13 +66,30 @@ class AdminPanel(QWidget):
         self.pages.addWidget(self._create_kullanicilar_page())  # 6
         self.pages.addWidget(self._create_yetkiler_page())      # 7
         self.pages.addWidget(self._create_settings_page())      # 8
+        self.terminals_page = TerminalsPage(self.user)
+        self.pages.addWidget(self.terminals_page)               # 9
         content_w.addWidget(self.pages, 1)
 
         cf = QFrame()
         cf.setLayout(content_w)
         cf.setStyleSheet(f"background-color: {COLORS['bg_main']};")
         main.addWidget(cf, 1)
-        self._show_page(0)
+        self._apply_permissions()
+
+    def _can_see(self, idx):
+        perm = PAGE_PERMISSIONS[idx] if idx < len(PAGE_PERMISSIONS) else None
+        return perm is None or database.user_can(self.user, perm)
+
+    def _apply_permissions(self):
+        """Yetkisi olmayan sayfaların menü düğmelerini gizler, ilk görünür sayfayı açar."""
+        for idx, btn in enumerate(self.sidebar_buttons):
+            btn.setVisible(self._can_see(idx))
+        first = next((i for i in range(self.pages.count()) if self._can_see(i)), None)
+        if first is None:
+            self.pages.setCurrentIndex(0)
+            self.pages.currentWidget().setEnabled(False)
+        else:
+            self._show_page(first)
 
     def _create_sidebar(self):
         sidebar = QFrame()
@@ -142,8 +176,8 @@ class AdminPanel(QWidget):
         self.sidebar_buttons.append(btn_menu)
         self.menu_layout.addWidget(tan)
 
-        btn_siparis = SidebarButton("Sipariş", ICONS['menu_food'])
-        btn_siparis.clicked.connect(lambda: QMessageBox.information(self, "Bilgi", "Mevcut sipariş ekranı 'Kullanıcı (Garson) Paneli' üzerinden erişilebilmektedir."))
+        btn_siparis = SidebarButton("Sipariş (Garson Ekranı)", ICONS['menu_food'])
+        btn_siparis.clicked.connect(self.open_pos_signal.emit)
         self.menu_layout.addWidget(btn_siparis)
 
         isl = ExpandableSection("İşlemler", ICONS['money'])
@@ -175,6 +209,11 @@ class AdminPanel(QWidget):
         self.sidebar_buttons.append(btn_ayar)
         self.menu_layout.addWidget(btn_ayar)
 
+        btn_term = SidebarButton("Terminaller", ICONS['table'])
+        btn_term.clicked.connect(lambda: self._show_page(9))
+        self.sidebar_buttons.append(btn_term)
+        self.menu_layout.addWidget(btn_term)
+
         self.menu_layout.addStretch()
 
         sep = QFrame()
@@ -183,7 +222,7 @@ class AdminPanel(QWidget):
         self.menu_layout.addWidget(sep)
 
         # Çıkış
-        logout = QPushButton(f"  {ICONS['logout']}   Çıkış Yap")
+        logout = QPushButton(f"  {ICONS['logout']}   Kullanıcı Değiştir")
         logout.setFixedHeight(50)
         logout.setCursor(Qt.PointingHandCursor)
         logout.setStyleSheet(f"""
@@ -259,7 +298,14 @@ class AdminPanel(QWidget):
         return bar
 
     def _show_page(self, idx):
+        if not self._can_see(idx):
+            return
         self.pages.setCurrentIndex(idx)
+        page = self.pages.widget(idx)
+        if hasattr(page, 'refresh_local'):
+            page.refresh_local()
+        elif hasattr(page, 'refresh'):
+            page.refresh()
         for b in self.sidebar_buttons:
             b.setChecked(False)
         if idx < len(self.sidebar_buttons):
@@ -267,7 +313,8 @@ class AdminPanel(QWidget):
         titles = ["Dashboard Analytics", "Tanımlamalar / Masa ve Bölgeler",
                    "Kategori ve Ürün Tanımlama / Şube Ürünleri",
                    "Gider/Masraf İşlemleri", "Zayi İşlemleri",
-                   "Restaurant İstatistikleri", "Kullanıcılar", "Yetki / İzin Ekranı", "Sistem Ayarları"]
+                   "Restaurant İstatistikleri", "Kullanıcılar", "Yetki / İzin Ekranı", "Sistem Ayarları",
+                   "Terminaller"]
         if idx < len(titles):
             self.page_title.setText(titles[idx])
 
@@ -1647,175 +1694,12 @@ class AdminPanel(QWidget):
             QMessageBox.critical(self, "Hata", f"CSV kaydedilemedi:\n{str(ex)}")
 
     def _create_kullanicilar_page(self):
-        page = QWidget()
-        ly = QVBoxLayout(page)
-        ly.setContentsMargins(32, 24, 32, 32)
-        ly.setSpacing(16)
-        hr = QHBoxLayout()
-        header = PageHeader("Kullanıcılar", "Sistem operatörleri ve erişim yönetimi.", COLORS['primary_dark'], ICONS['user'])
-        hr.addWidget(header, 1)
-        ab = QPushButton(f"{ICONS['plus']} Kullanıcı Ekle")
-        ab.setFixedHeight(44)
-        ab.setCursor(Qt.PointingHandCursor)
-        ab.setStyleSheet(f"""
-            QPushButton {{ background: {COLORS['primary']}; border: none; color: white;
-                font-size: 14px; font-weight: bold; border-radius: 8px; padding: 0 20px; }}
-            QPushButton:hover {{ background: {COLORS['primary_dark']}; }}
-        """)
-        ab.clicked.connect(self._add_user_dialog)
-        hr.addWidget(ab, 0, Qt.AlignVCenter)
-        ly.addLayout(hr)
-
-        self.users_table = QTableWidget()
-        self.users_table.setColumnCount(6)
-        self.users_table.setHorizontalHeaderLabels(["ID", "Ad Soyad", "Email", "Telefon", "Yetki Rolü", "Son Giriş"])
-        self.users_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.users_table.setAlternatingRowColors(True)
-        self.users_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.users_table.setSelectionBehavior(QTableWidget.SelectRows)
-        ly.addWidget(self.users_table, 1)
-        self._refresh_users()
-        return page
-
-    def _refresh_users(self):
-        users = database.get_all_users()
-        self.users_table.setRowCount(len(users))
-        for i, u in enumerate(users):
-            self.users_table.setItem(i, 0, QTableWidgetItem(str(u['id'])))
-            
-            nm = QTableWidgetItem(u.get('ad_soyad', ''))
-            nm.setFont(QFont(FONTS['family'], FONTS['size_sm'], QFont.Bold))
-            self.users_table.setItem(i, 1, nm)
-            
-            self.users_table.setItem(i, 2, QTableWidgetItem(u.get('email', '')))
-            self.users_table.setItem(i, 3, QTableWidgetItem(u.get('telefon', '')))
-            
-            role = u.get('gorev', '')
-            ri = QTableWidgetItem(role)
-            if role == 'Yönetici':
-                ri.setForeground(QColor(COLORS['primary']))
-                ri.setFont(QFont(FONTS['family'], FONTS['size_sm'], QFont.Bold))
-            self.users_table.setItem(i, 4, ri)
-            
-            self.users_table.setItem(i, 5, QTableWidgetItem(u.get('son_giris', '') or 'Giriş Yapılmadı'))
-
-    def _add_user_dialog(self):
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Yeni Kullanıcı")
-        dlg.setFixedSize(450, 480)
-        form = QFormLayout(dlg)
-        form.setContentsMargins(32, 28, 32, 28)
-        form.setSpacing(16)
-        ad = QLineEdit()
-        ad.setPlaceholderText("Örn: Ali Yılmaz")
-
-        em = QLineEdit()
-        em.setPlaceholderText("ornek@nexpos.com")
-        # Email Validator (Hafta 6 - QRegularExpressionValidator)
-        email_regex = QRegularExpression(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
-        em.setValidator(QRegularExpressionValidator(email_regex))
-
-        tel = QLineEdit()
-        tel.setPlaceholderText("5XXXXXXXXX")
-        # Telefon Validator (Hafta 6 - QRegularExpressionValidator)
-        phone_regex = QRegularExpression(r"^5\d{9}$")
-        tel.setValidator(QRegularExpressionValidator(phone_regex))
-
-        sf = QLineEdit()
-        sf.setEchoMode(QLineEdit.Password)
-        sf.setPlaceholderText("En az 4 karakter")
-
-        gov = QComboBox()
-        gov.addItems(["Garson", "Kasa", "Müdür", "Yönetici"])
-
-        form.addRow("Ad Soyad:", ad)
-        form.addRow("E-Posta:", em)
-        form.addRow("Telefon:", tel)
-        form.addRow("Şifre:", sf)
-        form.addRow("Yetki:", gov)
-
-        # Validasyon uyarıları
-        warn_label = QLabel("")
-        warn_label.setStyleSheet(f"color: {COLORS['danger']}; font-size: 11px; background: transparent;")
-        warn_label.setWordWrap(True)
-        form.addRow(warn_label)
-
-        btn = QPushButton("Kaydet")
-        btn.setObjectName("primaryBtn")
-        def save_user():
-            warnings = []
-            if not ad.text().strip():
-                warnings.append("• Ad Soyad boş olamaz")
-            if not em.hasAcceptableInput():
-                warnings.append("• Geçerli bir e-posta adresi girin (örn: ornek@nexpos.com)")
-            if not tel.hasAcceptableInput():
-                warnings.append("• Geçerli bir telefon girin (5 ile başlayan 10 haneli)")
-            if len(sf.text()) < 4:
-                warnings.append("• Şifre en az 4 karakter olmalı")
-            if warnings:
-                warn_label.setText("\n".join(warnings))
-                return
-            database.add_user(ad.text(), em.text(), tel.text(), sf.text(), gov.currentText())
-            dlg.accept()
-            self._refresh_users()
-            ToastNotification(self, f"{ad.text()} kullanıcısı eklendi.", "success")
-        btn.clicked.connect(save_user)
-        form.addRow(btn)
-        dlg.exec()
+        self.staff_page = StaffPage(self.user)
+        return self.staff_page
 
     def _create_yetkiler_page(self):
-        page = QWidget()
-        ly = QVBoxLayout(page)
-        ly.setContentsMargins(32, 24, 32, 32)
-        ly.setSpacing(16)
-        hr = QHBoxLayout()
-        header = PageHeader("Yetkilendirme Matrisi", "Rollerin sistem üzerindeki işlem yetkilerini ayarlayın.", COLORS['sidebar_bg'], ICONS['lock'])
-        hr.addWidget(header, 1)
-        sv = QPushButton(f"{ICONS['save']} Yetkileri Kaydet")
-        sv.setFixedHeight(44)
-        sv.setCursor(Qt.PointingHandCursor)
-        sv.setStyleSheet(f"""
-            QPushButton {{ background: {COLORS['primary']}; border: none; color: white;
-                font-size: 14px; font-weight: bold; border-radius: 8px; padding: 0 20px; }}
-            QPushButton:hover {{ background: {COLORS['primary_dark']}; }}
-        """)
-        sv.clicked.connect(lambda: QMessageBox.information(self, "Başarılı", "Rol yetkileri Matrix'i başarıyla güncellendi."))
-        hr.addWidget(sv, 0, Qt.AlignVCenter)
-        ly.addLayout(hr)
-
-        pt = QTableWidget()
-        roles = ["Garson", "Kurye", "Kasa", "Müdür", "Yönetici"]
-        perms = [
-            "Masa Açma/Kapatma İzni", "Sipariş İptal Edebilir", "Ürün/Fiyat Tanımlayabilir",
-            "Sistem Ayarlarına Erişebilir", "Raporları Görüntüleyebilir", "İskonto Yapabilir",
-            "Kasa İşlemleri Yapabilir", "Kullanıcı Tanımlayabilir"
-        ]
-        pt.setRowCount(len(perms))
-        pt.setColumnCount(len(roles) + 1)
-        pt.setHorizontalHeaderLabels(["Yetki Tanımı"] + roles)
-        pt.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-
-        preset = {(0,0):True, (0,3):True, (0,4):True, (1,3):True, (1,4):True, (2,4):True, (3,4):True, (4,3):True, (4,4):True, (5,2):True, (5,3):True, (5,4):True, (6,2):True, (6,3):True, (6,4):True, (7,4):True}
-        
-        for i, perm in enumerate(perms):
-            p_item = QTableWidgetItem(perm)
-            p_item.setFont(QFont(FONTS['family'], FONTS['size_sm'], QFont.Bold))
-            p_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            pt.setItem(i, 0, p_item)
-            for j in range(len(roles)):
-                cb = QCheckBox()
-                cb.setChecked(preset.get((i, j), False))
-                if j == 4: # Yönetici her şeye sahip
-                    cb.setChecked(True)
-                    cb.setEnabled(False)
-                w = QWidget()
-                l = QHBoxLayout(w)
-                l.addWidget(cb)
-                l.setAlignment(Qt.AlignCenter)
-                l.setContentsMargins(0, 0, 0, 0)
-                pt.setCellWidget(i, j + 1, w)
-        ly.addWidget(pt, 1)
-        return page
+        self.permissions_page = PermissionsPage(self.user)
+        return self.permissions_page
 
     # ==================== SİSTEM AYARLARI ====================
     def _create_settings_page(self):

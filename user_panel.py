@@ -11,10 +11,13 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QColor
 from styles import COLORS, FONTS, ICONS
 from widgets import TableCard, OrderCard, InfoDialog, add_shadow, ToastNotification
+from access import request_approval
+from cloud.permissions import PANEL_ROLES
 import database
 
 class UserPanel(QWidget):
     logout_signal = Signal()
+    open_admin_signal = Signal()
 
     def __init__(self, user_data, parent=None):
         super().__init__(parent)
@@ -105,8 +108,16 @@ class UserPanel(QWidget):
         ly.addWidget(user_btn)
         ly.addSpacing(8)
 
-        # Çıkış
-        logout = QPushButton(f"{ICONS['logout']} Çıkış Yap")
+        # Yönetici/müdür garson ekranından panele geri dönebilir
+        if self.user.get('role') in PANEL_ROLES:
+            admin_btn = QPushButton(f"{ICONS['chart']} Yönetim Paneli")
+            admin_btn.setObjectName("ghostBtn")
+            admin_btn.setCursor(Qt.PointingHandCursor)
+            admin_btn.clicked.connect(self.open_admin_signal.emit)
+            ly.addWidget(admin_btn)
+
+        # Kullanıcı değiştir (giriş ekranına döner, açık siparişler olduğu yerde kalır)
+        logout = QPushButton(f"{ICONS['logout']} Kullanıcı Değiştir")
         logout.setCursor(Qt.PointingHandCursor)
         logout.setStyleSheet(f"""
             QPushButton {{ background: {COLORS['danger']}; border: none; border-radius: 8px;
@@ -533,6 +544,7 @@ class UserPanel(QWidget):
         dlg2.exec()
 
     def _create_order_dialog(self, data):
+        self._order_table_name = data['ad']
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Sipariş Oluştur - {data['ad']}")
         dlg.setFixedSize(650, 680)
@@ -868,6 +880,11 @@ class UserPanel(QWidget):
             pct = max(0, min(100, pct))
         except Exception:
             pct = 0
+        if pct > 0:
+            masa = getattr(self, '_order_table_name', f"Masa #{masa_id}")
+            approver, _ = request_approval(self, self.user, 'discount', f"{masa} · %{pct:g} iskonto")
+            if not approver:
+                return
         order_id = database.create_order(masa_id, self.user['id'], self.order_items, iskonto_pct=pct)
         # Notu kaydet
         note = self.note_input.text().strip() if hasattr(self, 'note_input') else ""
@@ -995,6 +1012,10 @@ class UserPanel(QWidget):
         self.kanban_scroll.setWidget(cw)
 
     def _on_order_status_changed(self, order_id, new_status):
+        if new_status == 'iptal':
+            approver, _ = request_approval(self, self.user, 'voidItem', f"Sipariş #{order_id} iptali")
+            if not approver:
+                return
         database.update_order_status(order_id, new_status)
         self._refresh_siparisler()
         self._refresh_bolgeler()

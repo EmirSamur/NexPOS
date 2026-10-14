@@ -1,16 +1,22 @@
 """
-NexPOS - Premium Giriş Ekranı
-Koyu gradient sol panel, temiz form, mikro animasyonlar
+NexPOS - Giriş Ekranı
+Personel kartları + PIN ile giriş (internetsiz de çalışır).
+Yönetici/müdür isterse e-posta ve şifreyle de girebilir (panel işlemleri için).
 """
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QLineEdit, QPushButton, QVBoxLayout,
-    QHBoxLayout, QFrame, QCheckBox, QMessageBox, QGraphicsDropShadowEffect
+    QWidget, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, QFrame,
+    QGridLayout, QScrollArea, QDialog, QFormLayout
 )
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QFont, QColor
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont
 from styles import COLORS, FONTS, ICONS
-from widgets import InfoDialog, add_shadow
+from auth_widgets import PinDialog, StaffCard, SyncStatusPill
+from cloud.context import ctx
+from cloud.permissions import PANEL_ROLES, ROLE_LABELS
+from cloud.qt_sync import run_async
 import database
+
+GRID_COLUMNS = 4
 
 
 class LoginScreen(QWidget):
@@ -20,13 +26,81 @@ class LoginScreen(QWidget):
         super().__init__(parent)
         self.setMinimumSize(1000, 600)
         self._setup_ui()
+        self.refresh_staff()
 
     def _setup_ui(self):
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
+        main_layout.addWidget(self._create_brand_panel(), 2)
 
-        # ===== SOL - Marka Paneli (Koyu Gradient) =====
+        # ===== SAĞ - Personel kartları =====
+        right = QFrame()
+        right.setStyleSheet(f"background-color: {COLORS['bg_main']};")
+        rl = QVBoxLayout(right)
+        rl.setContentsMargins(56, 36, 56, 32)
+        rl.setSpacing(8)
+
+        top = QHBoxLayout()
+        self.terminal_label = QLabel("NexPOS")
+        self.terminal_label.setFont(QFont(FONTS['family'], 16, QFont.Bold))
+        self.terminal_label.setStyleSheet(f"color: {COLORS['primary']}; background: transparent;")
+        top.addWidget(self.terminal_label)
+        top.addStretch()
+        self.status_pill = SyncStatusPill()
+        top.addWidget(self.status_pill)
+        rl.addLayout(top)
+
+        rl.addSpacing(28)
+        welcome = QLabel("Kim çalışıyor?")
+        welcome.setFont(QFont(FONTS['family'], FONTS['size_xxl'], QFont.Bold))
+        welcome.setStyleSheet(f"color: {COLORS['text_dark']}; background: transparent;")
+        rl.addWidget(welcome)
+        subtitle = QLabel("Kartınıza dokunun ve 6 haneli PIN kodunuzu girin.")
+        subtitle.setFont(QFont(FONTS['family'], FONTS['size_md']))
+        subtitle.setStyleSheet(f"color: {COLORS['text_secondary']}; background: transparent;")
+        rl.addWidget(subtitle)
+        rl.addSpacing(20)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        holder = QWidget()
+        holder.setStyleSheet("background: transparent;")
+        self.grid = QGridLayout(holder)
+        self.grid.setSpacing(18)
+        self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        scroll.setWidget(holder)
+        rl.addWidget(scroll, 1)
+
+        self.empty_label = QLabel(
+            "Bu bilgisayarda henüz personel yok.\n\n"
+            "Personel listesi buluttan iner; internet bağlantısını kontrol edin.\n"
+            "Personel eklemek için yönetici olarak e-postayla giriş yapın.")
+        self.empty_label.setAlignment(Qt.AlignCenter)
+        self.empty_label.setStyleSheet(f"""
+            color: {COLORS['text_secondary']}; background: white; font-size: 13px;
+            border: 1.5px dashed {COLORS['border']}; border-radius: 16px; padding: 32px;
+        """)
+        rl.addWidget(self.empty_label)
+
+        bottom = QHBoxLayout()
+        bottom.addStretch()
+        manager_link = QPushButton("Yönetici girişi (e-posta) →")
+        manager_link.setCursor(Qt.PointingHandCursor)
+        manager_link.setStyleSheet(f"""
+            QPushButton {{ border: none; color: {COLORS['primary']};
+                font-size: {FONTS['size_md']}px; background: transparent; font-weight: bold; }}
+            QPushButton:hover {{ color: {COLORS['primary_dark']}; text-decoration: underline; }}
+        """)
+        manager_link.clicked.connect(self._manager_login)
+        bottom.addWidget(manager_link)
+        rl.addLayout(bottom)
+
+        main_layout.addWidget(right, 3)
+
+    def _create_brand_panel(self):
         left = QFrame()
         left.setStyleSheet("""
             QFrame {
@@ -35,70 +109,50 @@ class LoginScreen(QWidget):
             }
         """)
         ll = QVBoxLayout(left)
-        ll.setContentsMargins(60, 60, 60, 40)
+        ll.setContentsMargins(48, 60, 48, 40)
         ll.setSpacing(12)
         ll.addStretch(1)
 
-        # Logo - büyük ve dikkat çekici
         logo_frame = QHBoxLayout()
-        logo_dot = QFrame()
+        logo_dot = QLabel("N")
         logo_dot.setFixedSize(48, 48)
+        logo_dot.setAlignment(Qt.AlignCenter)
+        logo_dot.setFont(QFont(FONTS['family'], 22, QFont.Bold))
         logo_dot.setStyleSheet("""
-            background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
-                stop:0 #818CF8, stop:1 #4F46E5);
-            border-radius: 14px;
+            color: white; border-radius: 14px;
+            background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 #818CF8, stop:1 #4F46E5);
         """)
-        ld_ly = QVBoxLayout(logo_dot)
-        ld_ly.setContentsMargins(0, 0, 0, 0)
-        ld_lbl = QLabel("N")
-        ld_lbl.setAlignment(Qt.AlignCenter)
-        ld_lbl.setFont(QFont(FONTS['family'], 22, QFont.Bold))
-        ld_lbl.setStyleSheet("color: white; background: transparent;")
-        ld_ly.addWidget(ld_lbl)
         logo_frame.addWidget(logo_dot)
         logo_frame.addSpacing(12)
-
         logo = QLabel("NexPOS")
-        logo.setFont(QFont(FONTS['family'], 38, QFont.Bold))
+        logo.setFont(QFont(FONTS['family'], 34, QFont.Bold))
         logo.setStyleSheet("color: white; background: transparent; letter-spacing: 3px;")
         logo_frame.addWidget(logo)
         logo_frame.addStretch()
         ll.addLayout(logo_frame)
 
-        ll.addSpacing(8)
-
-        tagline = QLabel("Restoranınızı akıllıca yönetin.")
+        tagline = QLabel("Kafenizi akıllıca yönetin.")
         tagline.setFont(QFont(FONTS['family'], FONTS['size_lg']))
         tagline.setStyleSheet("color: rgba(255,255,255,0.6); background: transparent;")
         ll.addWidget(tagline)
+        ll.addSpacing(32)
 
-        ll.addSpacing(40)
-
-        # Özellikler - modern kartlar
         features = [
-            ("Hızlı sipariş yönetimi", "Her an kontrol sizde"),
-            ("Anlık satış ve raporlama", "Gerçek zamanlı veriler"),
-            ("Çoklu kullanıcı desteği", "Rol bazlı erişim"),
-            ("Güvenli yetki sistemi", "Verileriniz güvende"),
+            ("PIN ile hızlı giriş", "Kullanıcı değiştirmek saniyeler sürer"),
+            ("İnternet olmasa da çalışır", "İşlemler internet gelince gönderilir"),
+            ("Rol bazlı yetki", "Yetkisiz işlemde müdür onayı istenir"),
+            ("Bulutta yedekli", "Bilgisayar bozulsa da veri kaybolmaz"),
         ]
         for title, desc in features:
             f_frame = QFrame()
-            f_frame.setStyleSheet("""
-                QFrame {
-                    background: rgba(255,255,255,0.06);
-                    border-radius: 12px;
-                    border: none;
-                }
-            """)
+            f_frame.setStyleSheet("QFrame { background: rgba(255,255,255,0.06); border-radius: 12px; border: none; }")
             f_ly = QHBoxLayout(f_frame)
             f_ly.setContentsMargins(16, 12, 16, 12)
             f_ly.setSpacing(12)
-
             check = QLabel(ICONS['check'])
             check.setFont(QFont(FONTS['family'], 16, QFont.Bold))
             check.setStyleSheet("color: #818CF8; background: transparent;")
             check.setFixedWidth(24)
-
             text_col = QVBoxLayout()
             text_col.setSpacing(2)
             tx = QLabel(title)
@@ -106,215 +160,131 @@ class LoginScreen(QWidget):
             tx.setStyleSheet("color: rgba(255,255,255,0.9); background: transparent;")
             dx = QLabel(desc)
             dx.setFont(QFont(FONTS['family'], FONTS['size_xs']))
-            dx.setStyleSheet("color: rgba(255,255,255,0.4); background: transparent;")
+            dx.setStyleSheet("color: rgba(255,255,255,0.45); background: transparent;")
             text_col.addWidget(tx)
             text_col.addWidget(dx)
-
             f_ly.addWidget(check)
             f_ly.addLayout(text_col, 1)
             ll.addWidget(f_frame)
-            ll.addSpacing(4)
 
         ll.addStretch(2)
-
-        ver = QLabel("v3.2.0  |  2026 NexPOS Technologies")
+        ver = QLabel("v4.0.0  |  NexPOS")
         ver.setFont(QFont(FONTS['family'], FONTS['size_xs']))
         ver.setStyleSheet("color: rgba(255,255,255,0.25); background: transparent;")
         ll.addWidget(ver)
+        return left
 
-        main_layout.addWidget(left, 1)
+    # ------------------------------------------------------------------
+    def set_terminal_name(self, letter, name):
+        if name:
+            self.terminal_label.setText(f"NexPOS · {name} ({letter})")
 
-        # ===== SAĞ - Login Formu =====
-        right = QFrame()
-        right.setStyleSheet(f"background-color: {COLORS['bg_white']};")
-        rl = QVBoxLayout(right)
-        rl.setContentsMargins(80, 50, 80, 40)
-        rl.setSpacing(8)
+    def set_sync_status(self, status):
+        self.status_pill.update_status(status)
+        if status and ({'staff', 'staffPins'} & status.changed):
+            self.refresh_staff()
 
-        # Sağ üst logo
-        logo_row = QHBoxLayout()
-        logo_small = QLabel("NexPOS")
-        logo_small.setFont(QFont(FONTS['family'], 16, QFont.Bold))
-        logo_small.setStyleSheet(f"color: {COLORS['primary']}; background: transparent;")
-        logo_row.addWidget(logo_small)
-        logo_row.addStretch()
-        rl.addLayout(logo_row)
+    def refresh_staff(self):
+        while self.grid.count():
+            item = self.grid.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        staff = database.get_login_staff()
+        for i, s in enumerate(staff):
+            card = StaffCard(s, ROLE_LABELS.get(s['role'], s['role']))
+            card.clicked.connect(lambda _, st=s: self._pin_login(st))
+            self.grid.addWidget(card, i // GRID_COLUMNS, i % GRID_COLUMNS)
+        self.empty_label.setVisible(not staff)
 
-        rl.addStretch(1)
+    def _pin_login(self, staff):
+        dlg = PinDialog(staff, lambda pin: database.login_with_pin(staff['id'], pin), parent=self)
+        if dlg.exec() == QDialog.Accepted and dlg.result_value:
+            ctx.request_sync()
+            self.login_success.emit(dlg.result_value)
 
-        # Hoş Geldiniz
-        welcome = QLabel("Hoş Geldiniz")
-        welcome.setFont(QFont(FONTS['family'], FONTS['size_xxl'], QFont.Bold))
-        welcome.setStyleSheet(f"color: {COLORS['text_dark']}; background: transparent;")
-        rl.addWidget(welcome)
+    # ------------------------------------------------------------------
+    def _manager_login(self):
+        dlg = ManagerLoginDialog(self)
+        if dlg.exec() == QDialog.Accepted and dlg.user:
+            ctx.request_sync()
+            self.login_success.emit(dlg.user)
 
-        subtitle = QLabel("Hesabınıza giriş yaparak devam edin")
-        subtitle.setFont(QFont(FONTS['family'], FONTS['size_md']))
-        subtitle.setStyleSheet(f"color: {COLORS['text_secondary']}; background: transparent;")
-        rl.addWidget(subtitle)
 
-        rl.addSpacing(32)
+class ManagerLoginDialog(QDialog):
+    """Yönetici/müdür e-posta girişi. Panelde buluta yazan işlemler bu oturumla yapılır."""
 
-        # E-Posta
-        el = QLabel("E-Posta veya Telefon")
-        el.setFont(QFont(FONTS['family'], FONTS['size_sm'], QFont.Bold))
-        el.setStyleSheet(f"color: {COLORS['text_primary']}; background: transparent;")
-        rl.addWidget(el)
-        rl.addSpacing(4)
-        self.email_input = QLineEdit()
-        self.email_input.setPlaceholderText("ornek@nexpos.com")
-        self.email_input.setFixedHeight(50)
-        self.email_input.setFont(QFont(FONTS['family'], FONTS['size_md']))
-        rl.addWidget(self.email_input)
+    def __init__(self, parent=None, email='', title='Yönetici Girişi', note=None, start_session=True):
+        super().__init__(parent)
+        self.start_session = start_session
+        self.user = None
+        self.session = None
+        self.setWindowTitle(title)
+        self.setFixedWidth(440)
+        self.setStyleSheet("QDialog { background: white; }")
+        form = QFormLayout(self)
+        form.setContentsMargins(32, 28, 32, 28)
+        form.setSpacing(14)
 
-        rl.addSpacing(16)
+        info = QLabel(note or "Menü, personel ve yetki düzenlemek için e-posta ve şifrenizle girin. "
+                              "Bu giriş internet bağlantısı gerektirir.")
+        info.setWordWrap(True)
+        info.setStyleSheet(f"color: {COLORS['text_secondary']}; background: transparent;")
+        form.addRow(info)
 
-        # Şifre
-        pl = QLabel("Şifre")
-        pl.setFont(QFont(FONTS['family'], FONTS['size_sm'], QFont.Bold))
-        pl.setStyleSheet(f"color: {COLORS['text_primary']}; background: transparent;")
-        rl.addWidget(pl)
-        rl.addSpacing(4)
-        self.password_input = QLineEdit()
-        self.password_input.setPlaceholderText("Şifrenizi girin")
-        self.password_input.setEchoMode(QLineEdit.Password)
-        self.password_input.setFixedHeight(50)
-        self.password_input.setFont(QFont(FONTS['family'], FONTS['size_md']))
-        self.password_input.returnPressed.connect(self._do_login)
-        rl.addWidget(self.password_input)
+        self.email = QLineEdit(email)
+        self.email.setPlaceholderText("ornek@kafe.com")
+        self.email.setFixedHeight(42)
+        self.password = QLineEdit()
+        self.password.setEchoMode(QLineEdit.Password)
+        self.password.setFixedHeight(42)
+        self.password.returnPressed.connect(self._submit)
+        form.addRow("E-posta:", self.email)
+        form.addRow("Şifre:", self.password)
 
-        rl.addSpacing(8)
+        self.error = QLabel("")
+        self.error.setWordWrap(True)
+        self.error.setStyleSheet(f"color: {COLORS['danger']}; font-weight: bold; background: transparent;")
+        form.addRow(self.error)
 
-        # Beni hatırla + Şifremi unuttum
-        rem_row = QHBoxLayout()
-        self.remember_cb = QCheckBox("Beni hatırla")
-        self.remember_cb.setStyleSheet("background: transparent;")
-        forgot = QPushButton("Şifremi Unuttum")
-        forgot.setCursor(Qt.PointingHandCursor)
-        forgot.setStyleSheet(f"""
-            QPushButton {{ border: none; color: {COLORS['primary']};
-                font-size: {FONTS['size_sm']}px; background: transparent; font-weight: bold; }}
-            QPushButton:hover {{ color: {COLORS['primary_dark']}; text-decoration: underline; }}
-        """)
-        forgot.clicked.connect(self._forgot_password)
-        rem_row.addWidget(self.remember_cb)
-        rem_row.addStretch()
-        rem_row.addWidget(forgot)
-        rl.addLayout(rem_row)
+        self.btn = QPushButton("Giriş Yap")
+        self.btn.setObjectName("primaryBtn")
+        self.btn.setFixedHeight(44)
+        self.btn.clicked.connect(self._submit)
+        form.addRow(self.btn)
+        (self.password if email else self.email).setFocus()
 
-        rl.addSpacing(28)
-
-        # GİRİŞ YAP butonu
-        self.login_btn = QPushButton("GİRİŞ YAP")
-        self.login_btn.setFixedHeight(54)
-        self.login_btn.setCursor(Qt.PointingHandCursor)
-        self.login_btn.setFont(QFont(FONTS['family'], 15, QFont.Bold))
-        self.login_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                    stop:0 {COLORS['primary']}, stop:1 {COLORS['primary_dark']});
-                color: white;
-                border: none;
-                border-radius: 12px;
-                font-size: 15px;
-                font-weight: bold;
-                letter-spacing: 2px;
-            }}
-            QPushButton:hover {{
-                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                    stop:0 {COLORS['primary_dark']}, stop:1 #312E81);
-            }}
-            QPushButton:pressed {{
-                background: #312E81;
-            }}
-        """)
-        self.login_btn.clicked.connect(self._do_login)
-        add_shadow(self.login_btn, blur=24, offset_y=8, color=QColor(79, 70, 229, 80))
-        rl.addWidget(self.login_btn)
-
-        rl.addSpacing(20)
-
-        # Demo hesap bilgileri kartı
-        demo_card = QFrame()
-        demo_card.setStyleSheet(f"""
-            QFrame {{
-                background: #F8FAFF;
-                border: 1.5px solid {COLORS['border']};
-                border-radius: 12px;
-            }}
-        """)
-        demo_ly = QVBoxLayout(demo_card)
-        demo_ly.setContentsMargins(18, 14, 18, 14)
-        demo_ly.setSpacing(8)
-
-        demo_title = QLabel("🔑  Demo Hesaplar")
-        demo_title.setFont(QFont(FONTS['family'], FONTS['size_sm'], QFont.Bold))
-        demo_title.setStyleSheet(f"color: {COLORS['text_secondary']}; background: transparent;")
-        demo_ly.addWidget(demo_title)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(f"color: {COLORS['border']}; background: {COLORS['border']}; border: none; max-height: 1px;")
-        demo_ly.addWidget(sep)
-
-        accounts = [
-            ("👑  Yönetici", "admin@nexpos.com", "admin123"),
-            ("🧑‍🍳  Garson", "cem@nexpos.com", "garson123"),
-            ("🧑‍🍳  Garson", "elif@nexpos.com", "garson123"),
-        ]
-
-        for role, email, pwd in accounts:
-            row = QHBoxLayout()
-            row.setSpacing(0)
-
-            role_lbl = QLabel(role)
-            role_lbl.setFixedWidth(110)
-            role_lbl.setFont(QFont(FONTS['family'], FONTS['size_sm'], QFont.Bold))
-            role_lbl.setStyleSheet(f"color: {COLORS['text_dark']}; background: transparent;")
-
-            email_lbl = QLabel(email)
-            email_lbl.setFont(QFont(FONTS['family'], FONTS['size_sm']))
-            email_lbl.setStyleSheet(f"color: {COLORS['primary']}; background: transparent;")
-
-            divider = QLabel("  |  ")
-            divider.setStyleSheet(f"color: {COLORS['border']}; background: transparent;")
-
-            pwd_lbl = QLabel(pwd)
-            pwd_lbl.setFont(QFont(FONTS['family'], FONTS['size_sm']))
-            pwd_lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; background: transparent;")
-
-            row.addWidget(role_lbl)
-            row.addWidget(email_lbl)
-            row.addWidget(divider)
-            row.addWidget(pwd_lbl)
-            row.addStretch()
-            demo_ly.addLayout(row)
-
-        rl.addWidget(demo_card)
-        rl.addSpacing(8)
-
-        rl.addStretch(2)
-
-        main_layout.addWidget(right, 1)
-
-    def _do_login(self):
-        email = self.email_input.text().strip()
-        password = self.password_input.text().strip()
+    def _submit(self):
+        email, password = self.email.text().strip(), self.password.text()
         if not email or not password:
-            QMessageBox.warning(self, "Uyarı", "Lütfen tüm alanları doldurun!")
+            self.error.setText("E-posta ve şifre gerekli.")
             return
-        user = database.authenticate_user(email, password)
-        if user:
-            self.login_success.emit(user)
-        else:
-            QMessageBox.critical(self, "Hata", "E-posta/telefon veya şifre hatalı!")
+        if not ctx.client:
+            self.error.setText("Bulut ayarı yapılmamış (nexpos_config.json).")
+            return
+        self.btn.setEnabled(False)
+        self.btn.setText("Giriş yapılıyor…")
+        self.error.setText("")
 
-    def _forgot_password(self):
-        dlg = InfoDialog(
-            "Şifremi Unuttum",
-            "Şifre sıfırlama talebi için lütfen sistem yöneticisi ile iletişime geçin.\n\n"
-            "İletişim: destek@nexpos.com\nTelefon: 0850 XXX XX XX",
-            COLORS['warning'],
-            self
-        )
-        dlg.exec()
+        def work():
+            session = ctx.client.sign_in_with_password(email, password)
+            ctx.request_sync()
+            return session
+
+        run_async(work, self._on_signed_in, self._on_failed)
+
+    def _on_signed_in(self, session):
+        staff = database.get_staff(session.uid)
+        if not staff or staff['role'] not in PANEL_ROLES or not staff['active']:
+            self._on_failed("Bu hesap yönetim paneline giriş yetkisine sahip değil "
+                            "ya da personel listesi henüz bu bilgisayara inmedi.")
+            return
+        ctx.set_panel_session(session.uid, session)
+        self.session = session
+        if self.start_session:
+            self.user = database.start_session(session.uid, method='email')
+        self.accept()
+
+    def _on_failed(self, message):
+        self.btn.setEnabled(True)
+        self.btn.setText("Giriş Yap")
+        self.error.setText(message)

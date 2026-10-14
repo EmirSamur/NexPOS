@@ -1,0 +1,83 @@
+rules_version = '2';
+
+// NexPOS Firestore güvenlik kuralları.
+//
+// Temel ilke: personel, PIN, yetki ve terminal kayıtları istemciden ASLA doğrudan
+// yazılamaz. Bu işlemler yalnızca Cloud Functions (Admin SDK, kuralları atlar)
+// üzerinden yapılır.
+//
+// Kimlikler (custom claim):
+//   - Personel (panelden e-posta ile giriş): request.auth.token.role
+//   - Terminal (kafedeki NexPOS): request.auth.token.terminal == true ve terminalId
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function role() {
+      return signedIn() ? request.auth.token.get('role', '') : '';
+    }
+
+    function isStaff() {
+      return role() in ['owner', 'manager', 'cashier', 'waiter', 'courier', 'barista', 'kitchen'];
+    }
+
+    function isManagerPlus() {
+      return role() in ['owner', 'manager'];
+    }
+
+    // İptal edilmiş terminalin token'ı süresi dolana kadar geçerli kalır; bu yüzden
+    // her istekte terminal kaydı kontrol edilir.
+    function isActiveTerminal() {
+      return signedIn()
+        && request.auth.token.get('terminal', false) == true
+        && exists(/databases/$(database)/documents/terminals/$(request.auth.token.terminalId))
+        && get(/databases/$(database)/documents/terminals/$(request.auth.token.terminalId)).data.revoked == false;
+    }
+
+    // Personel listesi: terminal önbelleğe alır (giriş ekranındaki kartlar).
+    match /staff/{staffId} {
+      allow read: if isManagerPlus() || isActiveTerminal()
+        || (signedIn() && request.auth.uid == staffId);
+      allow write: if false;
+    }
+
+    // PIN özetleri: yalnızca terminal okur (çevrimdışı PIN doğrulama için).
+    // Yönetici dahil hiçbir personel okuyamaz.
+    match /staffPins/{staffId} {
+      allow read: if isActiveTerminal();
+      allow write: if false;
+    }
+
+    // Ayarlar: settings/permissions vb. Yazma yalnızca fonksiyonlardan.
+    match /settings/{docId} {
+      allow read: if isStaff() || isActiveTerminal();
+      allow write: if false;
+    }
+
+    // Terminal kendi kaydını okur (iptal edildi mi?); yöneticiler hepsini görür.
+    // İptal edilmiş terminal de kendi kaydını okuyabilmeli ki kilitlendiğini anlasın.
+    match /terminals/{terminalId} {
+      allow read: if isManagerPlus()
+        || (signedIn() && request.auth.token.get('terminalId', '') == terminalId);
+      allow write: if false;
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isManagerPlus();
+      allow write: if false;
+    }
+
+    // syncOps'un tekrar koruması: yalnızca fonksiyonlar kullanır.
+    match /processedOps/{opId} {
+      allow read, write: if false;
+    }
+
+    // Tanımlanmamış her şey kapalı.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

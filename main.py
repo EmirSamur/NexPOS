@@ -22,12 +22,25 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from PySide6.QtWidgets import (QApplication, QMainWindow, QStackedWidget,
                                 QMessageBox, QLabel)
 from PySide6.QtGui import QFont, QAction, QIcon
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QTimer, Qt, QEvent
 from styles import get_global_stylesheet, FONTS, COLORS, ICONS
 from login_screen import LoginScreen
+from pairing_screen import PairingScreen
 from admin_panel import AdminPanel
 from user_panel import UserPanel
+from auth_widgets import SyncStatusPill
+from widgets import ToastNotification
+from cloud import credentials
+from cloud.config import load_config
+from cloud.context import ctx
+from cloud.firebase_client import FirebaseClient
+from cloud.permissions import PANEL_ROLES
+from cloud.qt_sync import SyncWorker
+from cloud.sync import SyncEngine
 import database
+
+# Bu kadar dakika işlem yapılmazsa ekran giriş ekranına döner (settings/general.idleLockMinutes).
+DEFAULT_IDLE_LOCK_MINUTES = 3
 
 
 class MainWindow(QMainWindow):
@@ -44,10 +57,17 @@ class MainWindow(QMainWindow):
         self.login_screen = LoginScreen()
         self.login_screen.login_success.connect(self._on_login)
         self.stack.addWidget(self.login_screen)
+        self.pairing_screen = None
 
         self.admin_panel = None
         self.user_panel = None
         self._current_user = None
+
+        # Hareketsizlikte otomatik kilit
+        self._idle_timer = QTimer(self)
+        self._idle_timer.setSingleShot(True)
+        self._idle_timer.timeout.connect(self._on_idle)
+        QApplication.instance().installEventFilter(self)
 
         # QMainWindow bileşenleri (Hafta 7)
         self._setup_menubar()
@@ -58,7 +78,96 @@ class MainWindow(QMainWindow):
         self.menuBar().setVisible(False)
         self.main_toolbar.setVisible(False)
 
+        self._start_cloud()
         self.showMaximized()
+
+    # ==================== BULUT / TERMİNAL ====================
+    def _start_cloud(self):
+        ctx.config = load_config()
+        ctx.client = FirebaseClient(ctx.config) if ctx.config else None
+        creds = credentials.load()
+        if ctx.config and creds and creds.project_id == ctx.config.project_id:
+            self._start_sync(creds, SyncEngine(ctx.client, creds))
+            self.stack.setCurrentWidget(self.login_screen)
+        else:
+            self._show_pairing()
+
+    def _show_pairing(self, message=None):
+        if self.pairing_screen:
+            self.stack.removeWidget(self.pairing_screen)
+            self.pairing_screen.deleteLater()
+        self.pairing_screen = PairingScreen(message=message)
+        self.pairing_screen.paired.connect(self._on_paired)
+        self.stack.addWidget(self.pairing_screen)
+        self.stack.setCurrentWidget(self.pairing_screen)
+        self.status_bar.showMessage("Kurulum — bu bilgisayar henüz kafeye bağlanmadı.")
+
+    def _on_paired(self, creds, engine):
+        self._start_sync(creds, engine)
+        self.login_screen.refresh_staff()
+        self.stack.setCurrentWidget(self.login_screen)
+        if self.pairing_screen:
+            self.stack.removeWidget(self.pairing_screen)
+            self.pairing_screen.deleteLater()
+            self.pairing_screen = None
+        self.status_bar.showMessage("Hazır — Giriş bekleniyor...")
+        ToastNotification(self.login_screen, f"{creds.name} ({creds.letter}) kafeye bağlandı.", "success")
+
+    def _start_sync(self, creds, engine):
+        ctx.creds, ctx.engine = creds, engine
+        self.login_screen.set_terminal_name(creds.letter, creds.name)
+        ctx.worker = SyncWorker(engine)
+        ctx.worker.status_changed.connect(self._on_sync_status)
+        ctx.worker.start()
+
+    def _stop_sync(self):
+        if ctx.worker:
+            ctx.worker.stop()
+            ctx.worker = None
+
+    def _on_sync_status(self, status):
+        ctx.last_status = status
+        self.sync_pill.update_status(status)
+        self.login_screen.set_sync_status(status)
+        if 'permissions' in status.changed and self._current_user:
+            self.status_bar.showMessage("Yetki matrisi güncellendi.", 5000)
+        if status.revoked:
+            self._on_revoked()
+
+    def _on_revoked(self):
+        self._stop_sync()
+        if self._current_user:
+            self._on_logout()
+        credentials.clear()
+        database.reset_cloud_cache()
+        ctx.creds = ctx.engine = None
+        self._show_pairing("Bu terminal yönetim panelinden iptal edildi. Kullanmaya devam etmek için "
+                           "bilgisayarı yeniden bağlayın. Gönderilmemiş işlemler kuyrukta korunuyor.")
+
+    # ==================== OTOMATİK KİLİT ====================
+    def _idle_minutes(self):
+        general = database.get_setting('general') or {}
+        try:
+            return max(1, int(general.get('idleLockMinutes', DEFAULT_IDLE_LOCK_MINUTES)))
+        except (TypeError, ValueError):
+            return DEFAULT_IDLE_LOCK_MINUTES
+
+    def eventFilter(self, obj, event):
+        if self._current_user and event.type() in (QEvent.MouseButtonPress, QEvent.KeyPress,
+                                                   QEvent.Wheel, QEvent.TouchBegin):
+            self._idle_timer.start(self._idle_minutes() * 60 * 1000)
+        return False
+
+    def _on_idle(self):
+        if not self._current_user:
+            return
+        # Açık bir pencere (sipariş, ödeme) varsa kullanıcı işlem ortasındadır; bekle.
+        if QApplication.activeModalWidget():
+            self._idle_timer.start(60 * 1000)
+            return
+        name = self._current_user.get('ad_soyad', '')
+        self._on_logout()
+        ToastNotification(self.login_screen, f"{name} işlem yapmadığı için ekran kilitlendi.", "info")
 
     # ==================== MENUBAR + QACTION (Hafta 7) ====================
     def _setup_menubar(self):
@@ -172,6 +281,9 @@ class MainWindow(QMainWindow):
         self.status_table_label.setStyleSheet(f"color: {COLORS['text_muted']};")
         self.status_bar.addPermanentWidget(self.status_table_label)
 
+        self.sync_pill = SyncStatusPill()
+        self.status_bar.addPermanentWidget(self.sync_pill)
+
         from datetime import datetime
         self.status_time_label = QLabel(f"  {datetime.now().strftime('%d.%m.%Y %H:%M')}  ")
         self.status_time_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-weight: bold;")
@@ -239,14 +351,15 @@ class MainWindow(QMainWindow):
 
     def _show_about(self):
         QMessageBox.about(self, "NexPOS Hakkında",
-            "<h2 style='color:#4F46E5;'>NexPOS v3.2.0</h2>"
+            "<h2 style='color:#4F46E5;'>NexPOS v4.0.0</h2>"
             "<p><b>Restaurant Yönetim Sistemi</b></p>"
             "<p>PySide6 (Qt for Python) ile geliştirilmiştir.</p>"
             "<hr>"
             "<p><b>Kullanılan Teknolojiler:</b></p>"
             "<ul>"
             "<li>PySide6 — Qt Framework</li>"
-            "<li>SQLite — Veritabanı</li>"
+            "<li>SQLite — Yerel önbellek ve işlem kuyruğu</li>"
+            "<li>Firebase — Bulut veritabanı ve kimlik doğrulama</li>"
             "<li>QSS — Stil Sistemi</li>"
             "</ul>"
             "<p style='color:#64748B;'>© 2026 NexPOS Technologies</p>")
@@ -263,54 +376,65 @@ class MainWindow(QMainWindow):
     def _on_login(self, user_data):
         self._current_user = user_data
         self._update_status_info(user_data)
-        role = user_data.get('gorev', 'Garson')
-
-        if role == 'Yönetici':
-            self.menuBar().setVisible(False)
-            self.main_toolbar.setVisible(False)
-
-            if self.admin_panel:
-                self.stack.removeWidget(self.admin_panel)
-                self.admin_panel.deleteLater()
-            self.admin_panel = AdminPanel(user_data)
-            self.admin_panel.logout_signal.connect(self._on_logout)
-            self.stack.addWidget(self.admin_panel)
-            self.stack.setCurrentWidget(self.admin_panel)
-        else:
-            # Garson girişinde gizle
-            self.menuBar().setVisible(False)
-            self.main_toolbar.setVisible(False)
-
-            if self.user_panel:
-                self.stack.removeWidget(self.user_panel)
-                self.user_panel.deleteLater()
-            self.user_panel = UserPanel(user_data)
-            self.user_panel.logout_signal.connect(self._on_logout)
-            self.stack.addWidget(self.user_panel)
-            self.stack.setCurrentWidget(self.user_panel)
-
-    def _on_logout(self):
+        self._idle_timer.start(self._idle_minutes() * 60 * 1000)
         self.menuBar().setVisible(False)
         self.main_toolbar.setVisible(False)
+        if user_data.get('role') in PANEL_ROLES:
+            self._show_admin_panel()
+        else:
+            self._show_user_panel()
+
+    def _clear_panels(self):
+        for attr in ('admin_panel', 'user_panel'):
+            panel = getattr(self, attr)
+            if panel:
+                self.stack.removeWidget(panel)
+                panel.deleteLater()
+                setattr(self, attr, None)
+
+    def _show_admin_panel(self):
+        self._clear_panels()
+        self.admin_panel = AdminPanel(self._current_user)
+        self.admin_panel.logout_signal.connect(self._on_logout)
+        self.admin_panel.open_pos_signal.connect(self._show_user_panel)
+        self.stack.addWidget(self.admin_panel)
+        self.stack.setCurrentWidget(self.admin_panel)
+
+    def _show_user_panel(self):
+        self._clear_panels()
+        self.user_panel = UserPanel(self._current_user)
+        self.user_panel.logout_signal.connect(self._on_logout)
+        self.user_panel.open_admin_signal.connect(self._show_admin_panel)
+        self.stack.addWidget(self.user_panel)
+        self.stack.setCurrentWidget(self.user_panel)
+
+    def _on_logout(self):
+        """Kullanıcı değiştir: giriş ekranına döner, panel oturumlarını unutur."""
+        self.menuBar().setVisible(False)
+        self.main_toolbar.setVisible(False)
+        self._idle_timer.stop()
         self.stack.setCurrentWidget(self.login_screen)
-        self.login_screen.password_input.clear()
         self._current_user = None
+        ctx.clear_panel_sessions()
         self._update_status_info(None)
-        if self.admin_panel:
-            self.stack.removeWidget(self.admin_panel)
-            self.admin_panel.deleteLater()
-            self.admin_panel = None
-        if self.user_panel:
-            self.stack.removeWidget(self.user_panel)
-            self.user_panel.deleteLater()
-            self.user_panel = None
+        self._clear_panels()
+        self.login_screen.refresh_staff()
+
+    def _close_message(self):
+        pending, failed = database.outbox_counts()
+        msg = "Programdan çıkmak istediğinize emin misiniz?"
+        if pending:
+            msg += (f"\n\nBuluta henüz gönderilmemiş {pending} işlem var. Kaybolmazlar; "
+                    "NexPOS bir sonraki açılışta internet varsa gönderir.")
+        return msg
 
     def closeEvent(self, event):
         reply = QMessageBox.question(self, 'Güvenli Çıkış',
-                                     "Programdan çıkmak istediğinize emin misiniz?\n\n(Arka plan veri yedekleme işlemi tamamlandı.)",
+                                     self._close_message(),
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
 
         if reply == QMessageBox.Yes:
+            self._stop_sync()
             event.accept()
         else:
             event.ignore()

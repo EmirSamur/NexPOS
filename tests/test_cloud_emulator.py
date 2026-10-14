@@ -1,0 +1,103 @@
+"""
+Uçtan uca test: NexPOS ↔ Firebase emülatörü.
+
+Çalıştırma (firebase/ klasöründen):
+    firebase emulators:exec --project demo-nexpos --only auth,firestore,functions \
+        "cd .. && NEXPOS_EMULATOR=1 python -m pytest tests/test_cloud_emulator.py"
+"""
+import os
+import re
+import subprocess
+import uuid
+
+import pytest
+
+pytestmark = pytest.mark.skipif(os.environ.get('NEXPOS_EMULATOR') != '1',
+                                reason='Firebase emülatörü gerekli (NEXPOS_EMULATOR=1)')
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def create_owner(email, password='sahip-sifre-1', name='Deniz Yılmaz', pin='482913'):
+    env = {**os.environ,
+           'FIRESTORE_EMULATOR_HOST': '127.0.0.1:8080',
+           'FIREBASE_AUTH_EMULATOR_HOST': '127.0.0.1:9099',
+           'GCLOUD_PROJECT': 'demo-nexpos'}
+    out = subprocess.run(
+        ['node', os.path.join(ROOT, 'firebase/functions/scripts/createOwner.js'), email, password, name, pin],
+        env=env, capture_output=True, text=True, check=True).stdout
+    return re.search(r'staffId: (\w+)', out).group(1)
+
+
+@pytest.fixture
+def client():
+    from cloud.config import load_config
+    from cloud.firebase_client import FirebaseClient
+    return FirebaseClient(load_config())
+
+
+def test_eşleme_giriş_kuyruk_ve_iptal(db, client):
+    from cloud import credentials
+    from cloud.admin_api import AdminApi
+    from cloud.pairing import pair_terminal
+    from cloud.sync import SyncEngine
+
+    email = f'sahip-{uuid.uuid4().hex[:6]}@kafe.test'
+    owner_id = create_owner(email)
+
+    # 1) Eşleme: yönetici giriş yapar, terminal kaydedilir, personel ve PIN'ler iner.
+    steps = []
+    creds, engine = pair_terminal(client, email, 'sahip-sifre-1', 'Kasa 1', steps.append)
+    assert creds.letter and creds.terminal_id
+    assert credentials.load() == creds
+    assert len(steps) == 4
+    assert owner_id in {s['id'] for s in db.get_login_staff()}
+
+    # 2) Yönetici panelden garson ekler (kendi oturumuyla) → senkronla terminale iner.
+    owner_session = client.sign_in_with_password(email, 'sahip-sifre-1')
+    api = AdminApi(client, owner_session)
+    waiter_id = api.create_staff('Cem Akar', 'waiter', '730591', phone='5359876543')['staffId']
+    api.save_permissions({'waiter': {'discount': True}})
+
+    engine = SyncEngine(client, creds)  # yeni açılış gibi: oturum refresh token'dan kurulur
+    status = engine.run_once()
+    assert status.online and not status.revoked
+    assert {'staff', 'staffPins', 'permissions'} <= status.changed
+    assert db.get_permission_matrix()['waiter']['discount'] is True
+
+    # 3) İnternetsiz PIN girişi önbellekten çalışır; giriş kaydı kuyruğa düşer.
+    user = db.login_with_pin(waiter_id, '730591')
+    assert user['gorev'] == 'Garson'
+    assert db.user_can(user, 'discount')
+    db.enqueue_op('audit', {'action': 'approval_voiditem', 'detail': 'Latte ×1', 'approvedBy': owner_id},
+                  waiter_id)
+    db.enqueue_op('addItems', {}, waiter_id)  # sunucu henüz desteklemiyor → kuyrukta bekler
+    assert db.outbox_counts() == (3, 0)
+
+    status = engine.run_once()
+    assert status.online
+    assert db.outbox_counts() == (1, 0)  # yalnızca desteklenmeyen işlem kaldı
+    assert db.get_pending_ops()[0]['op'] == 'addItems'
+
+    # Sunucu giriş zamanını personel kaydına yazdı ve bu da terminale geri indi.
+    engine.run_once()
+    assert db.get_staff(waiter_id)['last_login_at']
+
+    # 4) PIN sıfırlanınca yeni PIN terminale iner, eskisi geçersiz olur.
+    api.set_pin(waiter_id, '902817')
+    engine.run_once()
+    with pytest.raises(db.LoginError):
+        db.check_pin(waiter_id, '730591')
+    db.check_pin(waiter_id, '902817')
+
+    # 5) Pasife alınan personel giriş ekranından düşer.
+    api.set_active(waiter_id, False)
+    engine.run_once()
+    assert waiter_id not in {s['id'] for s in db.get_login_staff()}
+
+    # 6) Terminaller listesi ve iptal: bir sonraki senkronda terminal kilitlenir.
+    terminals = dict(api.list_terminals())
+    assert terminals[creds.terminal_id]['letter'] == creds.letter
+    api.revoke_terminal(creds.terminal_id)
+    status = SyncEngine(client, creds).run_once()
+    assert status.revoked

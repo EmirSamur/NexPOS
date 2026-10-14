@@ -4,8 +4,13 @@ NexPOS - Veritabanı Katmanı
 import sqlite3
 import os
 import sys
-import hashlib
+import json
+import time
+import uuid
 from datetime import datetime, timedelta
+
+from cloud.permissions import ROLE_LABELS, has_permission, normalize_permissions
+from cloud.pins import verify_pin
 
 # PyInstaller exe ile uyumlu DB_PATH
 if getattr(sys, 'frozen', False):
@@ -19,14 +24,11 @@ DB_PATH = os.path.join(BASE_DIR, "nexpos.db")
 
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
+    # Senkron işçisi ayrı bir thread'de yazdığı için kilit beklemesi uzun tutulur.
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
-
-
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
 
 
 def init_database():
@@ -88,6 +90,37 @@ def init_database():
         FOREIGN KEY (product_id) REFERENCES products(id),
         FOREIGN KEY (sorumlu_id) REFERENCES users(id))""")
 
+    # ---- Bulut önbelleği ve işlem kuyruğu (bkz. cloud/ ve MIMARI.md) ----
+    c.execute("""CREATE TABLE IF NOT EXISTS staff_cache (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, phone TEXT, role TEXT NOT NULL,
+        email TEXT, active INTEGER DEFAULT 1, deleted INTEGER DEFAULT 0,
+        pin_version INTEGER DEFAULT 0, permissions TEXT, last_login_at TEXT,
+        updated_at TEXT)""")
+
+    c.execute("""CREATE TABLE IF NOT EXISTS pin_cache (
+        staff_id TEXT PRIMARY KEY, record TEXT NOT NULL, pin_version INTEGER DEFAULT 0)""")
+
+    c.execute("""CREATE TABLE IF NOT EXISTS settings_cache (
+        key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT)""")
+
+    c.execute("""CREATE TABLE IF NOT EXISTS outbox (
+        op_id TEXT PRIMARY KEY, op TEXT NOT NULL, payload TEXT NOT NULL,
+        staff_id TEXT NOT NULL, created_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER DEFAULT 0, last_error TEXT)""")
+
+    c.execute("""CREATE TABLE IF NOT EXISTS sync_state (
+        key TEXT PRIMARY KEY, value TEXT)""")
+
+    c.execute("""CREATE TABLE IF NOT EXISTS login_attempts (
+        staff_id TEXT PRIMARY KEY, failures INTEGER DEFAULT 0, locked_until REAL DEFAULT 0)""")
+
+    # Buluttaki personel, eski siparişlerin bağlı olduğu users tablosunda da bir
+    # satırla temsil edilir (garson_id yabancı anahtarı bozulmasın diye).
+    user_cols = [r[1] for r in c.execute("PRAGMA table_info(users)").fetchall()]
+    if 'cloud_id' not in user_cols:
+        c.execute("ALTER TABLE users ADD COLUMN cloud_id TEXT")
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_cloud_id ON users(cloud_id)")
+
     conn.commit()
 
     if c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
@@ -98,12 +131,14 @@ def init_database():
 def _create_sample_data(conn):
     c = conn.cursor()
 
+    # Örnek siparişlerin garsonları. Giriş yapamazlar (şifre yok, pasif); gerçek
+    # personel buluttan gelir ve PIN ile giriş yapar.
     users = [
-        ("Deniz Yılmaz", "admin@nexpos.com", "5321234567", hash_password("admin123"), "Yönetici"),
-        ("Cem Akar", "cem@nexpos.com", "5359876543", hash_password("garson123"), "Garson"),
-        ("Elif Demir", "elif@nexpos.com", "5447654321", hash_password("garson123"), "Garson"),
+        ("Deniz Yılmaz", "admin@nexpos.com", "5321234567", "", "Yönetici"),
+        ("Cem Akar", "cem@nexpos.com", "5359876543", "", "Garson"),
+        ("Elif Demir", "elif@nexpos.com", "5447654321", "", "Garson"),
     ]
-    c.executemany("INSERT INTO users (ad_soyad,email,telefon,sifre,gorev) VALUES (?,?,?,?,?)", users)
+    c.executemany("INSERT INTO users (ad_soyad,email,telefon,sifre,gorev,aktif) VALUES (?,?,?,?,?,0)", users)
 
     c.execute("INSERT INTO regions (ad,sira) VALUES ('Salon',1)")
     salon_id = c.lastrowid
@@ -168,74 +203,6 @@ def _create_sample_data(conn):
 
 
 # ---- CRUD ----
-
-def authenticate_user(email_or_phone, password):
-    conn = get_connection()
-    hashed = hash_password(password)
-    user = conn.execute(
-        "SELECT * FROM users WHERE (email=? OR telefon=?) AND sifre=? AND aktif=1",
-        (email_or_phone, email_or_phone, hashed)).fetchone()
-    if user:
-        conn.execute("UPDATE users SET son_giris=? WHERE id=?",
-                      (datetime.now().strftime("%d.%m.%Y %H:%M"), user['id']))
-        conn.commit()
-    conn.close()
-    return dict(user) if user else None
-
-
-def get_all_users():
-    conn = get_connection()
-    rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-
-def add_user(ad_soyad, email, telefon, sifre, gorev):
-    conn = get_connection()
-    conn.execute("INSERT INTO users (ad_soyad,email,telefon,sifre,gorev) VALUES (?,?,?,?,?)",
-                 (ad_soyad, email, telefon, hash_password(sifre), gorev))
-    conn.commit()
-    conn.close()
-
-
-def update_user(user_id, ad_soyad, email, telefon, gorev):
-    """Kullanıcı bilgilerini güncelle (şifre hariç)"""
-    conn = get_connection()
-    conn.execute(
-        "UPDATE users SET ad_soyad=?, email=?, telefon=?, gorev=? WHERE id=?",
-        (ad_soyad, email, telefon, gorev, user_id)
-    )
-    conn.commit()
-    conn.close()
-
-
-def update_user_password(user_id, yeni_sifre):
-    """Kullanıcı şifresini güncelle"""
-    conn = get_connection()
-    conn.execute("UPDATE users SET sifre=? WHERE id=?", (hash_password(yeni_sifre), user_id))
-    conn.commit()
-    conn.close()
-
-
-def delete_user(user_id):
-    """
-    Kullanıcıyı sil. Aktif siparişi olan garson silinemez;
-    bu durumda soft-delete (aktif=0) uygulanır.
-    """
-    conn = get_connection()
-    active_orders = conn.execute(
-        "SELECT COUNT(*) FROM orders WHERE garson_id=? AND durum IN ('hazirlaniyor','bekliyor')",
-        (user_id,)
-    ).fetchone()[0]
-    if active_orders > 0:
-        # Aktif siparişi varsa sadece pasife al
-        conn.execute("UPDATE users SET aktif=0 WHERE id=?", (user_id,))
-    else:
-        conn.execute("DELETE FROM users WHERE id=?", (user_id,))
-    conn.commit()
-    conn.close()
-    return active_orders == 0  # True=tamamen silindi, False=pasife alındı
-
 
 def get_all_regions():
     conn = get_connection()
@@ -660,3 +627,312 @@ def get_toplam_iskonto():
     conn.close()
     toplam_iskonto = sum(max(0, r['ham_tutar'] - r['toplam_tutar']) for r in rows)
     return toplam_iskonto
+
+
+# =====================================================================
+# Bulut önbelleği: personel, PIN ve ayarlar
+# Senkron işçisi (cloud/sync.py) buluttan çektiklerini buraya yazar; ekranlar
+# yalnızca buradan okur. Böylece internet yokken de giriş yapılabilir.
+# =====================================================================
+
+MAX_PIN_FAILURES = 5
+PIN_LOCK_SECONDS = 5 * 60
+
+
+class LoginError(Exception):
+    """PIN girişi başarısız; mesaj doğrudan kullanıcıya gösterilir."""
+
+
+def upsert_staff(docs):
+    """docs: [(staff_id, firestore_alanlari)]"""
+    if not docs:
+        return
+    conn = get_connection()
+    for staff_id, d in docs:
+        conn.execute("""INSERT INTO staff_cache
+            (id,name,phone,role,email,active,deleted,pin_version,permissions,last_login_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET name=excluded.name, phone=excluded.phone,
+              role=excluded.role, email=excluded.email, active=excluded.active,
+              deleted=excluded.deleted, pin_version=excluded.pin_version,
+              permissions=excluded.permissions, last_login_at=excluded.last_login_at,
+              updated_at=excluded.updated_at""",
+            (staff_id, d.get('name', ''), d.get('phone'), d.get('role', 'waiter'), d.get('email'),
+             1 if d.get('active') else 0, 1 if d.get('deleted') else 0,
+             int(d.get('pinVersion') or 0),
+             json.dumps(d['permissions']) if isinstance(d.get('permissions'), dict) else None,
+             d.get('lastLoginAt'), d.get('updatedAt')))
+        _sync_local_user(conn, staff_id)
+    conn.commit()
+    conn.close()
+
+
+def upsert_pins(docs):
+    if not docs:
+        return
+    conn = get_connection()
+    for staff_id, d in docs:
+        conn.execute("""INSERT INTO pin_cache (staff_id, record, pin_version) VALUES (?,?,?)
+            ON CONFLICT(staff_id) DO UPDATE SET record=excluded.record, pin_version=excluded.pin_version""",
+            (staff_id, json.dumps(d), int(d.get('pinVersion') or 0)))
+    conn.commit()
+    conn.close()
+
+
+def _sync_local_user(conn, staff_id):
+    """staff_cache satırını users tablosuna yansıtır ve yerel id'yi döndürür."""
+    s = conn.execute("SELECT * FROM staff_cache WHERE id=?", (staff_id,)).fetchone()
+    if not s:
+        return None
+    aktif = 1 if s['active'] and not s['deleted'] else 0
+    gorev = ROLE_LABELS.get(s['role'], s['role'])
+    row = conn.execute("SELECT id FROM users WHERE cloud_id=?", (staff_id,)).fetchone()
+    if row:
+        conn.execute("UPDATE users SET ad_soyad=?, email=?, telefon=?, gorev=?, aktif=? WHERE id=?",
+                     (s['name'], s['email'], s['phone'], gorev, aktif, row['id']))
+        return row['id']
+    cur = conn.execute(
+        "INSERT INTO users (ad_soyad,email,telefon,sifre,gorev,aktif,cloud_id) VALUES (?,?,?,?,?,?,?)",
+        (s['name'], s['email'], s['phone'], '', gorev, aktif, staff_id))
+    return cur.lastrowid
+
+
+def set_setting(key, value):
+    conn = get_connection()
+    conn.execute("""INSERT INTO settings_cache (key,value,updated_at) VALUES (?,?,?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
+        (key, json.dumps(value), datetime.now().isoformat(timespec='seconds')))
+    conn.commit()
+    conn.close()
+
+
+def get_setting(key, default=None):
+    conn = get_connection()
+    row = conn.execute("SELECT value FROM settings_cache WHERE key=?", (key,)).fetchone()
+    conn.close()
+    return json.loads(row['value']) if row else default
+
+
+def get_sync_state(key, default=None):
+    conn = get_connection()
+    row = conn.execute("SELECT value FROM sync_state WHERE key=?", (key,)).fetchone()
+    conn.close()
+    return row['value'] if row else default
+
+
+def set_sync_state(key, value):
+    conn = get_connection()
+    conn.execute("""INSERT INTO sync_state (key,value) VALUES (?,?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value""", (key, value))
+    conn.commit()
+    conn.close()
+
+
+def get_permission_matrix():
+    data = get_setting('permissions')
+    return normalize_permissions(data.get('roles') if isinstance(data, dict) else None)
+
+
+def _staff_to_user(row, local_id):
+    """staff_cache satırını ekranların beklediği kullanıcı sözlüğüne çevirir."""
+    return {
+        'id': local_id,                     # users.id (eski siparişlerle uyumlu)
+        'cloud_id': row['id'],
+        'ad_soyad': row['name'],
+        'gorev': ROLE_LABELS.get(row['role'], row['role']),
+        'role': row['role'],
+        'email': row['email'] or '',
+        'telefon': row['phone'] or '',
+        'permissions': json.loads(row['permissions']) if row['permissions'] else None,
+    }
+
+
+def get_all_staff(include_inactive=True):
+    """Yönetim paneli için personel listesi."""
+    conn = get_connection()
+    q = "SELECT * FROM staff_cache WHERE deleted=0"
+    if not include_inactive:
+        q += " AND active=1"
+    rows = conn.execute(q + " ORDER BY active DESC, name COLLATE NOCASE").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_login_staff():
+    """Giriş ekranındaki kartlar: aktif personel."""
+    return get_all_staff(include_inactive=False)
+
+
+def get_staff(staff_id):
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM staff_cache WHERE id=?", (staff_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_all_users():
+    """Eski arayüzle uyumluluk: personel listesi users biçiminde."""
+    conn = get_connection()
+    rows = conn.execute("""SELECT s.*, u.id AS local_id FROM staff_cache s
+        LEFT JOIN users u ON u.cloud_id = s.id WHERE s.deleted=0 ORDER BY s.name""").fetchall()
+    conn.close()
+    return [_staff_to_user(r, r['local_id']) for r in rows]
+
+
+def check_pin(staff_id, pin):
+    """
+    PIN'i önbellekteki özetle karşılaştırır (internet gerekmez). Başarılıysa personel
+    satırını döndürür, değilse LoginError fırlatır. 5 hatalı denemede kart kilitlenir.
+    """
+    conn = get_connection()
+    try:
+        staff = conn.execute(
+            "SELECT * FROM staff_cache WHERE id=? AND active=1 AND deleted=0", (staff_id,)).fetchone()
+        if not staff:
+            raise LoginError("Personel bulunamadı veya pasif durumda.")
+
+        att = conn.execute("SELECT * FROM login_attempts WHERE staff_id=?", (staff_id,)).fetchone()
+        now = time.time()
+        if att and att['locked_until'] > now:
+            kalan = int((att['locked_until'] - now) // 60) + 1
+            raise LoginError(f"Çok fazla hatalı deneme yapıldı. {kalan} dakika sonra tekrar deneyin.")
+
+        pin_row = conn.execute("SELECT record FROM pin_cache WHERE staff_id=?", (staff_id,)).fetchone()
+        if not pin_row:
+            raise LoginError("Bu kişinin PIN'i henüz bu bilgisayara inmedi. "
+                             "İnternet bağlantısını kontrol edip biraz sonra tekrar deneyin.")
+
+        if verify_pin(pin, json.loads(pin_row['record'])):
+            conn.execute("DELETE FROM login_attempts WHERE staff_id=?", (staff_id,))
+            conn.commit()
+            return dict(staff)
+
+        failures = (att['failures'] if att else 0) + 1
+        if failures >= MAX_PIN_FAILURES:
+            conn.execute("""INSERT INTO login_attempts (staff_id,failures,locked_until) VALUES (?,0,?)
+                ON CONFLICT(staff_id) DO UPDATE SET failures=0, locked_until=excluded.locked_until""",
+                (staff_id, now + PIN_LOCK_SECONDS))
+            conn.commit()
+            raise LoginError(f"{MAX_PIN_FAILURES} kez hatalı PIN girildi. "
+                             f"Bu kart {PIN_LOCK_SECONDS // 60} dakika kilitlendi.")
+        conn.execute("""INSERT INTO login_attempts (staff_id,failures,locked_until) VALUES (?,?,0)
+            ON CONFLICT(staff_id) DO UPDATE SET failures=excluded.failures""", (staff_id, failures))
+        conn.commit()
+        raise LoginError(f"PIN hatalı. Kalan deneme: {MAX_PIN_FAILURES - failures}")
+    finally:
+        conn.close()
+
+
+def login_with_pin(staff_id, pin):
+    """PIN ile giriş: kullanıcı sözlüğünü döndürür, giriş kaydını kuyruğa yazar."""
+    check_pin(staff_id, pin)
+    return start_session(staff_id, method='pin')
+
+
+def start_session(staff_id, method):
+    conn = get_connection()
+    local_id = _sync_local_user(conn, staff_id)
+    conn.execute("UPDATE users SET son_giris=? WHERE id=?",
+                 (datetime.now().strftime("%d.%m.%Y %H:%M"), local_id))
+    row = conn.execute("SELECT * FROM staff_cache WHERE id=?", (staff_id,)).fetchone()
+    enqueue_op('staffLogin', {'method': method}, staff_id, conn=conn)
+    conn.commit()
+    conn.close()
+    return _staff_to_user(row, local_id)
+
+
+def user_can(user, permission):
+    if not user:
+        return False
+    return has_permission(get_permission_matrix(), user.get('role'), permission, user.get('permissions'))
+
+
+def staff_with_permission(permission, exclude_id=None):
+    """Yetkili onayı penceresinde listelenecek kişiler."""
+    matrix = get_permission_matrix()
+    result = []
+    for s in get_login_staff():
+        overrides = json.loads(s['permissions']) if s['permissions'] else None
+        if s['id'] != exclude_id and has_permission(matrix, s['role'], permission, overrides):
+            result.append(s)
+    return result
+
+
+def reset_cloud_cache():
+    """Terminal iptal edildiğinde ya da yeniden eşlenirken önbelleği temizler."""
+    conn = get_connection()
+    for t in ('staff_cache', 'pin_cache', 'settings_cache', 'sync_state', 'login_attempts'):
+        conn.execute(f"DELETE FROM {t}")
+    conn.commit()
+    conn.close()
+
+
+# =====================================================================
+# İşlem kuyruğu (outbox)
+# Terminalde yapılan her işlem önce burada saklanır, internet varken sırayla
+# buluta gönderilir (cloud/sync.py). Bilgisayar kapansa da kaybolmaz.
+# =====================================================================
+
+def enqueue_op(op, payload, staff_id, conn=None):
+    """İşlemi kuyruğa ekler. conn verilirse çağıranın transaction'ına katılır."""
+    own = conn is None
+    if own:
+        conn = get_connection()
+    op_id = str(uuid.uuid4())
+    created = datetime.now().astimezone().isoformat(timespec='seconds')
+    conn.execute("INSERT INTO outbox (op_id,op,payload,staff_id,created_at) VALUES (?,?,?,?,?)",
+                 (op_id, op, json.dumps(payload, ensure_ascii=False), staff_id, created))
+    if own:
+        conn.commit()
+        conn.close()
+    return op_id
+
+
+def get_pending_ops(limit=50):
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM outbox WHERE status='pending' ORDER BY created_at, rowid LIMIT ?",
+        (limit,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def complete_ops(op_ids):
+    if not op_ids:
+        return
+    conn = get_connection()
+    conn.executemany("DELETE FROM outbox WHERE op_id=?", [(i,) for i in op_ids])
+    conn.commit()
+    conn.close()
+
+
+def fail_op(op_id, error):
+    """Sunucunun reddettiği işlem: kuyrukta 'hatalı' olarak kalır, panelde gösterilir."""
+    conn = get_connection()
+    conn.execute("UPDATE outbox SET status='failed', attempts=attempts+1, last_error=? WHERE op_id=?",
+                 (error, op_id))
+    conn.commit()
+    conn.close()
+
+
+def defer_op(op_id, error):
+    """Sunucunun henüz tanımadığı işlem: kuyrukta bekler, sonra tekrar denenir."""
+    conn = get_connection()
+    conn.execute("UPDATE outbox SET attempts=attempts+1, last_error=? WHERE op_id=?", (error, op_id))
+    conn.commit()
+    conn.close()
+
+
+def outbox_counts():
+    conn = get_connection()
+    rows = conn.execute("SELECT status, COUNT(*) AS n FROM outbox GROUP BY status").fetchall()
+    conn.close()
+    counts = {r['status']: r['n'] for r in rows}
+    return counts.get('pending', 0), counts.get('failed', 0)
+
+
+def get_failed_ops():
+    conn = get_connection()
+    rows = conn.execute("SELECT * FROM outbox WHERE status='failed' ORDER BY created_at").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
