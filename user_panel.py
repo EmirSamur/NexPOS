@@ -13,6 +13,7 @@ from styles import COLORS, FONTS, ICONS
 from widgets import TableCard, OrderCard, InfoDialog, add_shadow, ToastNotification
 from access import request_approval
 from menu_pages import SoldOutDialog
+from floor_editor import FloorStatusView
 from money import format_tl
 from cloud.permissions import PANEL_ROLES
 import database
@@ -187,11 +188,23 @@ class UserPanel(QWidget):
         self.region_tabs_layout.setAlignment(Qt.AlignLeft)
         ly.addLayout(self.region_tabs_layout)
 
-        # Grid
+        # Plan / Liste görünümü (seçim bu bilgisayarda hatırlanır)
+        self.floor_mode = database.get_sync_state('ui:floor_view', 'plan')
+        self.view_toggle = QPushButton()
+        self.view_toggle.setCursor(Qt.PointingHandCursor)
+        self.view_toggle.setObjectName("ghostBtn")
+        self.view_toggle.clicked.connect(self._toggle_floor_mode)
+
+        self.table_stack = QStackedWidget()
         self.user_masa_scroll = QScrollArea()
         self.user_masa_scroll.setWidgetResizable(True)
         self.user_masa_scroll.setStyleSheet("border: none; background: transparent;")
-        ly.addWidget(self.user_masa_scroll, 1)
+        self.floor_view = FloorStatusView()
+        self.floor_view.table_clicked.connect(self._on_table_clicked)
+        self.floor_view.reserve_toggled.connect(self._toggle_reserved)
+        self.table_stack.addWidget(self.user_masa_scroll)
+        self.table_stack.addWidget(self.floor_view)
+        ly.addWidget(self.table_stack, 1)
 
         self.current_region = None
         self._refresh_bolgeler()
@@ -235,7 +248,20 @@ class UserPanel(QWidget):
             btn.clicked.connect(lambda _, r=rid: self._select_region(r))
             self.region_tabs_layout.addWidget(btn)
 
+        self.region_tabs_layout.addStretch()
+        self.region_tabs_layout.addWidget(self.view_toggle)
         self._load_tables(self.current_region)
+
+    def _toggle_floor_mode(self):
+        self.floor_mode = 'list' if self.floor_mode == 'plan' else 'plan'
+        database.set_sync_state('ui:floor_view', self.floor_mode)
+        self._refresh_bolgeler()
+
+    def _toggle_reserved(self, table):
+        reserve = table.get('durum') == 'bos'
+        if database.set_table_reserved(table['id'], reserve):
+            ToastNotification(self, f"{table['ad']} {'rezerve edildi' if reserve else 'rezervasyonu kaldırıldı'}.", "info")
+        self._refresh_bolgeler()
 
     def _select_region(self, rid):
         self.current_region = rid
@@ -244,7 +270,17 @@ class UserPanel(QWidget):
     def _load_tables(self, rid):
         if not rid:
             return
-            
+        region = next((r for r in database.get_all_regions() if r['id'] == rid), None)
+        has_plan = bool(region and region.get('cloud_id') and database.menu_item('areas', region['cloud_id']))
+        use_plan = has_plan and self.floor_mode == 'plan'
+        self.view_toggle.setVisible(has_plan)
+        self.view_toggle.setText("☰  Liste görünümü" if use_plan else "▦  Plan görünümü")
+        if use_plan:
+            self.floor_view.show_area(region['cloud_id'])
+            self.table_stack.setCurrentWidget(self.floor_view)
+            return
+        self.table_stack.setCurrentWidget(self.user_masa_scroll)
+
         tables = database.get_tables_by_region(rid)
         cw = QWidget()
         cw.setStyleSheet("background: transparent;")

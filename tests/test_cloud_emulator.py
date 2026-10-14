@@ -172,3 +172,71 @@ def test_menu_aktarim_duzenleme_tukendi_toplu_fiyat_fotograf(db, client):
     api.save_product({'categoryId': latte['categoryId'], 'name': 'Latte', 'price': 10500, 'imageUrl': url}, latte['id'])
     engine.run_once()
     assert db.menu_item('products', latte['id'])['imageUrl'] == url
+
+
+def test_salon_aktarim_plan_qr_ayarlar(db, client):
+    import requests
+    from cloud.admin_api import AdminApi
+    from cloud.firebase_client import ApiError
+    from cloud.pairing import pair_terminal
+    from cloud.sync import SyncEngine
+
+    requests.delete('http://127.0.0.1:8080/emulator/v1/projects/demo-nexpos/databases/(default)/documents',
+                    timeout=10).raise_for_status()
+    email = f'salon-{uuid.uuid4().hex[:6]}@kafe.test'
+    create_owner(email)
+    creds, _ = pair_terminal(client, email, 'sahip-sifre-1', 'Salon Kasa')
+    api = AdminApi(client, client.sign_in_with_password(email, 'sahip-sifre-1'))
+    engine = SyncEngine(client, creds)
+
+    # 1) Eski düzen aktarılır; açık adisyonlar masalarında kalır, çift masa oluşmaz.
+    result = api.import_floor(db.legacy_floor_payload())
+    db.apply_floor_mapping(result['areas'], result['tables'])
+    status = engine.run_once()
+    assert {'areas', 'tables'} <= status.changed
+    areas = db.floor_areas()
+    assert [a['name'] for a in areas] == ['Salon', 'Teras', 'Bahçe']
+    salon = areas[0]
+    states = {t['name']: t for t in db.floor_table_states(salon['id'])}
+    assert len(states) == 8 and states['Masa 2']['legacy']['durum'] == 'dolu'
+    assert sum(len(db.get_tables_by_region(r['id'])) for r in db.get_all_regions()) == 24
+
+    # 2) Plan kaydı: Masa 1 yuvarlak olup taşınır, Masa 8 silinir, yeni masa ve bar eklenir.
+    tables, removed = [], []
+    for t in db.floor_tables(salon['id']):
+        if t['name'] == 'Masa 8':
+            removed.append(t['id'])
+            continue
+        geo = {k: t[k] for k in ('x', 'y', 'w', 'h', 'rotation')}
+        item = {'id': t['id'], 'name': t['name'], 'shape': t['shape'], 'capacity': t['capacity'], **geo}
+        if t['name'] == 'Masa 1':
+            item.update(shape='round', w=100, h=100, x=600, y=500, capacity=2)
+        tables.append(item)
+    tables.append({'tempId': 'yeni', 'name': 'Masa 25', 'shape': 'rect', 'capacity': 6,
+                   'x': 800, 'y': 600, 'w': 200, 'h': 120, 'rotation': 90})
+    bar = [{'id': 'bar1', 'kind': 'bar', 'label': 'Bar', 'x': 820, 'y': 40, 'w': 320, 'h': 70, 'rotation': 0}]
+    res = api.save_floor_plan(salon['id'], salon['layoutVersion'], tables, bar, removed)
+    engine.run_once()
+    states = {t['name']: t for t in db.floor_table_states(salon['id'])}
+    assert 'Masa 8' not in states and states['Masa 25']['legacy'] is not None
+    assert (states['Masa 1']['shape'], states['Masa 1']['x']) == ('round', 600)
+    assert db.menu_item('areas', salon['id'])['fixtures'][0]['label'] == 'Bar'
+    assert res['created']['yeni'] == states['Masa 25']['id']
+
+    # Eski sürümle kaydetme reddedilir (iki kişi aynı anda düzenlediyse)
+    with pytest.raises(ApiError) as e:
+        api.save_floor_plan(salon['id'], salon['layoutVersion'], tables, bar)
+    assert e.value.code == 'aborted'
+
+    # 3) QR yenileme yeni anahtarı terminale indirir.
+    old = states['Masa 1']['qrToken']
+    api.rotate_table_qr([states['Masa 1']['id']])
+    engine.run_once()
+    assert db.menu_item('tables', states['Masa 1']['id'])['qrToken'] != old
+
+    # 4) Genel ayarlar terminale iner (otomatik kilit dahil).
+    api.save_general_settings('Velvet Kafe', 'https://velvet.web.app/masa', 5)
+    status = engine.run_once()
+    assert 'general' in status.changed
+    assert db.general_settings() == {'cafeName': 'Velvet Kafe', 'qrBaseUrl': 'https://velvet.web.app/masa',
+                                     'idleLockMinutes': 5}

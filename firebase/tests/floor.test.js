@@ -49,9 +49,9 @@ test('saveFloorPlan: ekle, güncelle, sil, dekor; sürüm çakışması', async 
   const b1 = r1.created.a;
   const b2 = r1.created.b;
 
-  // B1 taşınır, B2 silinir, B3 eklenir
+  // B1 taşınır, B2 açıkça silinir, B3 eklenir
   const r2 = await owner.call('saveFloorPlan', {
-    areaId, expectedVersion: 1,
+    areaId, expectedVersion: 1, removedTableIds: [b2],
     tables: [table({ id: b1, name: 'B1', x: 500, rotation: 90, shape: 'rect', w: 200, capacity: 6 }), table({ tempId: 'c', name: 'B3' })],
     fixtures: [],
   });
@@ -61,14 +61,23 @@ test('saveFloorPlan: ekle, güncelle, sil, dekor; sürüm çakışması', async 
   assert.equal((await adminDb.doc(`tables/${b2}`).get()).data().deleted, true);
   assert.equal((await adminDb.doc(`areas/${areaId}`).get()).data().fixtures.length, 0);
 
+  // Listede adı geçmeyen masaya dokunulmaz (eksik önbellekle kaydetmek masa silmez)
+  await owner.call('saveFloorPlan', { areaId, expectedVersion: 2, tables: [], fixtures: [] });
+  assert.equal((await adminDb.doc(`tables/${b1}`).get()).data().deleted, false);
+  // Dokunulmayan masayla aynı adı taşıyan yeni masa reddedilir
+  await expectCallError(owner.call('saveFloorPlan', {
+    areaId, expectedVersion: 3, tables: [table({ tempId: 'd', name: 'b1' })], fixtures: [] }), 'invalid-argument');
+
   // Eski sürümle kaydetmeye çalışan ikinci kişi reddedilir
   await expectCallError(owner.call('saveFloorPlan', { areaId, expectedVersion: 1, tables: [], fixtures: [] }), 'aborted');
   // Başka bölgenin masası bu bölgeye yazılamaz
   const other = (await adminDb.collection('tables').where('name', '==', 'Masa 1').get()).docs[0].id;
   await expectCallError(owner.call('saveFloorPlan', {
-    areaId, expectedVersion: 2, tables: [table({ id: other, name: 'Masa 1' })], fixtures: [] }), 'not-found');
+    areaId, expectedVersion: 3, tables: [table({ id: other, name: 'Masa 1' })], fixtures: [] }), 'not-found');
   await expectCallError(owner.call('saveFloorPlan', {
-    areaId, expectedVersion: 2, tables: [table({ tempId: 'x', name: 'Y', x: 5000 })], fixtures: [] }), 'invalid-argument');
+    areaId, expectedVersion: 3, tables: [], removedTableIds: [other], fixtures: [] }), 'not-found');
+  await expectCallError(owner.call('saveFloorPlan', {
+    areaId, expectedVersion: 3, tables: [table({ tempId: 'x', name: 'Y', x: 5000 })], fixtures: [] }), 'invalid-argument');
 });
 
 test('QR yenileme eski anahtarı değiştirir', async () => {

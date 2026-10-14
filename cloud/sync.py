@@ -30,7 +30,12 @@ PULL_COLLECTIONS = {
     'categories': lambda docs: database.upsert_menu('categories', docs),
     'optionGroups': lambda docs: database.upsert_menu('optionGroups', docs),
     'products': lambda docs: database.upsert_menu('products', docs),
+    'areas': lambda docs: database.upsert_floor('areas', docs),
+    'tables': lambda docs: database.upsert_floor('tables', docs),
 }
+
+# Tek doküman olarak çekilen ayarlar: settings/<ad> → settings_cache[<ad>]
+PULL_SETTINGS = ('permissions', 'general')
 
 MENU_CHANGES = {'categories', 'optionGroups', 'products'}
 
@@ -105,12 +110,13 @@ class SyncEngine:
                     database.set_sync_state(key, newest)
                 changed.add(collection)
 
-        perms = self.client.get_doc('settings/permissions', session)
-        if perms:
-            _, data = perms
-            if data.get('updatedAt') != (database.get_setting('permissions') or {}).get('updatedAt'):
-                database.set_setting('permissions', data)
-                changed.add('permissions')
+        for name in PULL_SETTINGS:
+            doc = self.client.get_doc(f'settings/{name}', session)
+            if doc:
+                _, data = doc
+                if data.get('updatedAt') != (database.get_setting(name) or {}).get('updatedAt'):
+                    database.set_setting(name, data)
+                    changed.add(name)
         return changed
 
     def check_revoked(self):

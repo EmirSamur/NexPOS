@@ -63,6 +63,12 @@ CALLABLE_STATUS = {
     'ALREADY_EXISTS': 'already-exists',
     'FAILED_PRECONDITION': 'failed-precondition',
     'RESOURCE_EXHAUSTED': 'resource-exhausted',
+    'ABORTED': 'aborted',
+    'OUT_OF_RANGE': 'out-of-range',
+    'UNIMPLEMENTED': 'unimplemented',
+    'DEADLINE_EXCEEDED': 'deadline-exceeded',
+    'CANCELLED': 'cancelled',
+    'DATA_LOSS': 'data-loss',
     'INTERNAL': 'internal',
     'UNAVAILABLE': 'unavailable',
 }

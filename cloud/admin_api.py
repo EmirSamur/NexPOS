@@ -81,6 +81,28 @@ class AdminApi:
     def import_menu(self, categories, products):
         return self._call('importMenu', {'categories': categories, 'products': products})
 
+    # --------------------------------------------------------- salon planı
+    def save_area(self, name, area_id=None):
+        return self._call('saveArea', {'name': name, **({'id': area_id} if area_id else {})})
+
+    def delete_area(self, area_id):
+        return self._call('deleteArea', {'id': area_id})
+
+    def save_floor_plan(self, area_id, expected_version, tables, fixtures, removed_table_ids=()):
+        return self._call('saveFloorPlan', {'areaId': area_id, 'expectedVersion': expected_version,
+                                            'tables': tables, 'fixtures': fixtures,
+                                            'removedTableIds': list(removed_table_ids)})
+
+    def rotate_table_qr(self, table_ids):
+        return self._call('rotateTableQr', {'tableIds': list(table_ids)})
+
+    def import_floor(self, areas):
+        return self._call('importFloor', {'areas': areas})
+
+    def save_general_settings(self, cafe_name, qr_base_url, idle_lock_minutes):
+        return self._call('saveGeneralSettings', {'cafeName': cafe_name, 'qrBaseUrl': qr_base_url,
+                                                  'idleLockMinutes': idle_lock_minutes})
+
     def upload_product_image(self, data, content_type='image/jpeg'):
         """Fotoğrafı Storage'a yükler ve herkese açık indirme adresini döndürür."""
         self.session = self.client.ensure_fresh(self.session)

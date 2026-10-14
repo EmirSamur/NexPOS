@@ -92,6 +92,21 @@ internetsiz de devam eder. Yönetim paneli → Tanımlamalar → **Menü / Ürü
   Garson ekranında **⛔ Tükendi** düğmesinden de yapılır.
 - **Toplu Fiyat** ile seçili kategorilere yüzde/tutar zam uygulanır; önce önizleme gösterilir.
 
+## Salon ve masa planı
+
+Yönetim paneli → Tanımlamalar → **Masa / Bölgeler**:
+
+- Bulutta plan yoksa **"Buluta Aktar"** ile NexPOS'taki bölgeler ve masalar bir kez aktarılır.
+- Masalar sürükle-bırakla yerleştirilir, köşeden boyutlandırılır, 90° döndürülür; dekor öğeleri
+  (bar tezgâhı, duvar, kapı, bitki) eklenebilir. Plan **"Planı Kaydet"** ile tek seferde buluta gider;
+  aynı anda başkası kaydettiyse uyarı verilir.
+- Her masanın QR kodu vardır: **Bölgenin tümü** ya da **Seçilileri yazdır** A4'e 6'lı etiket PDF'i üretir.
+  **QR yenile** eski etiketi geçersiz kılar.
+- QR adresi ve etiketteki kafe adı **Ayarlar → Genel Ayarlar**'dan değiştirilir (varsayılan
+  `https://<proje>.web.app/masa`).
+- Garson ekranında **Plan / Liste** görünümü arasında geçilir; plan görünümünde boş masaya sağ tıklayıp
+  **Rezerve et** seçilebilir.
+
 ## Geliştirme: emülatörle çalışma
 
 Canlı veriye dokunmadan denemek için:

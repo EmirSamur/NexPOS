@@ -16,6 +16,10 @@ from widgets import (StatCard, TableCard, ProductCard, SidebarButton,
                      ExpandableSection, PageHeader, BarChart, DonutChart, InfoDialog, add_shadow, ToastNotification)
 from admin_access_pages import StaffPage, PermissionsPage, TerminalsPage
 from menu_pages import MenuPage
+from floor_editor import FloorPlanPage
+from admin_access_pages import cloud_action
+from cloud.context import ctx
+from qr_print import default_base_url
 from cloud.permissions import PANEL_ROLES
 import database
 
@@ -143,7 +147,8 @@ class AdminPanel(QWidget):
         layout.addWidget(logo_f)
 
         # İşletme adı
-        shop = QLabel(f"  {ICONS['home']}  VELVET LOUNGE - 34001")
+        shop = QLabel(f"  {ICONS['home']}  {database.general_settings()['cafeName'].upper()}")
+        self.shop_label = shop
         shop.setFixedHeight(40)
         shop.setFont(QFont(FONTS['family'], FONTS['size_xs'], QFont.Bold))
         shop.setStyleSheet(f"color: {COLORS['sidebar_text_active']}; background: rgba(255,255,255,0.05); padding-left: 12px;")
@@ -248,7 +253,7 @@ class AdminPanel(QWidget):
         ly.setContentsMargins(24, 0, 24, 0)
         ly.setSpacing(12)
 
-        self.page_title = QLabel("Velvet Lounge Analytics")
+        self.page_title = QLabel("Dashboard")
         self.page_title.setFont(QFont(FONTS['family'], FONTS['size_lg'], QFont.Bold))
         self.page_title.setStyleSheet(f"color: {COLORS['text_primary']}; background: transparent;")
         ly.addWidget(self.page_title)
@@ -300,6 +305,9 @@ class AdminPanel(QWidget):
 
     def _show_page(self, idx):
         if not self._can_see(idx):
+            return
+        current = self.pages.currentWidget()
+        if current is not self.pages.widget(idx) and hasattr(current, 'can_leave') and not current.can_leave():
             return
         self.pages.setCurrentIndex(idx)
         page = self.pages.widget(idx)
@@ -466,230 +474,9 @@ class AdminPanel(QWidget):
 
     # ==================== MASA / BÖLGELER ====================
     def _create_masa_bolge_page(self):
-        page = QWidget()
-        ly = QVBoxLayout(page)
-        ly.setContentsMargins(32, 24, 32, 32)
-        ly.setSpacing(16)
+        self.floor_page = FloorPlanPage(self.user)
+        return self.floor_page
 
-        header = PageHeader("Masa & Bölge Yönetimi",
-                           "Restoranınıza ait fiziksel alanları ve masaları konfigüre edin.",
-                           COLORS['primary'], ICONS['table'])
-        ly.addWidget(header)
-
-        # Aksiyonlar
-        acts = QHBoxLayout()
-        acts.addStretch()
-        
-        btn_duzenle = QPushButton(f"{ICONS['edit']} Bölgeleri Düzenle")
-        btn_duzenle.setObjectName("ghostBtn")
-        btn_duzenle.clicked.connect(lambda: InfoDialog("Bölgeleri Düzenle", "Bölge sıralamasını ve ayarlarını değiştirmek için yakında gelişmiş sürükle-bırak desteği eklenecektir.", COLORS['info'], self).exec())
-
-        btn_yeni_bolge = QPushButton(f"{ICONS['plus']} Yeni Bölge")
-        btn_yeni_bolge.setObjectName("outlineBtn")
-        btn_yeni_bolge.clicked.connect(self._add_region_dialog)
-
-        btn_yeni_masa = QPushButton(f"{ICONS['plus']} Yeni Masa")
-        btn_yeni_masa.setFixedHeight(44)
-        btn_yeni_masa.setCursor(Qt.PointingHandCursor)
-        btn_yeni_masa.setStyleSheet(f"""
-            QPushButton {{ background: {COLORS['primary']}; border: none; color: white;
-                font-size: 14px; font-weight: bold; border-radius: 8px; padding: 0 20px; }}
-            QPushButton:hover {{ background: {COLORS['primary_dark']}; }}
-        """)
-        btn_yeni_masa.clicked.connect(self._add_table_dialog)
-
-        acts.addWidget(btn_duzenle)
-        acts.addSpacing(16)
-        acts.addWidget(btn_yeni_bolge)
-        acts.addWidget(btn_yeni_masa)
-        ly.addLayout(acts)
-
-        # Bölge tabları
-        self.admin_region_tabs = QHBoxLayout()
-        self.admin_region_tabs.setSpacing(8)
-        ly.addLayout(self.admin_region_tabs)
-
-        self.masa_scroll = QScrollArea()
-        self.masa_scroll.setWidgetResizable(True)
-        self.masa_scroll.setStyleSheet("border: none; background: transparent;")
-        ly.addWidget(self.masa_scroll, 1)
-
-        self.admin_current_region = None
-        self._refresh_masa_grid()
-        return page
-
-    def _refresh_masa_grid(self):
-        while self.admin_region_tabs.count():
-            item = self.admin_region_tabs.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
-        regions = database.get_all_regions()
-        if not self.admin_current_region and regions:
-            self.admin_current_region = regions[0]['id']
-
-        for r in regions:
-            btn = QPushButton(r['ad'])
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setCheckable(True)
-            btn.setChecked(r['id'] == self.admin_current_region)
-            rid = r['id']
-            btn.clicked.connect(lambda _, rid=rid: self._select_admin_region(rid))
-
-            if btn.isChecked():
-                btn.setStyleSheet(f"""
-                    QPushButton {{ border: none; border-bottom: 3px solid {COLORS['primary']};
-                        padding: 8px 24px; font-size: {FONTS['size_md']}px;
-                        font-weight: bold; color: {COLORS['primary']}; background: transparent; }}
-                """)
-            else:
-                btn.setStyleSheet(f"""
-                    QPushButton {{ border: none; padding: 8px 24px; border-bottom: 3px solid transparent;
-                        font-size: {FONTS['size_md']}px; color: {COLORS['text_secondary']};
-                        background: transparent; font-weight: bold; }}
-                    QPushButton:hover {{ color: {COLORS['text_primary']}; background: {COLORS['bg_hover']}; border-radius: 4px; }}
-                """)
-            self.admin_region_tabs.addWidget(btn)
-        self.admin_region_tabs.addStretch()
-
-        if self.admin_current_region:
-            tables = database.get_tables_by_region(self.admin_current_region)
-            cw = QWidget()
-            cw.setStyleSheet("background: transparent;")
-            grid = QGridLayout(cw)
-            grid.setSpacing(16)
-            grid.setContentsMargins(0, 16, 0, 16)
-            for i, t in enumerate(tables):
-                card = self._create_admin_table_card(t)
-                grid.addWidget(card, i // 5, i % 5)
-            # Add stretch to push items to top-left
-            grid.setRowStretch(grid.rowCount(), 1)
-            grid.setColumnStretch(grid.columnCount(), 1)
-            self.masa_scroll.setWidget(cw)
-
-    def _create_admin_table_card(self, t):
-        card = QFrame()
-        card.setFixedSize(190, 110)
-        card.setStyleSheet(f"""
-            QFrame {{ background: white; border: 1px solid {COLORS['border']}; border-radius: 12px; }}
-            QFrame:hover {{ border-color: {COLORS['primary_light']}; }}
-        """)
-        add_shadow(card, blur=10, offset_y=2, color=QColor(0,0,0,10))
-        ly = QVBoxLayout(card)
-        ly.setContentsMargins(14, 10, 14, 10)
-
-        top = QHBoxLayout()
-        top.addStretch()
-        edit_btn = QPushButton(f"{ICONS['edit']} Düzenle")
-        edit_btn.setFixedSize(65, 24)
-        edit_btn.setCursor(Qt.PointingHandCursor)
-        edit_btn.setStyleSheet(f"""
-            QPushButton {{ border: 1px solid {COLORS['primary']}; font-size: 10px; font-weight: bold;
-                background: {COLORS['primary_bg']}; color: {COLORS['primary']}; border-radius: 6px; }}
-            QPushButton:hover {{ background: {COLORS['primary']}; color: white; }}
-        """)
-        m_id = t['id']
-        m_ad = t['ad']
-        m_durum = t.get('durum', 'bos')
-
-        def edit_table_action():
-            dlg = QDialog(self)
-            dlg.setWindowTitle(f"Masa Düzenle — {m_ad}")
-            dlg.setFixedSize(360, 200)
-            fl = QFormLayout(dlg)
-            fl.setContentsMargins(28, 24, 28, 24)
-            fl.setSpacing(14)
-            ad_edit = QLineEdit(m_ad)
-            ad_edit.setFixedHeight(38)
-            fl.addRow("Masa Adı:", ad_edit)
-            warn = QLabel("")
-            warn.setStyleSheet(f"color: {COLORS['danger']}; font-size: 11px;")
-            fl.addRow(warn)
-            btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Discard | QDialogButtonBox.Cancel)
-            btns.button(QDialogButtonBox.Save).setText("Kaydet")
-            btns.button(QDialogButtonBox.Cancel).setText("İptal")
-            btns.button(QDialogButtonBox.Discard).setText("Masayı Sil")
-            btns.accepted.connect(dlg.accept)
-            btns.rejected.connect(dlg.reject)
-            btns.button(QDialogButtonBox.Discard).clicked.connect(lambda: setattr(dlg, '_delete', True) or dlg.accept())
-            fl.addRow(btns)
-            dlg._delete = False
-            if dlg.exec() == QDialog.Accepted:
-                if dlg._delete:
-                    if m_durum == 'dolu':
-                        QMessageBox.warning(self, "Uyarı", "Dolu masalar silinemez! Önce masayı kapatın.")
-                        return
-                    ok = database.delete_table(m_id)
-                    if ok:
-                        self._refresh_masa_grid()
-                        ToastNotification(self, f"{m_ad} silindi.", "warning")
-                    else:
-                        QMessageBox.warning(self, "Uyarı", "Dolu masa silinemez!")
-                else:
-                    new_name = ad_edit.text().strip()
-                    if not new_name:
-                        return
-                    conn = database.get_connection()
-                    conn.execute("UPDATE tables SET ad=? WHERE id=?", (new_name, m_id))
-                    conn.commit()
-                    conn.close()
-                    self._refresh_masa_grid()
-                    ToastNotification(self, f"Masa adı güncellendi.", "success")
-
-        edit_btn.clicked.connect(edit_table_action)
-        top.addWidget(edit_btn)
-        ly.addLayout(top)
-
-        name = QLabel(t['ad'])
-        name.setFont(QFont(FONTS['family'], FONTS['size_md'], QFont.Bold))
-        name.setAlignment(Qt.AlignCenter)
-        name.setStyleSheet(f"color: {COLORS['text_dark']}; background: transparent;")
-        ly.addWidget(name)
-        ly.addStretch()
-
-        return card
-
-    def _select_admin_region(self, rid):
-        self.admin_current_region = rid
-        self._refresh_masa_grid()
-
-    def _add_region_dialog(self):
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Yeni Bölge Ekle")
-        dlg.setFixedSize(400, 200)
-        form = QFormLayout(dlg)
-        form.setContentsMargins(32, 28, 32, 28)
-        form.setSpacing(16)
-        inp = QLineEdit()
-        inp.setPlaceholderText("Bölge adı girin...")
-        form.addRow(QLabel("Bölge Adı:"), inp)
-        btn = QPushButton("Bölge Ekle")
-        btn.setObjectName("primaryBtn")
-        btn.clicked.connect(lambda: (database.add_region(inp.text().strip()), dlg.accept(), self._refresh_masa_grid()) if inp.text().strip() else None)
-        form.addRow(btn)
-        dlg.exec()
-
-    def _add_table_dialog(self):
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Yeni Masa Ekle")
-        dlg.setFixedSize(400, 260)
-        form = QFormLayout(dlg)
-        form.setContentsMargins(32, 28, 32, 28)
-        form.setSpacing(16)
-        name = QLineEdit()
-        name.setPlaceholderText("Masa adı (örn: M-1)")
-        rc = QComboBox()
-        for r in database.get_all_regions():
-            rc.addItem(r['ad'], r['id'])
-        form.addRow(QLabel("Masa Adı:"), name)
-        form.addRow(QLabel("Bölge Seçimi:"), rc)
-        btn = QPushButton("Masa Ekle")
-        btn.setObjectName("primaryBtn")
-        btn.clicked.connect(lambda: (database.add_table(name.text().strip(), rc.currentData()), dlg.accept(), self._refresh_masa_grid()) if name.text().strip() else None)
-        form.addRow(btn)
-        dlg.exec()
-
-    # ==================== MENÜ / ÜRÜNLER ====================
     def _create_menu_urunler_page(self):
         self.menu_page = MenuPage(self.user)
         return self.menu_page
@@ -697,6 +484,9 @@ class AdminPanel(QWidget):
     def on_sync_status(self, status):
         """Ana pencere her senkronda çağırır: menü sayfası çevrimiçi durumu ve değişiklikleri günceller."""
         self.menu_page.on_sync_status(status)
+        self.floor_page.on_sync_status(status)
+        if 'general' in status.changed:
+            self.shop_label.setText(f"  {ICONS['home']}  {database.general_settings()['cafeName'].upper()}")
 
     # ==================== GİDER / MASRAF ====================
     def _create_gider_masraf_page(self):
@@ -1351,15 +1141,33 @@ class AdminPanel(QWidget):
         gl.setContentsMargins(24, 24, 24, 24)
         gl.setSpacing(20)
         
-        isim = QLineEdit()
+        # Bulutta tutulan genel ayarlar (QR etiketleri, ekranlar, otomatik kilit)
+        general = database.general_settings()
+        isim = QLineEdit(general['cafeName'])
         isim.setFixedHeight(40)
+        isim.setMaxLength(60)
+        qr_url = QLineEdit(general['qrBaseUrl'] or (default_base_url(ctx.config.project_id) if ctx.config else ''))
+        qr_url.setFixedHeight(40)
+        qr_url.setPlaceholderText("https://kafeniz.web.app/masa")
+        kilit = QSpinBox()
+        kilit.setRange(1, 60)
+        kilit.setSuffix(" dk")
+        kilit.setValue(int(general['idleLockMinutes']))
+        kilit.setFixedHeight(40)
         tema = QComboBox()
         tema.addItems(["Açık Tema (Varsayılan)", "Koyu Tema"])
         tema.setFixedHeight(40)
-        
-        gl.addRow("İşletme Adı:", isim)
+
+        gl.addRow("Kafe Adı:", isim)
+        gl.addRow("Masa QR Adresi:", qr_url)
+        gl.addRow("Otomatik Kilit:", kilit)
         gl.addRow("Uygulama Teması:", tema)
-        
+        bulut_not = QLabel("Kafe adı, QR adresi ve otomatik kilit buluta kaydedilir (internet gerekir). "
+                           "QR adresi değişirse masa etiketlerini yeniden basın.")
+        bulut_not.setWordWrap(True)
+        bulut_not.setStyleSheet(f"color: {COLORS['text_secondary']}; background: transparent;")
+        gl.addRow(bulut_not)
+
         prnt = QWidget()
         pl = QFormLayout(prnt)
         pl.setContentsMargins(24, 24, 24, 24)
@@ -1385,13 +1193,10 @@ class AdminPanel(QWidget):
             try:
                 with open(conf_path, "r", encoding="utf-8") as f:
                     cfg = json.load(f)
-                    isim.setText(cfg.get("isletme_adi", "VELVET LOUNGE - 34001"))
                     tema.setCurrentIndex(cfg.get("tema", 0))
                     yazici.setCurrentIndex(cfg.get("yazici", 0))
                     kagit.setCurrentIndex(cfg.get("kagit", 0))
             except Exception: pass
-        else:
-            isim.setText("VELVET LOUNGE - 34001")
         
         act_ly = QHBoxLayout()
         act_ly.addStretch()
@@ -1402,10 +1207,21 @@ class AdminPanel(QWidget):
             QPushButton:hover {{ background: {COLORS['primary_dark']}; }}
         """)
         def save():
-            cfg = {"isletme_adi": isim.text(), "tema": tema.currentIndex(), "yazici": yazici.currentIndex(), "kagit": kagit.currentIndex()}
+            # Bu bilgisayara özel ayarlar (tema, yazıcı) yerelde kalır
+            cfg = {"tema": tema.currentIndex(), "yazici": yazici.currentIndex(), "kagit": kagit.currentIndex()}
             with open(conf_path, "w", encoding="utf-8") as f:
                 json.dump(cfg, f)
-            QMessageBox.information(self, "Başarılı", "Sistem ayarları başarıyla kaydedildi! (Tema/İsim değişiklikleri tekrar başlatmada uygulanır.)")
+            current = database.general_settings()
+            new = (isim.text().strip(), qr_url.text().strip(), kilit.value())
+            if new == (current['cafeName'], current['qrBaseUrl'], current['idleLockMinutes']):
+                ToastNotification(self, "Ayarlar kaydedildi.", "success")
+                return
+
+            def saved(data):
+                database.set_setting('general', data)
+                self.shop_label.setText(f"  {ICONS['home']}  {data['cafeName'].upper()}")
+
+            cloud_action(self, lambda api: api.save_general_settings(*new), "Ayarlar buluta kaydedildi.", saved)
         sv_btn.clicked.connect(save)
         act_ly.addWidget(sv_btn)
         ly.addLayout(act_ly)

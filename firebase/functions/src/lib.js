@@ -366,8 +366,8 @@ function geometry(o, label, { minSize = 20, maxSize = CANVAS.width } = {}) {
   };
 }
 
-// Bir bölgenin tam planı: içindeki bütün (silinmemiş) masalar ve dekor öğeleri.
-// Listede olmayan masa silinmiş sayılır.
+// Bir bölgenin planı: eklenen/güncellenen masalar ve bölgenin bütün dekor öğeleri.
+// (Silinecek masalar saveFloorPlan'a ayrıca removedTableIds olarak gelir.)
 function validateFloorPlan(input) {
   const d = input || {};
   if (!Array.isArray(d.tables) || d.tables.length > MAX_PLAN_ITEMS) {

@@ -1,7 +1,15 @@
-# 3. Ekran: Salon ve Masa Planı (tarif, onay bekliyor)
+# 3. Ekran: Salon ve Masa Planı (onaylandı, uygulandı)
 
 Siparişin, adisyonun, mutfak fişinin ve müşterinin QR'dan vereceği siparişin hepsi bir masaya
 bağlanır. Bu yüzden masa düzeni sipariş ekranından (4. ekran) önce gelir.
+
+> Onaylanan kararlar: QR adresi Firebase Hosting (`https://<proje>.web.app/masa`, ayarlardan
+> değiştirilebilir); etiketteki kafe adı Ayarlar'dan girilir; dekor öğeleri var; rezervasyon şimdilik
+> garsonun boş masayı elle işaretlemesi.
+>
+> Uygulama sırasında yapılan değişiklik: plan kaydında silinecek masalar **açıkça** gönderilir
+> (`removedTableIds`). Listede adı geçmeyen masaya dokunulmaz; böylece kasanın önbelleği eksikken
+> kaydedilen bir plan, görülmeyen masaları yanlışlıkla silemez.
 
 ## 0. Bugün NexPOS'ta ne var, ne değişiyor?
 
@@ -111,14 +119,14 @@ sipariş verme işi 11. ekranda (mobil) yapılacak; QR'ın kendisi şimdi hazır
 
 ## 5. "Bitti" sayılma ölçütü
 
-- [ ] Bölge eklenip adı değiştirilebiliyor, sıralanabiliyor, silinebiliyor (açık adisyon yoksa)
-- [ ] Plan editöründe masa ve dekor eklenip taşınabiliyor, boyutlandırılıp döndürülebiliyor, çoğaltılıp
+- [x] Bölge eklenip adı değiştirilebiliyor, sıralanabiliyor, silinebiliyor (açık adisyon yoksa)
+- [x] Plan editöründe masa ve dekor eklenip taşınabiliyor, boyutlandırılıp döndürülebiliyor, çoğaltılıp
       silinebiliyor; ızgaraya hizalama çalışıyor
-- [ ] Plan tek seferde kaydediliyor; aynı anda başkası kaydettiyse çakışma uyarısı çıkıyor
-- [ ] İnternet yokken plan görüntüleniyor, düzenleme kapalı
-- [ ] Mevcut 3 bölge / 24 masa buluta bir kez, çift kayıt olmadan aktarılıyor; eski siparişler
+- [x] Plan tek seferde kaydediliyor; aynı anda başkası kaydettiyse çakışma uyarısı çıkıyor
+- [x] İnternet yokken plan görüntüleniyor, düzenleme kapalı
+- [x] Mevcut 3 bölge / 24 masa buluta bir kez, çift kayıt olmadan aktarılıyor; eski siparişler
       masalarına bağlı kalıyor
-- [ ] Her masanın QR'ı var; "QR yenile" eski anahtarı geçersiz kılıyor; A4 PDF 6'lı etiket basıyor
-- [ ] Garson ekranında plan görünümü durum renkleriyle çalışıyor; liste görünümüne geçilebiliyor
-- [ ] Yetkisi olmayan (`editMenu` yok) kişi planı değiştiremiyor; hem ekranda hem fonksiyonda reddediliyor
-- [ ] Emülatör testleri: kurallar, `saveFloorPlan` (çakışma dahil), QR yenileme, aktarım, delta senkron
+- [x] Her masanın QR'ı var; "QR yenile" eski anahtarı geçersiz kılıyor; A4 PDF 6'lı etiket basıyor
+- [x] Garson ekranında plan görünümü durum renkleriyle çalışıyor; liste görünümüne geçilebiliyor
+- [x] Yetkisi olmayan (`editMenu` yok) kişi planı değiştiremiyor; hem ekranda hem fonksiyonda reddediliyor
+- [x] Emülatör testleri: kurallar, `saveFloorPlan` (çakışma dahil), QR yenileme, aktarım, delta senkron

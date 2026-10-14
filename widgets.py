@@ -260,10 +260,12 @@ class TableCard(QFrame):
             nm.setStyleSheet(f"color: {COLORS['text_dark']}; background: transparent;")
             layout.addWidget(nm)
 
-            empty_lbl = QLabel("Boş")
+            reserved = table_data.get('durum') == 'rezerve'
+            empty_lbl = QLabel("Rezerve" if reserved else "Boş")
             empty_lbl.setFont(QFont(FONTS['family'], FONTS['size_xs']))
             empty_lbl.setAlignment(Qt.AlignCenter)
-            empty_lbl.setStyleSheet(f"color: {COLORS['success']}; background: transparent; font-weight: bold;")
+            empty_lbl.setStyleSheet(f"color: {COLORS['info'] if reserved else COLORS['success']}; "
+                                    f"background: transparent; font-weight: bold;")
             layout.addWidget(empty_lbl)
             layout.addStretch()
 

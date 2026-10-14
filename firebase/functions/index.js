@@ -915,12 +915,19 @@ exports.deleteArea = onCall(async (request) => {
   return { id: ref.id };
 });
 
+// tables: gönderilen masalar eklenir/güncellenir; removedTableIds açıkça silinir.
+// Listede adı geçmeyen masalara dokunulmaz: terminalin önbelleği eksik olsa bile
+// görmediği bir masa yanlışlıkla silinmez.
 exports.saveFloorPlan = onCall(async (request) => {
   const actor = await requireStaff(request, 'editMenu');
   const d = request.data || {};
   const plan = validated(validateFloorPlan, d);
   const areaRef = db.doc(`areas/${requireString(d.areaId, 'Bölge', { max: 128 })}`);
   if (!Number.isInteger(d.expectedVersion)) throw new HttpsError('invalid-argument', 'Plan sürümü eksik.');
+  const removedIds = d.removedTableIds ?? [];
+  if (!Array.isArray(removedIds) || removedIds.length > 100 || removedIds.some((x) => typeof x !== 'string' || !x)) {
+    throw new HttpsError('invalid-argument', 'Silinecek masa listesi geçersiz.');
+  }
 
   return db.runTransaction(async (tx) => {
     const area = await tx.get(areaRef);
@@ -932,17 +939,27 @@ exports.saveFloorPlan = onCall(async (request) => {
     }
     const existing = await tx.get(db.collection('tables').where('areaId', '==', areaRef.id));
     const live = new Map(existing.docs.filter((t) => t.data().deleted !== true).map((t) => [t.id, t]));
-    for (const t of plan.tables) {
-      if (t.id && !live.has(t.id)) throw new HttpsError('not-found', `${t.name} bu bölgede bulunamadı.`);
+    const updatedIds = new Set(plan.tables.filter((t) => t.id).map((t) => t.id));
+    for (const id of [...updatedIds, ...removedIds]) {
+      if (!live.has(id)) throw new HttpsError('not-found', 'Planda bu bölgeye ait olmayan bir masa var.');
+    }
+    if (removedIds.some((id) => updatedIds.has(id))) {
+      throw new HttpsError('invalid-argument', 'Bir masa aynı anda hem güncellenip hem silinemez.');
+    }
+    // Ad benzersizliği: dokunulmayan masalar + gönderilenler birlikte
+    const names = new Map();
+    const untouched = [...live.values()].filter((t) => !updatedIds.has(t.id) && !removedIds.includes(t.id));
+    for (const name of [...untouched.map((t) => t.data().name), ...plan.tables.map((t) => t.name)]) {
+      const key = String(name).toLocaleLowerCase('tr');
+      if (names.has(key)) throw new HttpsError('invalid-argument', `"${name}" adı bu bölgede birden fazla masada kullanılmış.`);
+      names.set(key, true);
     }
 
     const now = FieldValue.serverTimestamp();
     const created = {};
-    const keep = new Set();
     for (const t of plan.tables) {
       const { id, tempId, ...fields } = t;
       if (id) {
-        keep.add(id);
         tx.update(db.doc(`tables/${id}`), { ...fields, updatedAt: now });
       } else {
         const ref = db.collection('tables').doc();
@@ -951,13 +968,12 @@ exports.saveFloorPlan = onCall(async (request) => {
           createdAt: now, updatedAt: now });
       }
     }
-    const removed = [...live.keys()].filter((id) => !keep.has(id));
-    for (const id of removed) tx.update(db.doc(`tables/${id}`), { deleted: true, updatedAt: now });
+    for (const id of removedIds) tx.update(db.doc(`tables/${id}`), { deleted: true, updatedAt: now });
     tx.update(areaRef, { fixtures: plan.fixtures, layoutVersion: version + 1, updatedAt: now });
     audit(tx, { action: 'floor_plan_save', actor: actor.uid, target: `areas/${areaRef.id}`,
-      after: { tables: plan.tables.length, created: Object.keys(created).length, removed: removed.length,
+      after: { tables: plan.tables.length, created: Object.keys(created).length, removed: removedIds.length,
         fixtures: plan.fixtures.length, layoutVersion: version + 1 } });
-    return { layoutVersion: version + 1, created, removed };
+    return { layoutVersion: version + 1, created, removed: removedIds };
   });
 });
 

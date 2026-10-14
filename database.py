@@ -121,13 +121,19 @@ def init_database():
         c.execute("ALTER TABLE users ADD COLUMN cloud_id TEXT")
     c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_cloud_id ON users(cloud_id)")
 
-    # Menü (2. ekran): bulut dokümanlarının tamamı menu_cache'te; eski ekranların okuduğu
-    # categories/products tabloları bu önbellekten beslenir (cloud_id ile eşleşir).
-    c.execute("""CREATE TABLE IF NOT EXISTS menu_cache (
+    # Bulut koleksiyonlarının önbelleği (menü, salon planı…): dokümanların tamamı cloud_cache'te;
+    # eski ekranların okuduğu categories/products/regions/tables tabloları bu önbellekten
+    # beslenir (cloud_id ile eşleşir). 2. ekrandaki adı menu_cache idi.
+    existing_tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if 'menu_cache' in existing_tables and 'cloud_cache' not in existing_tables:
+        c.execute("ALTER TABLE menu_cache RENAME TO cloud_cache")
+    c.execute("""CREATE TABLE IF NOT EXISTS cloud_cache (
         collection TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL,
         PRIMARY KEY (collection, id))""")
     for table, cols in (('categories', (('cloud_id', 'TEXT'), ('silindi', 'INTEGER DEFAULT 0'))),
-                        ('products', (('cloud_id', 'TEXT'), ('tukendi', 'INTEGER DEFAULT 0')))):
+                        ('products', (('cloud_id', 'TEXT'), ('tukendi', 'INTEGER DEFAULT 0'))),
+                        ('regions', (('cloud_id', 'TEXT'), ('silindi', 'INTEGER DEFAULT 0'))),
+                        ('tables', (('cloud_id', 'TEXT'), ('silindi', 'INTEGER DEFAULT 0')))):
         existing = [r[1] for r in c.execute(f"PRAGMA table_info({table})").fetchall()]
         for name, kind in cols:
             if name not in existing:
@@ -219,7 +225,7 @@ def _create_sample_data(conn):
 
 def get_all_regions():
     conn = get_connection()
-    rows = conn.execute("SELECT * FROM regions ORDER BY sira").fetchall()
+    rows = conn.execute("SELECT * FROM regions WHERE COALESCE(silindi,0)=0 ORDER BY sira, id").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -257,7 +263,7 @@ def get_tables_by_region(region_id):
         FROM tables t
         LEFT JOIN users u ON t.garson_id = u.id
         LEFT JOIN orders o ON o.masa_id = t.id AND o.durum IN ('hazirlaniyor','bekliyor','teslimatta')
-        WHERE t.region_id = ? ORDER BY t.id
+        WHERE t.region_id = ? AND COALESCE(t.silindi,0)=0 ORDER BY t.id
     """, (region_id,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -874,7 +880,7 @@ def staff_with_permission(permission, exclude_id=None):
 def reset_cloud_cache():
     """Terminal iptal edildiğinde ya da yeniden eşlenirken önbelleği temizler."""
     conn = get_connection()
-    for t in ('staff_cache', 'pin_cache', 'settings_cache', 'sync_state', 'login_attempts', 'menu_cache'):
+    for t in ('staff_cache', 'pin_cache', 'settings_cache', 'sync_state', 'login_attempts', 'cloud_cache'):
         conn.execute(f"DELETE FROM {t}")
     conn.commit()
     conn.close()
@@ -953,7 +959,7 @@ def get_failed_ops():
 
 # =====================================================================
 # Menü önbelleği (2. ekran)
-# Menü bulutta yaşar; burada tam kopyası (menu_cache) ve eski ekranların kullandığı
+# Menü bulutta yaşar; burada tam kopyası (cloud_cache) ve eski ekranların kullandığı
 # categories/products tablolarına yansıması tutulur. Düzenleme buluta yapılır
 # (cloud/admin_api.py); yalnızca "tükendi" internetsiz, kuyruktan gider.
 # =====================================================================
@@ -967,7 +973,7 @@ def upsert_menu(collection, docs):
         return
     conn = get_connection()
     for doc_id, d in docs:
-        conn.execute("""INSERT INTO menu_cache (collection,id,data) VALUES (?,?,?)
+        conn.execute("""INSERT INTO cloud_cache (collection,id,data) VALUES (?,?,?)
             ON CONFLICT(collection,id) DO UPDATE SET data=excluded.data""",
             (collection, doc_id, json.dumps(d, ensure_ascii=False)))
     if collection == 'categories':
@@ -1009,13 +1015,13 @@ def _mirror_product(conn, cloud_id, d):
 
 
 def _mirror_all_products(conn):
-    for r in conn.execute("SELECT id, data FROM menu_cache WHERE collection='products'").fetchall():
+    for r in conn.execute("SELECT id, data FROM cloud_cache WHERE collection='products'").fetchall():
         _mirror_product(conn, r['id'], json.loads(r['data']))
 
 
 def _hide_legacy_menu_if_cloud(conn):
     """Bulutta menü varsa buluta bağlı olmayan eski yerel menü satış ekranından kalkar."""
-    rows = conn.execute("SELECT data FROM menu_cache WHERE collection='categories'").fetchall()
+    rows = conn.execute("SELECT data FROM cloud_cache WHERE collection='categories'").fetchall()
     if any(not json.loads(r['data']).get('deleted') for r in rows):
         conn.execute("UPDATE products SET aktif=0 WHERE cloud_id IS NULL")
         conn.execute("UPDATE categories SET silindi=1 WHERE cloud_id IS NULL")
@@ -1023,7 +1029,7 @@ def _hide_legacy_menu_if_cloud(conn):
 
 def _menu_rows(collection, include_deleted=False):
     conn = get_connection()
-    rows = conn.execute("SELECT id, data FROM menu_cache WHERE collection=?", (collection,)).fetchall()
+    rows = conn.execute("SELECT id, data FROM cloud_cache WHERE collection=?", (collection,)).fetchall()
     conn.close()
     items = []
     for r in rows:
@@ -1048,7 +1054,7 @@ def menu_products(category_id=None):
 
 def menu_item(collection, item_id):
     conn = get_connection()
-    row = conn.execute("SELECT data FROM menu_cache WHERE collection=? AND id=?", (collection, item_id)).fetchone()
+    row = conn.execute("SELECT data FROM cloud_cache WHERE collection=? AND id=?", (collection, item_id)).fetchone()
     conn.close()
     return {**json.loads(row['data']), 'id': item_id} if row else None
 
@@ -1106,18 +1112,18 @@ def set_sold_out(staff_id, sold_out, product_id=None, option_group_id=None, opti
     """
     conn = get_connection()
     if product_id:
-        row = conn.execute("SELECT data FROM menu_cache WHERE collection='products' AND id=?",
+        row = conn.execute("SELECT data FROM cloud_cache WHERE collection='products' AND id=?",
                            (product_id,)).fetchone()
         if not row:
             conn.close()
             raise ValueError("Ürün bulunamadı.")
         d = {**json.loads(row['data']), 'soldOut': sold_out}
-        conn.execute("UPDATE menu_cache SET data=? WHERE collection='products' AND id=?",
+        conn.execute("UPDATE cloud_cache SET data=? WHERE collection='products' AND id=?",
                      (json.dumps(d, ensure_ascii=False), product_id))
         conn.execute("UPDATE products SET tukendi=? WHERE cloud_id=?", (1 if sold_out else 0, product_id))
         payload = {'productId': product_id, 'soldOut': sold_out}
     else:
-        row = conn.execute("SELECT data FROM menu_cache WHERE collection='optionGroups' AND id=?",
+        row = conn.execute("SELECT data FROM cloud_cache WHERE collection='optionGroups' AND id=?",
                            (option_group_id,)).fetchone()
         if not row:
             conn.close()
@@ -1125,9 +1131,160 @@ def set_sold_out(staff_id, sold_out, product_id=None, option_group_id=None, opti
         d = json.loads(row['data'])
         d['options'] = [{**o, 'soldOut': sold_out} if o.get('id') == option_id else o
                         for o in d.get('options', [])]
-        conn.execute("UPDATE menu_cache SET data=? WHERE collection='optionGroups' AND id=?",
+        conn.execute("UPDATE cloud_cache SET data=? WHERE collection='optionGroups' AND id=?",
                      (json.dumps(d, ensure_ascii=False), option_group_id))
         payload = {'optionGroupId': option_group_id, 'optionId': option_id, 'soldOut': sold_out}
     enqueue_op('setSoldOut', payload, staff_id, conn=conn)
     conn.commit()
     conn.close()
+
+
+# =====================================================================
+# Salon planı önbelleği (3. ekran)
+# Bölgeler (areas) ve masalar (tables) bulutta; eski regions/tables tablolarına
+# yansıtılır. Masanın anlık durumu (durum, garson_id) 4. ekrana kadar yerelde kalır.
+# =====================================================================
+
+FLOOR_COLLECTIONS = ('areas', 'tables')
+
+
+def upsert_floor(collection, docs):
+    if not docs:
+        return
+    conn = get_connection()
+    for doc_id, d in docs:
+        conn.execute("""INSERT INTO cloud_cache (collection,id,data) VALUES (?,?,?)
+            ON CONFLICT(collection,id) DO UPDATE SET data=excluded.data""",
+            (collection, doc_id, json.dumps(d, ensure_ascii=False)))
+    if collection == 'areas':
+        for doc_id, d in docs:
+            _mirror_region(conn, doc_id, d)
+        _mirror_all_tables(conn)
+    else:
+        for doc_id, d in docs:
+            _mirror_table(conn, doc_id, d)
+    _hide_legacy_floor_if_cloud(conn)
+    conn.commit()
+    conn.close()
+
+
+def _mirror_region(conn, cloud_id, d):
+    values = (d.get('name', ''), int(d.get('order') or 0), 1 if d.get('deleted') else 0)
+    row = conn.execute("SELECT id FROM regions WHERE cloud_id=?", (cloud_id,)).fetchone()
+    if row:
+        conn.execute("UPDATE regions SET ad=?, sira=?, silindi=? WHERE id=?", values + (row['id'],))
+    else:
+        conn.execute("INSERT INTO regions (ad,sira,silindi,cloud_id) VALUES (?,?,?,?)", values + (cloud_id,))
+
+
+def _mirror_table(conn, cloud_id, d):
+    region = conn.execute("SELECT id FROM regions WHERE cloud_id=?", (d.get('areaId'),)).fetchone()
+    if not region:
+        return  # bölge henüz inmedi; inince _mirror_all_tables bağlar
+    values = (d.get('name', ''), region['id'], 1 if d.get('deleted') else 0)
+    row = conn.execute("SELECT id FROM tables WHERE cloud_id=?", (cloud_id,)).fetchone()
+    if row:
+        # durum ve garson_id yerel kalır (adisyonlar 4. ekrana kadar yerelde)
+        conn.execute("UPDATE tables SET ad=?, region_id=?, silindi=? WHERE id=?", values + (row['id'],))
+    else:
+        conn.execute("INSERT INTO tables (ad,region_id,silindi,cloud_id) VALUES (?,?,?,?)", values + (cloud_id,))
+
+
+def _mirror_all_tables(conn):
+    for r in conn.execute("SELECT id, data FROM cloud_cache WHERE collection='tables'").fetchall():
+        _mirror_table(conn, r['id'], json.loads(r['data']))
+
+
+def _hide_legacy_floor_if_cloud(conn):
+    rows = conn.execute("SELECT data FROM cloud_cache WHERE collection='areas'").fetchall()
+    if any(not json.loads(r['data']).get('deleted') for r in rows):
+        conn.execute("UPDATE regions SET silindi=1 WHERE cloud_id IS NULL")
+        conn.execute("UPDATE tables SET silindi=1 WHERE cloud_id IS NULL")
+
+
+def floor_areas():
+    return _menu_rows('areas')
+
+
+def floor_tables(area_id=None):
+    return [t for t in _menu_rows('tables') if area_id is None or t.get('areaId') == area_id]
+
+
+def floor_table_states(area_id):
+    """
+    Plan görünümü için masalar: bulut planı (konum, şekil) + yerel durum (dolu/boş,
+    tutar, süre). Her öğe eski ekranların beklediği masa sözlüğünü ('legacy') taşır.
+    """
+    conn = get_connection()
+    region = conn.execute("SELECT id FROM regions WHERE cloud_id=?", (area_id,)).fetchone()
+    conn.close()
+    legacy = {t['cloud_id']: t for t in get_tables_by_region(region['id'])} if region else {}
+    return [{**t, 'legacy': legacy.get(t['id'])} for t in floor_tables(area_id)]
+
+
+def area_has_open_orders(area_id=None, table_ids=None):
+    """Silinmek istenen bölge/masalarda açık adisyon var mı? (adisyonlar yerelde)"""
+    conn = get_connection()
+    q = """SELECT t.ad FROM tables t JOIN orders o ON o.masa_id = t.id
+           LEFT JOIN regions r ON r.id = t.region_id
+           WHERE o.durum IN ('hazirlaniyor','bekliyor')"""
+    params = []
+    if area_id:
+        q += " AND r.cloud_id=?"
+        params.append(area_id)
+    if table_ids is not None:
+        if not table_ids:
+            conn.close()
+            return []
+        q += f" AND t.cloud_id IN ({','.join('?' * len(table_ids))})"
+        params += list(table_ids)
+    rows = conn.execute(q, params).fetchall()
+    conn.close()
+    return sorted({r['ad'] for r in rows})
+
+
+def set_table_reserved(local_table_id, reserved):
+    """Boş masayı elle rezerve işaretler / işareti kaldırır (dolu masaya dokunmaz)."""
+    conn = get_connection()
+    if reserved:
+        cur = conn.execute("UPDATE tables SET durum='rezerve' WHERE id=? AND durum='bos'", (local_table_id,))
+    else:
+        cur = conn.execute("UPDATE tables SET durum='bos' WHERE id=? AND durum='rezerve'", (local_table_id,))
+    conn.commit()
+    conn.close()
+    return cur.rowcount == 1
+
+
+def legacy_floor_payload():
+    """importFloor'a gönderilecek eski bölge/masa düzeni."""
+    conn = get_connection()
+    regions = conn.execute("""SELECT * FROM regions WHERE cloud_id IS NULL AND COALESCE(silindi,0)=0
+        ORDER BY sira, id""").fetchall()
+    payload = []
+    for r in regions:
+        tables = conn.execute("""SELECT id, ad FROM tables WHERE region_id=? AND cloud_id IS NULL
+            AND COALESCE(silindi,0)=0 ORDER BY id""", (r['id'],)).fetchall()
+        payload.append({'localId': r['id'], 'name': r['ad'],
+                        'tables': [{'localId': t['id'], 'name': t['ad']} for t in tables]})
+    conn.close()
+    return payload
+
+
+def apply_floor_mapping(area_map, table_map):
+    conn = get_connection()
+    for local_id, cloud_id in area_map.items():
+        conn.execute("UPDATE regions SET cloud_id=? WHERE id=?", (cloud_id, int(local_id)))
+    for local_id, cloud_id in table_map.items():
+        conn.execute("UPDATE tables SET cloud_id=? WHERE id=?", (cloud_id, int(local_id)))
+    conn.commit()
+    conn.close()
+
+
+def general_settings():
+    """settings/general (kafe adı, QR adresi, otomatik kilit); yoksa varsayılanlar."""
+    data = get_setting('general') or {}
+    return {
+        'cafeName': data.get('cafeName') or 'Kafem',
+        'qrBaseUrl': data.get('qrBaseUrl') or '',
+        'idleLockMinutes': data.get('idleLockMinutes') or 3,
+    }
