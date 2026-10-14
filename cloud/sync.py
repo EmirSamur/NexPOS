@@ -23,10 +23,16 @@ from cloud.firebase_client import ApiError, OfflineError, Session
 APP_VERSION = '4.0.0'
 
 # Delta senkronla çekilen koleksiyonlar ve yazıldıkları önbellek fonksiyonu.
+# Sıra önemli: kategoriler ürünlerden önce iner (ürün yansıtılırken kategorisi aranır).
 PULL_COLLECTIONS = {
     'staff': database.upsert_staff,
     'staffPins': database.upsert_pins,
+    'categories': lambda docs: database.upsert_menu('categories', docs),
+    'optionGroups': lambda docs: database.upsert_menu('optionGroups', docs),
+    'products': lambda docs: database.upsert_menu('products', docs),
 }
+
+MENU_CHANGES = {'categories', 'optionGroups', 'products'}
 
 
 @dataclass

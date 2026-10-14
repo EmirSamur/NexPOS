@@ -6,7 +6,8 @@ Ayarlar exe'nin (ya da main.py'nin) yanındaki nexpos_config.json dosyasından o
     {
       "apiKey": "AIza...",
       "projectId": "kafe-xyz",
-      "region": "europe-west1"
+      "region": "europe-west1",
+      "storageBucket": "kafe-xyz.firebasestorage.app"
     }
 
 Emülatörle geliştirmek için NEXPOS_EMULATOR=1 ortam değişkeni yeterlidir; dosya gerekmez.
@@ -32,6 +33,17 @@ class CloudConfig:
     project_id: str
     region: str = 'europe-west1'
     emulator_host: str = ''  # "127.0.0.1" ise emülatör kullanılır
+    storage_bucket: str = ''
+
+    @property
+    def bucket(self):
+        return self.storage_bucket or f'{self.project_id}.appspot.com'
+
+    @property
+    def storage_base(self):
+        root = (f'http://{self.emulator_host}:9199' if self.emulator_host
+                else 'https://firebasestorage.googleapis.com')
+        return f'{root}/v0/b/{self.bucket}/o'
 
     @property
     def auth_base(self):
@@ -73,4 +85,5 @@ def load_config():
         api_key=data['apiKey'],
         project_id=data['projectId'],
         region=data.get('region', 'europe-west1'),
+        storage_bucket=data.get('storageBucket', ''),
     )

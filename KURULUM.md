@@ -20,9 +20,10 @@ dosyalarına bakın.
    (Cloud Functions için gerekir; küçük bir kafe ücretsiz kotanın içinde kalır).
 2. **Firestore** veritabanı oluşturun. Konum olarak `eur3 (europe-west)` seçin.
 3. **Authentication → Sign-in method** altında **E-posta/Şifre** yöntemini açın.
-4. **Proje ayarları → Genel → Uygulamalarınız** altından bir **Web uygulaması** ekleyin ve `apiKey`
+4. **Storage**'ı başlatın (ürün fotoğrafları için). Kova adını (`proje.firebasestorage.app`) not edin.
+5. **Proje ayarları → Genel → Uygulamalarınız** altından bir **Web uygulaması** ekleyin ve `apiKey`
    değerini not edin.
-5. Terminal eşleme özel token ürettiği için fonksiyonların servis hesabına imza yetkisi gerekir:
+6. Terminal eşleme özel token ürettiği için fonksiyonların servis hesabına imza yetkisi gerekir:
    Google Cloud konsolu → **IAM** → `PROJE_NO-compute@developer.gserviceaccount.com` hesabına
    **Service Account Token Creator** rolünü verin ve **IAM Service Account Credentials API**'yi
    etkinleştirin.
@@ -35,7 +36,7 @@ firebase login
 cd firebase
 firebase use --add            # projenizi seçin
 cd functions && npm install && cd ..
-firebase deploy --only firestore,functions
+firebase deploy --only firestore,functions,storage
 ```
 
 ## 3. İlk yönetici
@@ -54,8 +55,8 @@ panelinden ekler.
 
 ## 4. Kafedeki bilgisayar
 
-1. `nexpos_config.example.json` dosyasını `nexpos_config.json` adıyla kopyalayın ve `apiKey` ile
-   `projectId` değerlerini doldurun (exe kullanılıyorsa exe'nin yanına koyun).
+1. `nexpos_config.example.json` dosyasını `nexpos_config.json` adıyla kopyalayın ve `apiKey`,
+   `projectId` ve `storageBucket` değerlerini doldurun (exe kullanılıyorsa exe'nin yanına koyun).
 2. `pip install -r requirements.txt` ve `python main.py`.
 3. İlk açılışta **"Bu bilgisayarı kafeye bağla"** ekranı gelir. Yönetici e-postası ve şifresiyle
    giriş yapıp terminale bir ad verin. Personel ve yetkiler iner; bundan sonra NexPOS internetsiz
@@ -79,12 +80,24 @@ Terminal anahtarı Windows Kimlik Bilgisi Yöneticisi'nde (`NexPOS / terminal`) 
 - Yetkisi olmayan işlemde (iskonto, sipariş iptali) **yetkili onayı** penceresi açılır; onay
   `auditLogs` koleksiyonuna iki kişinin adıyla yazılır.
 
+## Menü
+
+Menü bulutta tutulur (`categories`, `products`, `optionGroups`); NexPOS önbelleğe alır, satış
+internetsiz de devam eder. Yönetim paneli → Tanımlamalar → **Menü / Ürünler**:
+
+- Bulutta menü yoksa ilk açılışta **"Buluta Aktar"** ile NexPOS'taki mevcut menü bir kez aktarılır.
+- Fiyatlar kuruş cinsinden tutulur ve KDV dahil girilir (varsayılan %10).
+- Menü düzenleme internet ister ve `editMenu` yetkisi gerektirir; fiyat değişiklikleri `auditLogs`'a yazılır.
+- **Tükendi** işaretleme internetsiz çalışır (`markSoldOut` yetkisi: barista, mutfak, kasa, müdür, yönetici).
+  Garson ekranında **⛔ Tükendi** düğmesinden de yapılır.
+- **Toplu Fiyat** ile seçili kategorilere yüzde/tutar zam uygulanır; önce önizleme gösterilir.
+
 ## Geliştirme: emülatörle çalışma
 
 Canlı veriye dokunmadan denemek için:
 
 ```bash
-cd firebase && firebase emulators:start --project demo-nexpos --only auth,firestore,functions
+cd firebase && firebase emulators:start --project demo-nexpos --only auth,firestore,functions,storage
 # başka bir terminalde:
 FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 GCLOUD_PROJECT=demo-nexpos \
   node firebase/functions/scripts/createOwner.js sahip@kafe.test sahip-sifre-1 "Deniz Yılmaz" 482913
@@ -101,6 +114,6 @@ cd firebase/tests && npm install && npm test
 # NexPOS yerel testleri
 pip install -r requirements-dev.txt && python -m pytest tests
 # NexPOS ↔ Firebase uçtan uca (emülatör)
-cd firebase && firebase emulators:exec --project demo-nexpos --only auth,firestore,functions \
+cd firebase && firebase emulators:exec --project demo-nexpos --only auth,firestore,functions,storage \
   "cd .. && NEXPOS_EMULATOR=1 python -m pytest tests"
 ```

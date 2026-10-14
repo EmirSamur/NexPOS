@@ -1,5 +1,6 @@
 {
   "apiKey": "Firebase konsolu → Proje ayarları → Web uygulaması → apiKey",
   "projectId": "kafe-projesi",
-  "region": "europe-west1"
+  "region": "europe-west1",
+  "storageBucket": "kafe-projesi.firebasestorage.app"
 }

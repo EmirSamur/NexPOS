@@ -9,3 +9,4 @@ crash_log.txt
 # Bu bilgisayara özel bulut ayarları ve terminal anahtarı
 nexpos_config.json
 terminal.json
+image_cache/

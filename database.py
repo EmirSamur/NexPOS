@@ -121,6 +121,19 @@ def init_database():
         c.execute("ALTER TABLE users ADD COLUMN cloud_id TEXT")
     c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_cloud_id ON users(cloud_id)")
 
+    # Menü (2. ekran): bulut dokümanlarının tamamı menu_cache'te; eski ekranların okuduğu
+    # categories/products tabloları bu önbellekten beslenir (cloud_id ile eşleşir).
+    c.execute("""CREATE TABLE IF NOT EXISTS menu_cache (
+        collection TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL,
+        PRIMARY KEY (collection, id))""")
+    for table, cols in (('categories', (('cloud_id', 'TEXT'), ('silindi', 'INTEGER DEFAULT 0'))),
+                        ('products', (('cloud_id', 'TEXT'), ('tukendi', 'INTEGER DEFAULT 0')))):
+        existing = [r[1] for r in c.execute(f"PRAGMA table_info({table})").fetchall()]
+        for name, kind in cols:
+            if name not in existing:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+        c.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_cloud_id ON {table}(cloud_id)")
+
     conn.commit()
 
     if c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
@@ -272,7 +285,7 @@ def delete_table(table_id):
 
 def get_all_categories():
     conn = get_connection()
-    rows = conn.execute("SELECT * FROM categories ORDER BY sira,id").fetchall()
+    rows = conn.execute("SELECT * FROM categories WHERE COALESCE(silindi,0)=0 ORDER BY sira,id").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -861,7 +874,7 @@ def staff_with_permission(permission, exclude_id=None):
 def reset_cloud_cache():
     """Terminal iptal edildiğinde ya da yeniden eşlenirken önbelleği temizler."""
     conn = get_connection()
-    for t in ('staff_cache', 'pin_cache', 'settings_cache', 'sync_state', 'login_attempts'):
+    for t in ('staff_cache', 'pin_cache', 'settings_cache', 'sync_state', 'login_attempts', 'menu_cache'):
         conn.execute(f"DELETE FROM {t}")
     conn.commit()
     conn.close()
@@ -936,3 +949,185 @@ def get_failed_ops():
     rows = conn.execute("SELECT * FROM outbox WHERE status='failed' ORDER BY created_at").fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+# =====================================================================
+# Menü önbelleği (2. ekran)
+# Menü bulutta yaşar; burada tam kopyası (menu_cache) ve eski ekranların kullandığı
+# categories/products tablolarına yansıması tutulur. Düzenleme buluta yapılır
+# (cloud/admin_api.py); yalnızca "tükendi" internetsiz, kuyruktan gider.
+# =====================================================================
+
+MENU_COLLECTIONS = ('categories', 'optionGroups', 'products')
+
+
+def upsert_menu(collection, docs):
+    """Buluttan gelen dokümanları önbelleğe yazar ve eski tablolara yansıtır."""
+    if not docs:
+        return
+    conn = get_connection()
+    for doc_id, d in docs:
+        conn.execute("""INSERT INTO menu_cache (collection,id,data) VALUES (?,?,?)
+            ON CONFLICT(collection,id) DO UPDATE SET data=excluded.data""",
+            (collection, doc_id, json.dumps(d, ensure_ascii=False)))
+    if collection == 'categories':
+        for doc_id, d in docs:
+            _mirror_category(conn, doc_id, d)
+        _mirror_all_products(conn)  # kategori yeni geldiyse bekleyen ürünler bağlansın
+    elif collection == 'products':
+        for doc_id, d in docs:
+            _mirror_product(conn, doc_id, d)
+    _hide_legacy_menu_if_cloud(conn)
+    conn.commit()
+    conn.close()
+
+
+def _mirror_category(conn, cloud_id, d):
+    values = (d.get('name', ''), d.get('color', '#6C5CE7'), int(d.get('order') or 0),
+              1 if d.get('deleted') else 0)
+    row = conn.execute("SELECT id FROM categories WHERE cloud_id=?", (cloud_id,)).fetchone()
+    if row:
+        conn.execute("UPDATE categories SET ad=?, renk=?, sira=?, silindi=? WHERE id=?", values + (row['id'],))
+    else:
+        conn.execute("INSERT INTO categories (ad,renk,sira,silindi,cloud_id) VALUES (?,?,?,?,?)",
+                     values + (cloud_id,))
+
+
+def _mirror_product(conn, cloud_id, d):
+    cat = conn.execute("SELECT id FROM categories WHERE cloud_id=?", (d.get('categoryId'),)).fetchone()
+    if not cat:
+        return  # kategori henüz inmedi; kategori gelince _mirror_all_products bağlar
+    aktif = 1 if d.get('active', True) and not d.get('deleted') else 0
+    values = (d.get('name', ''), (d.get('price') or 0) / 100.0, cat['id'], aktif, 1 if d.get('soldOut') else 0)
+    row = conn.execute("SELECT id FROM products WHERE cloud_id=?", (cloud_id,)).fetchone()
+    if row:
+        conn.execute("UPDATE products SET ad=?, fiyat=?, kategori_id=?, aktif=?, tukendi=? WHERE id=?",
+                     values + (row['id'],))
+    else:
+        conn.execute("INSERT INTO products (ad,fiyat,kategori_id,aktif,tukendi,cloud_id) VALUES (?,?,?,?,?,?)",
+                     values + (cloud_id,))
+
+
+def _mirror_all_products(conn):
+    for r in conn.execute("SELECT id, data FROM menu_cache WHERE collection='products'").fetchall():
+        _mirror_product(conn, r['id'], json.loads(r['data']))
+
+
+def _hide_legacy_menu_if_cloud(conn):
+    """Bulutta menü varsa buluta bağlı olmayan eski yerel menü satış ekranından kalkar."""
+    rows = conn.execute("SELECT data FROM menu_cache WHERE collection='categories'").fetchall()
+    if any(not json.loads(r['data']).get('deleted') for r in rows):
+        conn.execute("UPDATE products SET aktif=0 WHERE cloud_id IS NULL")
+        conn.execute("UPDATE categories SET silindi=1 WHERE cloud_id IS NULL")
+
+
+def _menu_rows(collection, include_deleted=False):
+    conn = get_connection()
+    rows = conn.execute("SELECT id, data FROM menu_cache WHERE collection=?", (collection,)).fetchall()
+    conn.close()
+    items = []
+    for r in rows:
+        d = json.loads(r['data'])
+        if include_deleted or not d.get('deleted'):
+            items.append({**d, 'id': r['id']})
+    return sorted(items, key=lambda x: (x.get('order') or 0, x.get('name', '')))
+
+
+def menu_categories(include_deleted=False):
+    return _menu_rows('categories', include_deleted)
+
+
+def menu_option_groups():
+    return _menu_rows('optionGroups')
+
+
+def menu_products(category_id=None):
+    items = _menu_rows('products')
+    return [p for p in items if category_id is None or p.get('categoryId') == category_id]
+
+
+def menu_item(collection, item_id):
+    conn = get_connection()
+    row = conn.execute("SELECT data FROM menu_cache WHERE collection=? AND id=?", (collection, item_id)).fetchone()
+    conn.close()
+    return {**json.loads(row['data']), 'id': item_id} if row else None
+
+
+def legacy_menu_for_import():
+    """Buluta aktarılmamış yerel menü: (kategoriler, ürünler). Fiyatlar kuruşa çevrilir."""
+    conn = get_connection()
+    cats = conn.execute("""SELECT * FROM categories WHERE cloud_id IS NULL AND COALESCE(silindi,0)=0
+        ORDER BY sira,id""").fetchall()
+    prods = conn.execute("""SELECT * FROM products WHERE cloud_id IS NULL AND aktif=1 ORDER BY id""").fetchall()
+    conn.close()
+    cat_ids = {c['id'] for c in cats}
+    return ([dict(c) for c in cats],
+            [{**dict(p), 'price': int(round((p['fiyat'] or 0) * 100))} for p in prods if p['kategori_id'] in cat_ids])
+
+
+# Aktarımda isimden istasyon / damga tahmini (sonradan ekrandan değiştirilebilir)
+DRINK_WORDS = ('kahve', 'içecek', 'icecek', 'çay', 'coffee', 'drink', 'smoothie', 'limonata')
+
+
+def turkish_lower(text):
+    """Türkçe küçük harf: 'İçecek' → 'içecek' (str.lower() 'i̇çecek' üretir), 'IŞIK' → 'ışık'."""
+    return (text or '').replace('İ', 'i').replace('I', 'ı').lower()
+
+
+def legacy_import_payload():
+    """importMenu fonksiyonuna gönderilecek (kategoriler, ürünler) listeleri."""
+    cats, prods = legacy_menu_for_import()
+    payload_cats = []
+    for c in cats:
+        drink = any(w in turkish_lower(c['ad']) for w in DRINK_WORDS)
+        color = c['renk'] if isinstance(c['renk'], str) and len(c['renk']) == 7 else '#6C5CE7'
+        payload_cats.append({'localId': c['id'], 'name': c['ad'], 'color': color,
+                             'station': 'bar' if drink else 'kitchen', 'stampEligible': drink})
+    payload_prods = [{'localId': p['id'], 'localCategoryId': p['kategori_id'], 'name': p['ad'],
+                      'price': p['price']} for p in prods]
+    return payload_cats, payload_prods
+
+
+def apply_import_mapping(category_map, product_map):
+    """Aktarımdan sonra yerel satırları bulut kimlikleriyle eşler (çift kayıt oluşmasın)."""
+    conn = get_connection()
+    for local_id, cloud_id in category_map.items():
+        conn.execute("UPDATE categories SET cloud_id=? WHERE id=?", (cloud_id, int(local_id)))
+    for local_id, cloud_id in product_map.items():
+        conn.execute("UPDATE products SET cloud_id=? WHERE id=?", (cloud_id, int(local_id)))
+    conn.commit()
+    conn.close()
+
+
+def set_sold_out(staff_id, sold_out, product_id=None, option_group_id=None, option_id=None):
+    """
+    Ürünü ya da tek bir seçeneği tükendi işaretler. İnternet gerekmez: yerelde hemen
+    uygulanır, işlem kuyruğa yazılır ve senkronla buluta gider.
+    """
+    conn = get_connection()
+    if product_id:
+        row = conn.execute("SELECT data FROM menu_cache WHERE collection='products' AND id=?",
+                           (product_id,)).fetchone()
+        if not row:
+            conn.close()
+            raise ValueError("Ürün bulunamadı.")
+        d = {**json.loads(row['data']), 'soldOut': sold_out}
+        conn.execute("UPDATE menu_cache SET data=? WHERE collection='products' AND id=?",
+                     (json.dumps(d, ensure_ascii=False), product_id))
+        conn.execute("UPDATE products SET tukendi=? WHERE cloud_id=?", (1 if sold_out else 0, product_id))
+        payload = {'productId': product_id, 'soldOut': sold_out}
+    else:
+        row = conn.execute("SELECT data FROM menu_cache WHERE collection='optionGroups' AND id=?",
+                           (option_group_id,)).fetchone()
+        if not row:
+            conn.close()
+            raise ValueError("Seçenek grubu bulunamadı.")
+        d = json.loads(row['data'])
+        d['options'] = [{**o, 'soldOut': sold_out} if o.get('id') == option_id else o
+                        for o in d.get('options', [])]
+        conn.execute("UPDATE menu_cache SET data=? WHERE collection='optionGroups' AND id=?",
+                     (json.dumps(d, ensure_ascii=False), option_group_id))
+        payload = {'optionGroupId': option_group_id, 'optionId': option_id, 'soldOut': sold_out}
+    enqueue_op('setSoldOut', payload, staff_id, conn=conn)
+    conn.commit()
+    conn.close()

@@ -1,7 +1,10 @@
-# 2. Ekran: Menü Yönetimi (tarif, onay bekliyor)
+# 2. Ekran: Menü Yönetimi (onaylandı, uygulandı)
 
 Menü; kasanın, garson ekranının, mutfak/bar ekranının, müşteri uygulamasının ve kahve önerisinin
 ortak kaynağı. Bu yüzden 1. ekrandan sonraki ilk iş bu.
+
+> Onaylanan kararlar: fiyatlar KDV dahil, varsayılan %10; fotoğraf yükleme bu ekranda; toplu
+> fiyatta varsayılan "en yakın 5 ₺'ye yukarı"; damgayı yalnızca içecek kategorileri kazandırır.
 
 ## 0. Bugün NexPOS'ta ne var, ne değişiyor?
 
@@ -133,14 +136,14 @@ Aktarım sonrası her şey yukarıdaki ekrandan düzenlenir.
 
 ## 8. Bu ekranın "bitti" sayılma ölçütü
 
-- [ ] Kategori ve ürün eklenip düzenlenebiliyor, sıralanabiliyor; değişiklik terminale ve 5 sn içinde
+- [x] Kategori ve ürün eklenip düzenlenebiliyor, sıralanabiliyor; değişiklik terminale ve 5 sn içinde
       diğer ekranlara iniyor
-- [ ] Fiyatlar kuruş olarak tutuluyor; ekranda `95,00 ₺` biçiminde görünüyor
-- [ ] Seçenek grupları tanımlanıp ürünlere bağlanabiliyor
-- [ ] İnternet yokken menü düzenleme düğmeleri kapalı, "Tükendi" düğmesi çalışıyor; internet gelince
+- [x] Fiyatlar kuruş olarak tutuluyor; ekranda `95,00 ₺` biçiminde görünüyor
+- [x] Seçenek grupları tanımlanıp ürünlere bağlanabiliyor
+- [x] İnternet yokken menü düzenleme düğmeleri kapalı, "Tükendi" düğmesi çalışıyor; internet gelince
       tükendi bilgisi buluta gidiyor
-- [ ] Toplu fiyat güncelleme önizleme gösteriyor, tek transaction'da uygulanıyor, audit kaydı oluşuyor
-- [ ] Yetkisi olmayan (`editMenu` yok) kişi menüyü değiştiremiyor; hem ekranda hem fonksiyonda reddediliyor
-- [ ] Mevcut yerel menü buluta bir kez aktarılabiliyor
-- [ ] Silinen ürün eski adisyonlarda adıyla ve fiyatıyla görünmeye devam ediyor
-- [ ] Emülatör testleri: kurallar, fonksiyonlar, delta senkron, tükendi kuyruğu
+- [x] Toplu fiyat güncelleme önizleme gösteriyor, tek transaction'da uygulanıyor, audit kaydı oluşuyor
+- [x] Yetkisi olmayan (`editMenu` yok) kişi menüyü değiştiremiyor; hem ekranda hem fonksiyonda reddediliyor
+- [x] Mevcut yerel menü buluta bir kez aktarılabiliyor
+- [x] Silinen ürün eski adisyonlarda adıyla ve fiyatıyla görünmeye devam ediyor
+- [x] Emülatör testleri: kurallar, fonksiyonlar, delta senkron, tükendi kuyruğu

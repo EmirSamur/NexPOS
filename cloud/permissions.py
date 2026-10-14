@@ -33,6 +33,7 @@ PERMISSIONS = [
     ('settings', 'Sistem Ayarlarına Erişebilir'),
     ('viewReports', 'Raporları Görüntüleyebilir'),
     ('manageUsers', 'Kullanıcı Tanımlayabilir'),
+    ('markSoldOut', 'Tükendi İşaretleyebilir'),
 ]
 PERMISSION_KEYS = [k for k, _ in PERMISSIONS]
 PERMISSION_LABELS = dict(PERMISSIONS)
@@ -45,11 +46,12 @@ def _all(value):
 DEFAULT_PERMISSIONS = {
     'owner': _all(True),
     'manager': {**_all(True), 'settings': False},
-    'cashier': {**_all(False), 'openTable': True, 'discount': True, 'cash': True, 'expense': True},
+    'cashier': {**_all(False), 'openTable': True, 'discount': True, 'cash': True, 'expense': True,
+                'markSoldOut': True},
     'waiter': {**_all(False), 'openTable': True},
     'courier': {**_all(False), 'openTable': True},
-    'barista': _all(False),
-    'kitchen': _all(False),
+    'barista': {**_all(False), 'markSoldOut': True},
+    'kitchen': {**_all(False), 'markSoldOut': True},
 }
 
 

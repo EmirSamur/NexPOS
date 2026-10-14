@@ -129,6 +129,10 @@ class MainWindow(QMainWindow):
         ctx.last_status = status
         self.sync_pill.update_status(status)
         self.login_screen.set_sync_status(status)
+        if self.admin_panel:
+            self.admin_panel.on_sync_status(status)
+        if self.user_panel and status.changed & {'categories', 'optionGroups', 'products'}:
+            self.user_panel.on_menu_changed()
         if 'permissions' in status.changed and self._current_user:
             self.status_bar.showMessage("Yetki matrisi güncellendi.", 5000)
         if status.revoked:

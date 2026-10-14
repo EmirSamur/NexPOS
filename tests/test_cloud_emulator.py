@@ -101,3 +101,74 @@ def test_eşleme_giriş_kuyruk_ve_iptal(db, client):
     api.revoke_terminal(creds.terminal_id)
     status = SyncEngine(client, creds).run_once()
     assert status.revoked
+
+
+def test_menu_aktarim_duzenleme_tukendi_toplu_fiyat_fotograf(db, client):
+    import json
+    import requests
+    from cloud.admin_api import AdminApi
+    from cloud.pairing import pair_terminal
+    from cloud.sync import SyncEngine
+
+    # Diğer testlerin (JS emülatör testleri dahil) bıraktığı menü bu testi etkilemesin:
+    # Firestore emülatörünü boşalt. Auth hesapları kalır, e-postalar benzersiz.
+    requests.delete('http://127.0.0.1:8080/emulator/v1/projects/demo-nexpos/databases/(default)/documents',
+                    timeout=10).raise_for_status()
+    email = f'menu-{uuid.uuid4().hex[:6]}@kafe.test'
+    owner_id = create_owner(email)
+    creds, _ = pair_terminal(client, email, 'sahip-sifre-1', 'Menü Kasa')
+    api = AdminApi(client, client.sign_in_with_password(email, 'sahip-sifre-1'))
+    engine = SyncEngine(client, creds)
+
+    # 1) Eski yerel menü buluta aktarılır; yerel satırlar bulut kimliğiyle eşleşir, çift kayıt olmaz.
+    cats, prods = db.legacy_import_payload()
+    result = api.import_menu(cats, prods)
+    db.apply_import_mapping(result['categories'], result['products'])
+    status = engine.run_once()
+    assert {'categories', 'products'} <= status.changed
+    sold = db.get_products_by_category()
+    assert len(sold) == len({p['ad'] for p in sold})  # aynı üründen iki tane yok
+    latte = next(p for p in db.menu_products() if p['name'] == 'Latte')
+    assert latte['price'] == 8500
+    kahve = db.menu_item('categories', latte['categoryId'])
+    assert kahve['station'] == 'bar' and kahve['stampEligible'] is True
+
+    # 2) Panelden fiyat değişikliği terminale ve eski tablolara iner.
+    api.save_product({**{k: latte[k] for k in ('categoryId', 'name')}, 'price': 9500}, latte['id'])
+    engine.run_once()
+    assert next(p for p in db.get_products_by_category() if p['ad'] == 'Latte')['fiyat'] == 95.0
+
+    # 3) Tükendi: internetsiz yerelde uygulanır, kuyruktan buluta gider (barista yetkisiyle).
+    barista = api.create_staff('Burak Öz', 'barista', '573920')['staffId']
+    engine.run_once()
+    db.set_sold_out(barista, True, product_id=latte['id'])
+    assert next(p for p in db.get_products_by_category() if p['ad'] == 'Latte')['tukendi'] == 1
+    engine.run_once()
+    assert db.outbox_counts() == (0, 0)
+    cloud_latte = client.get_doc(f"products/{latte['id']}", api.session)[1]
+    assert cloud_latte['soldOut'] is True
+
+    # 4) Toplu fiyat: önizleme yazmaz, uygulama yazar ve terminale iner.
+    rule = {'mode': 'percent', 'value': 10, 'rounding': 500}
+    preview = api.bulk_prices([latte['categoryId']], rule, False, True)
+    assert any(c['id'] == latte['id'] and c['after'] == 10500 for c in preview['products'])
+    assert client.get_doc(f"products/{latte['id']}", api.session)[1]['price'] == 9500
+    api.bulk_prices([latte['categoryId']], rule, False, False)
+    engine.run_once()
+    assert db.menu_item('products', latte['id'])['price'] == 10500
+
+    # 5) Fotoğraf yüklenir, herkese açık adresten okunur.
+    from PySide6.QtGui import QImage, QColor
+    from cloud.images import prepare_upload
+    import tempfile
+    img = QImage(1600, 1200, QImage.Format_RGB32)
+    img.fill(QColor('#8D6E63'))
+    path = tempfile.mktemp(suffix='.png')
+    img.save(path)
+    data = prepare_upload(path)
+    assert QImage.fromData(data).width() == 800
+    url = api.upload_product_image(data)
+    assert requests.get(url, timeout=10).content == data
+    api.save_product({'categoryId': latte['categoryId'], 'name': 'Latte', 'price': 10500, 'imageUrl': url}, latte['id'])
+    engine.run_once()
+    assert db.menu_item('products', latte['id'])['imageUrl'] == url

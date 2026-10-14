@@ -12,6 +12,8 @@ from PySide6.QtGui import QFont, QColor
 from styles import COLORS, FONTS, ICONS
 from widgets import TableCard, OrderCard, InfoDialog, add_shadow, ToastNotification
 from access import request_approval
+from menu_pages import SoldOutDialog
+from money import format_tl
 from cloud.permissions import PANEL_ROLES
 import database
 
@@ -93,6 +95,13 @@ class UserPanel(QWidget):
         btn_duyuru.clicked.connect(lambda: InfoDialog("Bildirim Merkezi", "Şu an için yeni bir duyuru bulunmamaktadır.\n(Yakında: Mutfağın ilettiği uyarılar burada listelenecektir)", COLORS['info'], self).exec())
         ly.addWidget(btn_duyuru)
 
+        if database.user_can(self.user, 'markSoldOut'):
+            btn_tukendi = QPushButton("⛔ Tükendi")
+            btn_tukendi.setObjectName("ghostBtn")
+            btn_tukendi.setCursor(Qt.PointingHandCursor)
+            btn_tukendi.clicked.connect(lambda: SoldOutDialog(self.user, self).exec())
+            ly.addWidget(btn_tukendi)
+
         btn_vardiya = QPushButton(f"📊 Vardiyam")
         btn_vardiya.setObjectName("ghostBtn")
         btn_vardiya.clicked.connect(self._show_shift_summary)
@@ -128,6 +137,10 @@ class UserPanel(QWidget):
         ly.addWidget(logout)
         
         return bar
+
+    def on_menu_changed(self):
+        """Menü buluttan güncellendiğinde (fiyat, tükendi) açık ekranları tazeler."""
+        self._switch_tab(self.pages.currentIndex())
 
     def _switch_tab(self, idx):
         self.pages.setCurrentIndex(idx)
@@ -605,6 +618,7 @@ class UserPanel(QWidget):
         pc.setFixedHeight(44)
 
         all_products = database.get_products_by_category()
+        products_by_id = {p['id']: p for p in all_products}
 
         def update_prods():
             pc.clear()
@@ -615,7 +629,13 @@ class UserPanel(QWidget):
                     continue
                 if txt and txt not in p['ad'].lower():
                     continue
-                pc.addItem(f"{p['ad']} (₺{p['fiyat']:,.2f})", p['id'])
+                sold = bool(p.get('tukendi'))
+                label = f"{p['ad']} ({format_tl(round((p['fiyat'] or 0) * 100))})" + ("  — TÜKENDİ" if sold else "")
+                pc.addItem(label, p['id'])
+                if sold:
+                    # Tükenen ürün listede görünür ama seçilemez
+                    item = pc.model().item(pc.count() - 1)
+                    item.setEnabled(False)
 
         cc.currentIndexChanged.connect(update_prods)
         search_box.textChanged.connect(update_prods)
@@ -803,17 +823,19 @@ class UserPanel(QWidget):
             ptext = pc.currentText()
             a = int(lbl_adet.text())
             lbl_adet.setText("1")
+            product = products_by_id.get(pid)
+            if pid and product and product.get('tukendi'):
+                QMessageBox.warning(dlg, "Tükendi", f"{product['ad']} şu an tükendi; sepete eklenemez.")
+                return
             if pid:
                 if self.empty_msg.isVisible():
                     self.empty_msg.setVisible(False)
                 self.order_items.append((pid, a))
-                
-                try:
-                    price = float(ptext.split("₺")[1].replace(")", "").replace(",", ""))
-                    t = price * a
-                    self._order_total += t
-                except Exception:
-                    t = 0
+
+                # Fiyat ürün kaydından alınır (eskiden metinden ayıklanıyordu)
+                price = (product or {}).get('fiyat') or 0
+                t = price * a
+                self._order_total += t
 
                 item_row = QFrame()
                 item_row.setFixedHeight(50)
@@ -822,8 +844,7 @@ class UserPanel(QWidget):
                 irl = QHBoxLayout(item_row)
                 irl.setContentsMargins(16, 0, 16, 0)
                 
-                parts = ptext.split(" (")
-                nm = QLabel(parts[0])
+                nm = QLabel((product or {}).get('ad') or ptext.split(" (")[0])
                 nm.setFont(QFont(FONTS['family'], FONTS['size_md'], QFont.Bold))
                 
                 ad_lbl = QLabel(f"x{a}")
