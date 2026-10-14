@@ -150,3 +150,49 @@ test('applyPriceRule: yüzde, tutar, yukarı yuvarlama', () => {
   assert.throws(() => r('amount', 5.5, 0), lib.MenuError);
   assert.throws(() => r('percent', 900, 0), lib.MenuError);
 });
+
+// ---------------------------------------------------------------------------
+// Salon planı (3. ekran)
+// ---------------------------------------------------------------------------
+
+const T = (o = {}) => ({ tempId: 't1', name: 'Masa 1', shape: 'round', capacity: 2, x: 60, y: 60, w: 100, h: 100, ...o });
+
+test('validateFloorPlan: geçerli plan', () => {
+  const plan = lib.validateFloorPlan({
+    tables: [T(), T({ tempId: 't2', name: 'Masa 2', shape: 'rect', capacity: 6, w: 200, rotation: 90 })],
+    fixtures: [{ id: 'f1', kind: 'bar', label: 'Bar', x: 800, y: 40, w: 300, h: 60 }],
+  });
+  assert.equal(plan.tables.length, 2);
+  assert.equal(plan.tables[1].rotation, 90);
+  assert.equal(plan.fixtures[0].label, 'Bar');
+});
+
+test('validateFloorPlan: hatalar', () => {
+  const bad = [
+    { tables: [T(), T({ tempId: 't2', name: 'masa 1' })], fixtures: [] }, // aynı ad (büyük/küçük harf)
+    { tables: [T({ shape: 'triangle' })], fixtures: [] },
+    { tables: [T({ capacity: 0 })], fixtures: [] },
+    { tables: [T({ x: 1190 })], fixtures: [] }, // tuval dışı
+    { tables: [T({ w: 20 })], fixtures: [] }, // çok küçük
+    { tables: [T({ rotation: 45 })], fixtures: [] },
+    { tables: [T({ x: 1.5 })], fixtures: [] },
+    { tables: [], fixtures: [{ id: 'f', kind: 'tv', x: 0, y: 0, w: 50, h: 50 }] },
+    { tables: Array.from({ length: 101 }, (_, i) => T({ tempId: `t${i}`, name: `M${i}` })), fixtures: [] },
+  ];
+  for (const p of bad) assert.throws(() => lib.validateFloorPlan(p), lib.MenuError, JSON.stringify(p).slice(0, 80));
+});
+
+test('newQrToken: 16 karakter, tekrarsız', () => {
+  const set = new Set(Array.from({ length: 200 }, () => lib.newQrToken()));
+  assert.equal(set.size, 200);
+  for (const t of set) assert.match(t, /^[A-Za-z0-9_-]{16}$/);
+});
+
+test('validateGeneralSettings', () => {
+  assert.deepEqual(lib.validateGeneralSettings({ cafeName: 'Velvet', qrBaseUrl: 'https://kafe.web.app/masa/' }),
+    { cafeName: 'Velvet', qrBaseUrl: 'https://kafe.web.app/masa', idleLockMinutes: 3 });
+  for (const url of ['http://kafe.com/masa', 'https://kafe.com/masa?x=1', 'javascript:alert(1)']) {
+    assert.throws(() => lib.validateGeneralSettings({ cafeName: 'V', qrBaseUrl: url }), lib.MenuError, url);
+  }
+  assert.throws(() => lib.validateGeneralSettings({ cafeName: 'V', qrBaseUrl: 'https://a.b', idleLockMinutes: 0 }), lib.MenuError);
+});

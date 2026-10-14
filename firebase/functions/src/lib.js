@@ -334,7 +334,113 @@ function applyPriceRule(price, rule) {
   return Math.min(Math.max(next, 0), MAX_PRICE);
 }
 
+// ---------------------------------------------------------------------------
+// Salon ve masa planı (3. ekran)
+// Plan, ekrandan bağımsız 1200 × 800 birimlik sanal bir tuvalde tutulur.
+// ---------------------------------------------------------------------------
+
+const CANVAS = { width: 1200, height: 800 };
+const TABLE_SHAPES = ['round', 'square', 'rect'];
+const FIXTURE_KINDS = ['wall', 'bar', 'door', 'plant'];
+const MAX_PLAN_ITEMS = 100;
+
+function validateArea(input) {
+  return { name: text((input || {}).name, 'Bölge adı', { max: 40 }) };
+}
+
+function geometry(o, label, { minSize = 20, maxSize = CANVAS.width } = {}) {
+  const int = (v, f, min, max) => {
+    if (!Number.isInteger(v) || v < min || v > max) throw new MenuError(`${label}: ${f} geçersiz.`);
+    return v;
+  };
+  const w = int(o.w, 'genişlik', minSize, maxSize);
+  const h = int(o.h, 'yükseklik', minSize, maxSize);
+  const rotation = o.rotation ?? 0;
+  if (![0, 90].includes(rotation)) throw new MenuError(`${label}: döndürme 0 ya da 90 olmalıdır.`);
+  return {
+    x: int(o.x, 'konum', 0, CANVAS.width - Math.min(w, h)),
+    y: int(o.y, 'konum', 0, CANVAS.height - Math.min(w, h)),
+    w,
+    h,
+    rotation,
+  };
+}
+
+// Bir bölgenin tam planı: içindeki bütün (silinmemiş) masalar ve dekor öğeleri.
+// Listede olmayan masa silinmiş sayılır.
+function validateFloorPlan(input) {
+  const d = input || {};
+  if (!Array.isArray(d.tables) || d.tables.length > MAX_PLAN_ITEMS) {
+    throw new MenuError(`Bir bölgede en fazla ${MAX_PLAN_ITEMS} masa olabilir.`);
+  }
+  if (!Array.isArray(d.fixtures) || d.fixtures.length > MAX_PLAN_ITEMS) {
+    throw new MenuError(`Bir bölgede en fazla ${MAX_PLAN_ITEMS} dekor öğesi olabilir.`);
+  }
+  const names = new Set();
+  const ids = new Set();
+  const tables = d.tables.map((t) => {
+    const name = text(t?.name, 'Masa adı', { max: 20 });
+    const key = name.toLocaleLowerCase('tr');
+    if (names.has(key)) throw new MenuError(`"${name}" adı bu bölgede birden fazla masada kullanılmış.`);
+    names.add(key);
+    const id = t.id ?? null;
+    if (id !== null) {
+      if (typeof id !== 'string' || !id || ids.has(id)) throw new MenuError('Masa kimlikleri geçersiz.');
+      ids.add(id);
+    }
+    const tempId = id === null ? text(t.tempId, 'Geçici masa kimliği', { max: 40 }) : null;
+    if (!TABLE_SHAPES.includes(t.shape)) throw new MenuError(`${name}: şekil geçersiz.`);
+    if (!Number.isInteger(t.capacity) || t.capacity < 1 || t.capacity > 30) {
+      throw new MenuError(`${name}: kişi sayısı 1-30 arası olmalıdır.`);
+    }
+    return { id, tempId, name, shape: t.shape, capacity: t.capacity,
+      ...geometry(t, name, { minSize: 40, maxSize: 400 }) };
+  });
+  const fixtureIds = new Set();
+  const fixtures = d.fixtures.map((f) => {
+    if (!FIXTURE_KINDS.includes(f?.kind)) throw new MenuError('Dekor türü geçersiz.');
+    const id = text(f.id, 'Dekor kimliği', { max: 40 });
+    if (fixtureIds.has(id)) throw new MenuError('Dekor kimlikleri benzersiz olmalıdır.');
+    fixtureIds.add(id);
+    return { id, kind: f.kind, label: text(f.label, 'Dekor etiketi', { max: 30, optional: true }),
+      ...geometry(f, 'Dekor', { minSize: 10 }) };
+  });
+  return { tables, fixtures };
+}
+
+function newQrToken() {
+  return crypto.randomBytes(12).toString('base64url'); // 16 karakter, tahmin edilemez
+}
+
+// Eski NexPOS düzenini ızgaraya yerleştirir: 6 sütun, 120'lik kare masalar.
+function gridLayout(index) {
+  const col = index % 6;
+  const row = Math.floor(index / 6);
+  return { x: 60 + col * 180, y: 60 + row * 180, w: 120, h: 120, rotation: 0 };
+}
+
+function validateGeneralSettings(input) {
+  const d = input || {};
+  const qrBaseUrl = text(d.qrBaseUrl, 'QR adresi', { max: 200 });
+  if (!/^https:\/\/[^\s?#]+$/.test(qrBaseUrl) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/[^\s?#]*$/.test(qrBaseUrl)) {
+    throw new MenuError('QR adresi https:// ile başlamalı ve ? ya da # içermemelidir.');
+  }
+  const idle = d.idleLockMinutes ?? 3;
+  if (!Number.isInteger(idle) || idle < 1 || idle > 60) throw new MenuError('Otomatik kilit 1-60 dakika olmalıdır.');
+  return {
+    cafeName: text(d.cafeName, 'Kafe adı', { max: 60 }),
+    qrBaseUrl: qrBaseUrl.replace(/\/+$/, ''),
+    idleLockMinutes: idle,
+  };
+}
+
 module.exports = {
+  CANVAS,
+  validateArea,
+  validateFloorPlan,
+  newQrToken,
+  gridLayout,
+  validateGeneralSettings,
   MenuError,
   ALLERGENS,
   ROUNDING_STEPS,

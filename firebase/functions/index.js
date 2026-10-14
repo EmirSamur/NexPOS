@@ -35,6 +35,11 @@ const {
   validateOptionGroup,
   validatePriceRule,
   applyPriceRule,
+  validateArea,
+  validateFloorPlan,
+  newQrToken,
+  gridLayout,
+  validateGeneralSettings,
 } = require('./src/lib');
 
 initializeApp();
@@ -738,7 +743,7 @@ exports.deleteOptionGroup = onCall(async (request) => {
   return { id: ref.id };
 });
 
-const ORDERABLE = ['categories', 'products', 'optionGroups'];
+const ORDERABLE = ['categories', 'products', 'optionGroups', 'areas'];
 
 exports.reorderMenu = onCall(async (request) => {
   await requireStaff(request, 'editMenu');
@@ -863,4 +868,168 @@ exports.importMenu = onCall(async (request) => {
   });
   await batch.commit();
   return { categories: categoryIds, products: productIds };
+});
+
+// ---------------------------------------------------------------------------
+// Salon ve masa planı (3. ekran)
+//
+// Bir bölgenin planı (masalar + dekor) tek seferde kaydedilir. layoutVersion ile
+// eşzamanlı düzenleme yakalanır: istemci okuduğu sürümü gönderir, arada başkası
+// kaydetmişse istek reddedilir. Masaların anlık durumu (dolu/boş) burada tutulmaz;
+// siparişle birlikte 4. ekranda gelir. Her masanın tahmin edilemeyen bir qrToken'ı vardır.
+// ---------------------------------------------------------------------------
+
+exports.saveArea = onCall(async (request) => {
+  const actor = await requireStaff(request, 'editMenu');
+  const data = validated(validateArea, request.data);
+  const id = request.data?.id;
+  const ref = id ? db.doc(`areas/${requireString(id, 'Bölge', { max: 128 })}`) : db.collection('areas').doc();
+  const before = id ? (await requireLive(ref, 'Bölge')).data() : null;
+  await db.runTransaction(async (tx) => {
+    if (before) {
+      tx.update(ref, { ...data, updatedAt: FieldValue.serverTimestamp() });
+    } else {
+      tx.set(ref, { ...data, fixtures: [], layoutVersion: 0, order: Date.now(), deleted: false,
+        createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
+    }
+    audit(tx, { action: before ? 'area_update' : 'area_create', actor: actor.uid, target: `areas/${ref.id}`,
+      before: before ? { name: before.name } : null, after: data });
+  });
+  return { id: ref.id };
+});
+
+// Bölgeyi ve içindeki masaları siler (geri alınabilir: deleted bayrağı). Açık adisyon
+// kontrolü terminal tarafında yapılır; adisyonlar 4. ekrana kadar yereldedir.
+exports.deleteArea = onCall(async (request) => {
+  const actor = await requireStaff(request, 'editMenu');
+  const ref = db.doc(`areas/${requireString(request.data?.id, 'Bölge', { max: 128 })}`);
+  const snap = await requireLive(ref, 'Bölge');
+  const tables = await db.collection('tables').where('areaId', '==', ref.id).get();
+  const batch = db.batch();
+  batch.update(ref, { deleted: true, updatedAt: FieldValue.serverTimestamp() });
+  tables.docs.filter((t) => t.data().deleted !== true).forEach((t) =>
+    batch.update(t.ref, { deleted: true, updatedAt: FieldValue.serverTimestamp() }));
+  batch.set(db.collection('auditLogs').doc(), { action: 'area_delete', actor: actor.uid, target: `areas/${ref.id}`,
+    before: { name: snap.data().name, tables: tables.size }, at: FieldValue.serverTimestamp() });
+  await batch.commit();
+  return { id: ref.id };
+});
+
+exports.saveFloorPlan = onCall(async (request) => {
+  const actor = await requireStaff(request, 'editMenu');
+  const d = request.data || {};
+  const plan = validated(validateFloorPlan, d);
+  const areaRef = db.doc(`areas/${requireString(d.areaId, 'Bölge', { max: 128 })}`);
+  if (!Number.isInteger(d.expectedVersion)) throw new HttpsError('invalid-argument', 'Plan sürümü eksik.');
+
+  return db.runTransaction(async (tx) => {
+    const area = await tx.get(areaRef);
+    if (!area.exists || area.data().deleted === true) throw new HttpsError('not-found', 'Bölge bulunamadı.');
+    const version = area.data().layoutVersion || 0;
+    if (version !== d.expectedVersion) {
+      throw new HttpsError('aborted', 'Bu bölgenin planı siz düzenlerken başka biri tarafından kaydedildi. ' +
+        'Değişikliklerinizi kaydetmeden önce planı yenileyin.');
+    }
+    const existing = await tx.get(db.collection('tables').where('areaId', '==', areaRef.id));
+    const live = new Map(existing.docs.filter((t) => t.data().deleted !== true).map((t) => [t.id, t]));
+    for (const t of plan.tables) {
+      if (t.id && !live.has(t.id)) throw new HttpsError('not-found', `${t.name} bu bölgede bulunamadı.`);
+    }
+
+    const now = FieldValue.serverTimestamp();
+    const created = {};
+    const keep = new Set();
+    for (const t of plan.tables) {
+      const { id, tempId, ...fields } = t;
+      if (id) {
+        keep.add(id);
+        tx.update(db.doc(`tables/${id}`), { ...fields, updatedAt: now });
+      } else {
+        const ref = db.collection('tables').doc();
+        created[tempId] = ref.id;
+        tx.set(ref, { ...fields, areaId: areaRef.id, qrToken: newQrToken(), deleted: false,
+          createdAt: now, updatedAt: now });
+      }
+    }
+    const removed = [...live.keys()].filter((id) => !keep.has(id));
+    for (const id of removed) tx.update(db.doc(`tables/${id}`), { deleted: true, updatedAt: now });
+    tx.update(areaRef, { fixtures: plan.fixtures, layoutVersion: version + 1, updatedAt: now });
+    audit(tx, { action: 'floor_plan_save', actor: actor.uid, target: `areas/${areaRef.id}`,
+      after: { tables: plan.tables.length, created: Object.keys(created).length, removed: removed.length,
+        fixtures: plan.fixtures.length, layoutVersion: version + 1 } });
+    return { layoutVersion: version + 1, created, removed };
+  });
+});
+
+exports.rotateTableQr = onCall(async (request) => {
+  const actor = await requireStaff(request, 'editMenu');
+  const ids = request.data?.tableIds;
+  if (!Array.isArray(ids) || ids.length < 1 || ids.length > 100 || ids.some((x) => typeof x !== 'string' || !x)) {
+    throw new HttpsError('invalid-argument', 'Masa listesi geçersiz.');
+  }
+  const snaps = await db.getAll(...ids.map((x) => db.doc(`tables/${x}`)));
+  if (snaps.some((s) => !s.exists || s.data().deleted === true)) throw new HttpsError('not-found', 'Masa bulunamadı.');
+  const batch = db.batch();
+  snaps.forEach((s) => batch.update(s.ref, { qrToken: newQrToken(), updatedAt: FieldValue.serverTimestamp() }));
+  batch.set(db.collection('auditLogs').doc(), { action: 'table_qr_rotate', actor: actor.uid, target: 'tables',
+    after: { tableIds: ids }, at: FieldValue.serverTimestamp() });
+  await batch.commit();
+  return { count: ids.length };
+});
+
+// Eski NexPOS bölge/masa düzeninin buluta tek seferlik aktarımı (bulutta plan yokken).
+// payload: { areas: [{ localId, name, tables: [{ localId, name }] }] }
+exports.importFloor = onCall(async (request) => {
+  const actor = await requireStaff(request, 'editMenu');
+  const areas = request.data?.areas;
+  if (!Array.isArray(areas) || areas.length < 1 || areas.length > 20) {
+    throw new HttpsError('invalid-argument', 'Aktarılacak bölgeler geçersiz.');
+  }
+  const existing = await db.collection('areas').where('deleted', '==', false).limit(1).get();
+  if (!existing.empty) {
+    throw new HttpsError('failed-precondition', 'Bulutta zaten bir salon planı var; aktarım yalnızca boş plana yapılabilir.');
+  }
+  const batch = db.batch();
+  const areaIds = {};
+  const tableIds = {};
+  const now = FieldValue.serverTimestamp();
+  let count = 0;
+  areas.forEach((a, i) => {
+    const { name } = validated(validateArea, a);
+    const tables = Array.isArray(a.tables) ? a.tables.slice(0, 60) : [];
+    const plan = validated(validateFloorPlan, {
+      tables: tables.map((t, j) => ({ tempId: String(t.localId), name: t.name, shape: 'square', capacity: 4,
+        ...gridLayout(j) })),
+      fixtures: [],
+    });
+    const areaRef = db.collection('areas').doc();
+    areaIds[String(a.localId)] = areaRef.id;
+    batch.set(areaRef, { name, fixtures: [], layoutVersion: 0, order: i, deleted: false, createdAt: now, updatedAt: now });
+    for (const t of plan.tables) {
+      const { id, tempId, ...fields } = t;
+      const ref = db.collection('tables').doc();
+      tableIds[tempId] = ref.id;
+      batch.set(ref, { ...fields, areaId: areaRef.id, qrToken: newQrToken(), deleted: false, createdAt: now, updatedAt: now });
+      count += 1;
+    }
+  });
+  if (count + areas.length > 450) throw new HttpsError('resource-exhausted', 'Aktarılacak masa sayısı çok fazla.');
+  batch.set(db.collection('auditLogs').doc(), { action: 'floor_import', actor: actor.uid, target: 'areas',
+    after: { areas: areas.length, tables: count }, at: FieldValue.serverTimestamp() });
+  await batch.commit();
+  return { areas: areaIds, tables: tableIds };
+});
+
+// Genel ayarlar: kafe adı (QR etiketi, ekranlar), QR adresi, otomatik kilit süresi.
+exports.saveGeneralSettings = onCall(async (request) => {
+  const actor = await requireStaff(request, 'settings');
+  const data = validated(validateGeneralSettings, request.data);
+  const ref = db.doc('settings/general');
+  await db.runTransaction(async (tx) => {
+    const before = await tx.get(ref);
+    tx.set(ref, { ...data, updatedBy: actor.uid, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    audit(tx, { action: 'settings_change', actor: actor.uid, target: 'settings/general',
+      before: before.exists ? before.data() : null, after: data });
+  });
+  return data;
 });

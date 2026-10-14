@@ -80,6 +80,17 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Salon planı: masalar qrToken taşıdığı için herkese açık DEĞİLDİR. Müşterinin QR ile
+    // masa doğrulaması 11. ekranda bir fonksiyon üzerinden yapılacak.
+    match /areas/{id} {
+      allow read: if isStaff() || isActiveTerminal();
+      allow write: if false;
+    }
+    match /tables/{id} {
+      allow read: if isStaff() || isActiveTerminal();
+      allow write: if false;
+    }
+
     match /auditLogs/{logId} {
       allow read: if isManagerPlus();
       allow write: if false;
