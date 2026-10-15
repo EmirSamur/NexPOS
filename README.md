@@ -38,14 +38,14 @@ Kafe ve restoran işletmelerinin masa takibi, sipariş yönetimi, finansal rapor
 - Mutfak / bar ekranı: tablette çalışan web sayfası, fişler canlı düşer, hazır olunca kasada 🔔
 
 ### Yönetici Paneli
-- Dashboard: Son 30 günlük satış, açık siparişler, gider ve masa doluluk özeti
+- Ana sayfa: bugünün cirosu geçen haftanın aynı saatine göre, saatlik satış, en çok satanlar, uyarılar
 - Masa ve bölge yönetimi — yeni bölge/masa ekleme, mevcut masaları düzenleme
 - Menü yönetimi — kategori ve ürün ekleme/düzenleme/silme (soft-delete, geçmiş siparişler korunur)
 - Kullanıcı yönetimi — personel ekleme, rol atama, aktif/pasif durumu
 - Yetkilendirme matrisi — Garson, Kurye, Kasa, Müdür, Yönetici rolleri için işlem bazlı izin yönetimi
 - Gider / Masraf takibi — tarih filtreli listeleme ve özet
 - Zayi yönetimi — bozulan veya hatalı üretilen ürünlerin stoktan düşülmesi
-- İstatistikler — gerçekleşen satış, ortalama adisyon, iskonto raporu, en popüler 5 ürün
+- Raporlar — satış özeti ve KDV dökümü, ürün/seçenek, saat ısı haritası, personel, kayıp ve denetim, gelir-gider, mutfak; CSV ve PDF
 - CSV dışa aktarma
 - Ctrl+B ile tek tıkla veritabanı yedekleme
 

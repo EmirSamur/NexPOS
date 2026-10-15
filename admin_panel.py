@@ -22,6 +22,8 @@ from cloud.context import ctx
 from qr_print import default_base_url
 from cloud.permissions import PANEL_ROLES
 from cash_screen import CashPage
+from reports_screen import DashboardPage, ReportsPage
+import cash
 from modules_page import ModulesPanel
 from pos import now_iso as pos_now
 import database
@@ -204,7 +206,7 @@ class AdminPanel(QWidget):
         self.menu_layout.addWidget(isl)
 
         rap = ExpandableSection("Raporlar", ICONS['chart'])
-        btn_rapor = rap.add_sub_button("İstatistikler", ICONS['dot'])
+        btn_rapor = rap.add_sub_button("Satış ve Diğer Raporlar", ICONS['dot'])
         btn_rapor.clicked.connect(lambda: self._show_page(5))
         self.sidebar_buttons.append(btn_rapor)
         self.menu_layout.addWidget(rap)
@@ -329,160 +331,32 @@ class AdminPanel(QWidget):
             b.setChecked(False)
         if idx < len(self.sidebar_buttons):
             self.sidebar_buttons[idx].setChecked(True)
-        titles = ["Dashboard Analytics", "Tanımlamalar / Masa ve Bölgeler",
+        titles = ["Ana Sayfa", "Tanımlamalar / Masa ve Bölgeler",
                    "Kategori ve Ürün Tanımlama / Şube Ürünleri",
                    "Gider/Masraf İşlemleri", "Zayi İşlemleri",
-                   "Restaurant İstatistikleri", "Kullanıcılar", "Yetki / İzin Ekranı", "Sistem Ayarları",
+                   "Raporlar", "Kullanıcılar", "Yetki / İzin Ekranı", "Sistem Ayarları",
                    "Terminaller", "Kasa"]
         if idx < len(titles):
             self.page_title.setText(titles[idx])
 
     # ==================== DASHBOARD ====================
     def _create_dashboard_page(self):
-        page = QWidget()
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("border: none; background: transparent;")
-        content = QWidget()
-        content.setStyleSheet("background: transparent;")
-        ly = QVBoxLayout(content)
-        ly.setContentsMargins(32, 24, 32, 32)
-        ly.setSpacing(24)
+        self.dashboard_page = DashboardPage(self.user)
+        self.dashboard_page.navigate.connect(self._dashboard_navigate)
+        return self.dashboard_page
 
-        stats = database.get_dashboard_stats()
+    def _dashboard_navigate(self, target):
+        """Ana sayfadaki uyarı/kart tıklamaları ilgili ekrana gider."""
+        if target == 'losses':
+            self._show_page(5)
+            self.reports_page.set_period('today', ReportsPage.TAB_LOSSES)
+        elif target == 'cash':
+            self._show_page(10)
+            # Kasa açıksa kasa sekmesi, değilse son Z raporları
+            self.cash_page.tabs.setCurrentIndex(0 if cash.current_session() else 2)
+        elif target == 'terminals':
+            self._show_page(9)
 
-        # Hoş Geldiniz Banner
-        from datetime import datetime
-        hour = datetime.now().hour
-        if hour < 12:
-            greeting = "Günaydın"
-            greeting_icon = "☀️"
-        elif hour < 18:
-            greeting = "İyi Günler"
-            greeting_icon = "🌤️"
-        else:
-            greeting = "İyi Akşamlar"
-            greeting_icon = "🌙"
-        
-        welcome_frame = QFrame()
-        welcome_frame.setStyleSheet(f"""
-            QFrame {{
-                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                    stop:0 {COLORS['primary']}, stop:0.6 {COLORS['primary_dark']}, stop:1 #312E81);
-                border-radius: 16px; border: none;
-            }}
-        """)
-        add_shadow(welcome_frame, blur=20, offset_y=6, color=QColor(79, 70, 229, 50))
-        wl = QHBoxLayout(welcome_frame)
-        wl.setContentsMargins(32, 20, 32, 20)
-        
-        w_text_ly = QVBoxLayout()
-        w_text_ly.setSpacing(4)
-        w_greet = QLabel(f"{greeting_icon}  {greeting}, {self.user.get('ad_soyad', 'Yönetici')}!")
-        w_greet.setFont(QFont(FONTS['family'], FONTS['size_xl'], QFont.Bold))
-        w_greet.setStyleSheet("color: white; background: transparent;")
-        w_sub = QLabel(f"Velvet Lounge yönetim panelinize hoş geldiniz. Son 30 günlük özetiniz aşağıda.")
-        w_sub.setFont(QFont(FONTS['family'], FONTS['size_sm']))
-        w_sub.setStyleSheet("color: rgba(255,255,255,0.7); background: transparent;")
-        w_text_ly.addWidget(w_greet)
-        w_text_ly.addWidget(w_sub)
-        wl.addLayout(w_text_ly, 1)
-        
-        w_date = QLabel(datetime.now().strftime("%d %B %Y, %A").replace(
-            "Monday", "Pazartesi").replace("Tuesday", "Salı").replace("Wednesday", "Çarşamba").replace(
-            "Thursday", "Perşembe").replace("Friday", "Cuma").replace("Saturday", "Cumartesi").replace(
-            "Sunday", "Pazar").replace("January", "Ocak").replace("February", "Şubat").replace(
-            "March", "Mart").replace("April", "Nisan").replace("May", "Mayıs").replace(
-            "June", "Haziran").replace("July", "Temmuz").replace("August", "Ağustos").replace(
-            "September", "Eylül").replace("October", "Ekim").replace("November", "Kasım").replace(
-            "December", "Aralık"))
-        w_date.setFont(QFont(FONTS['family'], FONTS['size_md']))
-        w_date.setStyleSheet("color: rgba(255,255,255,0.6); background: transparent;")
-        wl.addWidget(w_date)
-        ly.addWidget(welcome_frame)
-
-        # Premium kartlar
-        cards = QHBoxLayout()
-        cards.setSpacing(16)
-        data = [
-            (ICONS['money'], "Son 30 Gün Satış", f"₺{stats['total_sales']:,.2f}", "Tamamlanan siparişler", COLORS['primary'], COLORS['primary_bg']),
-            (ICONS['user'], "Ağırlanan Misafir", str(stats['guest_count']), "+%12 düne göre", COLORS['success'], COLORS['bg_success']),
-            (ICONS['menu_food'], "Açık Siparişler", f"₺{stats['open_orders']:,.2f}", "Hazırlanıyor", COLORS['warning'], COLORS['bg_warning']),
-            (ICONS['arrow_down'], "Son 30 Gün Giderler", f"₺{stats['total_expense']:,.2f}", "Masraflar", COLORS['danger'], COLORS['bg_danger']),
-        ]
-        for icon, title, val, sub, color, bg in data:
-            c = StatCard(icon, title, val, sub, color, bg)
-            cards.addWidget(c, 1)
-        ly.addLayout(cards)
-
-        # Grafikler
-        chart_row = QHBoxLayout()
-        chart_row.setSpacing(20)
-
-        # Bar chart alanı
-        bar_chart_frame = QFrame()
-        bar_chart_frame.setStyleSheet(f"background: white; border: 1px solid {COLORS['border']}; border-radius: 16px;")
-        add_shadow(bar_chart_frame, blur=15, offset_y=4, color=QColor(0,0,0,10))
-        bl = QVBoxLayout(bar_chart_frame)
-        bl.setContentsMargins(24, 20, 24, 20)
-        
-        b_header = QHBoxLayout()
-        b_title = QLabel("Saatlik Satış Dağılımı")
-        b_title.setFont(QFont(FONTS['family'], FONTS['size_md'], QFont.Bold))
-        b_title.setStyleSheet(f"color: {COLORS['text_dark']}; background: transparent;")
-        b_header.addWidget(b_title)
-        b_header.addStretch()
-        bl.addLayout(b_header)
-
-        self.bar_chart = BarChart([
-            ("08:00", 120), ("10:00", 350), ("12:00", 850), 
-            ("14:00", 620), ("16:00", 710), ("18:00", 1250),
-            ("20:00", 1540), ("22:00", 980)
-        ])
-        bl.addWidget(self.bar_chart)
-        chart_row.addWidget(bar_chart_frame, 2)
-
-        # Donut chart
-        donut_frame = QFrame()
-        donut_frame.setStyleSheet(f"background: white; border: 1px solid {COLORS['border']}; border-radius: 16px;")
-        add_shadow(donut_frame, blur=15, offset_y=4, color=QColor(0,0,0,10))
-        dl = QVBoxLayout(donut_frame)
-        dl.setContentsMargins(24, 20, 24, 20)
-        
-        d_title = QLabel("Masa Doluluk Oranı")
-        d_title.setFont(QFont(FONTS['family'], FONTS['size_md'], QFont.Bold))
-        d_title.setStyleSheet(f"color: {COLORS['text_dark']}; background: transparent;")
-        dl.addWidget(d_title)
-
-        total = max(stats['total_tables'], 1)
-        occ_pct = int(stats['occupied_tables'] / total * 100)
-        
-        dl.addStretch()
-        donut_ly = QHBoxLayout()
-        donut_ly.addStretch()
-        self.donut_chart = DonutChart(percentage=occ_pct, color=COLORS['primary'])
-        donut_ly.addWidget(self.donut_chart)
-        donut_ly.addStretch()
-        dl.addLayout(donut_ly)
-        dl.addStretch()
-
-        detail = QLabel(f"<span style='color:{COLORS['primary']}; font-weight:bold;'>{stats['occupied_tables']} Dolu</span> / {total} Toplam Masa")
-        detail.setAlignment(Qt.AlignCenter)
-        detail.setStyleSheet(f"color: {COLORS['text_secondary']};")
-        dl.addWidget(detail)
-        
-        chart_row.addWidget(donut_frame, 1)
-
-        ly.addLayout(chart_row)
-        ly.addStretch()
-
-        scroll.setWidget(content)
-        pg = QVBoxLayout(page)
-        pg.setContentsMargins(0, 0, 0, 0)
-        pg.addWidget(scroll)
-        return page
-
-    # ==================== MASA / BÖLGELER ====================
     def _create_masa_bolge_page(self):
         self.floor_page = FloorPlanPage(self.user)
         return self.floor_page
@@ -495,6 +369,8 @@ class AdminPanel(QWidget):
         """Ana pencere her senkronda çağırır: menü sayfası çevrimiçi durumu ve değişiklikleri günceller."""
         self.menu_page.on_sync_status(status)
         self.floor_page.on_sync_status(status)
+        if self.pages.currentWidget() is self.dashboard_page:
+            self.dashboard_page.refresh()  # rakamlar yerelden; her senkronda tazelenir
         if 'modules' in status.changed:
             self.modules_panel.refresh()
             self.cash_page.refresh()
@@ -998,139 +874,10 @@ class AdminPanel(QWidget):
         dlg.exec()
 
     def _create_raporlar_page(self):
-        page = QWidget()
-        ly = QVBoxLayout(page)
-        ly.setContentsMargins(32, 24, 32, 32)
-        ly.setSpacing(16)
+        self.reports_page = ReportsPage(self.user)
+        self.reports_page.open_cash_history.connect(lambda: (self._show_page(10), self.cash_page.tabs.setCurrentIndex(2)))
+        return self.reports_page
 
-        hr = QHBoxLayout()
-        header = PageHeader("Gelişmiş Raporlar", "İşletmenizin performans metrikleri.", COLORS['info'], ICONS['chart'])
-        hr.addWidget(header, 1)
-
-        csv_btn = QPushButton(f"{ICONS['save']} CSV Dışa Aktar")
-        csv_btn.setFixedHeight(44)
-        csv_btn.setCursor(Qt.PointingHandCursor)
-        csv_btn.setStyleSheet(f"""
-            QPushButton {{ background: {COLORS['success']}; border: none; color: white;
-                font-size: 13px; font-weight: bold; border-radius: 8px; padding: 0 18px; }}
-            QPushButton:hover {{ background: {COLORS['success_dark']}; }}
-        """)
-        csv_btn.clicked.connect(self._export_reports_csv)
-        hr.addWidget(csv_btn, 0, Qt.AlignVCenter)
-        ly.addLayout(hr)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        cw = QWidget()
-        grid = QGridLayout(cw)
-        grid.setSpacing(16)
-
-        s = database.get_dashboard_stats()
-        
-        # Calculate real dynamic values based on basic stats
-        t_sales = s['total_sales']
-        o_count = max(1, s['guest_count'] // 2) # approx orders
-        g_count = max(1, s['guest_count'])
-        
-        avg_order = t_sales / o_count if o_count > 0 else 0
-        avg_guest = t_sales / g_count if g_count > 0 else 0
-        
-        toplam_iskonto = database.get_toplam_iskonto()
-        iskonto_pct = f"%{(toplam_iskonto / (t_sales + toplam_iskonto) * 100):.1f}" if (t_sales + toplam_iskonto) > 0 else "%0"
-
-        stats_data = [
-            (ICONS['money'], "Gerçekleşen Satış", f"₺{t_sales:,.2f}", "Kasa giriş", COLORS['success'], COLORS['bg_success']),
-            (ICONS['chart'], "Ortalama Adisyon", f"₺{avg_order:,.2f}", "Sipariş başı", COLORS['info'], COLORS['card_blue_bg']),
-            (ICONS['user'], "Kişi Başı Ortalama", f"₺{avg_guest:,.2f}", "Misafir", COLORS['primary'], COLORS['primary_bg']),
-            (ICONS['menu_food'], "Adisyon Sayısı", f"{o_count}", "Kapanan", COLORS['warning'], COLORS['bg_warning']),
-            (ICONS['arrow_down'], "İskonto & İndirim", f"₺{toplam_iskonto:,.2f}", f"{iskonto_pct} İndirim", COLORS['danger'], COLORS['bg_danger']),
-            (ICONS['star'], "Tahmini Bahşiş", f"₺{t_sales*0.05:,.2f}", "%5 Ortalama", COLORS['accent'], COLORS['bg_warning']),
-        ]
-        
-        for i, (icon, desc, val, sub, color, bg) in enumerate(stats_data):
-            c = StatCard(icon, desc, val, sub, color, bg)
-            grid.addWidget(c, i // 3, i % 3)
-            
-        grid.setRowStretch(grid.rowCount(), 1)
-
-        # En Popüler Ürünler
-        pop_title = QLabel("🏆  En Çok Sipariş Edilen Ürünler (Top 5)")
-        pop_title.setFont(QFont(FONTS['family'], FONTS['size_md'], QFont.Bold))
-        pop_title.setStyleSheet(f"color: {COLORS['text_dark']}; margin-top: 8px;")
-        grid.addWidget(pop_title, grid.rowCount(), 0, 1, 3)
-
-        popular = database.get_popular_products(5)
-        if popular:
-            rank_colors = [COLORS['warning'], COLORS['text_secondary'], '#CD7F32', COLORS['text_muted'], COLORS['text_muted']]
-            for rank, prod in enumerate(popular, 1):
-                pop_row = QFrame()
-                pop_row.setStyleSheet(f"QFrame {{ background: white; border-radius: 10px; border: 1px solid {COLORS['border_light']}; }}")
-                prl = QHBoxLayout(pop_row)
-                prl.setContentsMargins(16, 10, 16, 10)
-                rank_lbl = QLabel(f"#{rank}")
-                rank_lbl.setFixedWidth(32)
-                rank_lbl.setFont(QFont(FONTS['family'], FONTS['size_md'], QFont.Bold))
-                rank_lbl.setStyleSheet(f"color: {rank_colors[rank-1]};")
-                name_lbl = QLabel(prod['urun_adi'])
-                name_lbl.setFont(QFont(FONTS['family'], FONTS['size_md'], QFont.Bold))
-                adet_lbl = QLabel(f"{prod['toplam_adet']} adet")
-                adet_lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 13px;")
-                tutar_lbl = QLabel(f"₺{(prod['toplam_tutar'] or 0):,.2f}")
-                tutar_lbl.setFont(QFont(FONTS['family'], FONTS['size_sm'], QFont.Bold))
-                tutar_lbl.setStyleSheet(f"color: {COLORS['success']};")
-                prl.addWidget(rank_lbl)
-                prl.addWidget(name_lbl, 1)
-                prl.addWidget(adet_lbl)
-                prl.addSpacing(16)
-                prl.addWidget(tutar_lbl)
-                grid.addWidget(pop_row, grid.rowCount(), 0, 1, 3)
-        else:
-            no_data = QLabel("Henüz tamamlanmış sipariş yok — veriler biriktikçe burada görünecek.")
-            no_data.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 13px; padding: 12px;")
-            grid.addWidget(no_data, grid.rowCount(), 0, 1, 3)
-
-        scroll.setWidget(cw)
-        ly.addWidget(scroll, 1)
-        return page
-
-    def _export_reports_csv(self):
-        from datetime import datetime
-        default_name = f"NexPOS_Rapor_{datetime.now().strftime('%Y-%m-%d')}.csv"
-        path, _ = QFileDialog.getSaveFileName(self, "CSV Olarak Kaydet", default_name, "CSV Dosyaları (*.csv)")
-        if not path:
-            return
-        s = database.get_dashboard_stats()
-        t_sales = s['total_sales']
-        o_count = max(1, s['guest_count'] // 2)
-        g_count = max(1, s['guest_count'])
-        avg_order = t_sales / o_count if o_count > 0 else 0
-        avg_guest = t_sales / g_count if g_count > 0 else 0
-        try:
-            with open(path, 'w', encoding='utf-8-sig') as f:
-                f.write("Metrik;Değer\n")
-                f.write(f"Gerçekleşen Satış;{t_sales:.2f}\n")
-                f.write(f"Ortalama Adisyon;{avg_order:.2f}\n")
-                f.write(f"Kişi Başı Ortalama;{avg_guest:.2f}\n")
-                f.write(f"Adisyon Sayısı;{o_count}\n")
-                f.write(f"Misafir Sayısı;{g_count}\n")
-                f.write(f"Toplam Gider;{s['total_expense']:.2f}\n")
-                f.write(f"Açık Siparişler;{s['open_orders']:.2f}\n")
-                f.write(f"Toplam Masa;{s['total_tables']}\n")
-                f.write(f"Dolu Masa;{s['occupied_tables']}\n")
-                f.write(f"Tahmini Bahşiş;{t_sales*0.05:.2f}\n")
-            ToastNotification(self, "İstatistik raporu CSV olarak kaydedildi!", "success")
-        except Exception as ex:
-            QMessageBox.critical(self, "Hata", f"CSV kaydedilemedi:\n{str(ex)}")
-
-    def _create_kullanicilar_page(self):
-        self.staff_page = StaffPage(self.user)
-        return self.staff_page
-
-    def _create_yetkiler_page(self):
-        self.permissions_page = PermissionsPage(self.user)
-        return self.permissions_page
-
-    # ==================== SİSTEM AYARLARI ====================
     def _create_settings_page(self):
         import json, os
         page = QWidget()

@@ -213,6 +213,7 @@ def apply_order_op(order, op, payload, staff_id, at):
         line['reason'] = _str(p.get('reason'), 'Gerekçe', 120)
         line['by'] = staff_id
         line['approvedBy'] = p.get('approvedBy') or staff_id
+        line['actionAt'] = at
     elif op == 'setDiscount':
         if any(x.get('lineIds') for x in o['payments']):
             raise OrderError("Ürün seçerek ödeme alınmış adisyonda iskonto değiştirilemez.")
@@ -228,7 +229,7 @@ def apply_order_op(order, op, payload, staff_id, at):
                 raise OrderError("İskonto türü geçersiz.")
             o['discount'] = {'type': d['type'], 'value': d['value'],
                              'reason': _str(p.get('reason'), 'Gerekçe', 120, optional=True),
-                             'by': staff_id, 'approvedBy': p.get('approvedBy') or staff_id}
+                             'by': staff_id, 'approvedBy': p.get('approvedBy') or staff_id, 'at': at}
     elif op == 'requestBill':
         if not isinstance(p.get('value'), bool):
             raise OrderError("Hesap isteği true/false olmalıdır.")

@@ -149,6 +149,19 @@ Yalnızca Yönetici açıp kapatır; ayar bulutta tutulur ve bütün cihazlara i
 - **İade:** Kasa → Bugünün Adisyonları → İade Et (`refund` yetkisi ve gerekçe).
 - Kasa işlemleri `cash` yetkisi ister; yetkisi olmayana yetkili onayı penceresi açılır. Hepsi internetsiz çalışır.
 
+## Ana Sayfa ve Raporlar
+
+- **Ana Sayfa:** bugünün cirosu, adisyon sayısı ve ortalaması (geçen haftanın aynı günü, aynı saatine göre),
+  açık masalar, kasa, saatlik satış grafiği, en çok satanlar ve uyarılar (iptal/ikram/iskonto, kasa farkı,
+  gönderilemeyen işlem). Uyarıya tıklayınca ilgili rapora gidilir.
+- **Raporlar → Satış ve Diğer Raporlar:** dönem seçilir (bugün … geçen ay, özel aralık), önceki dönemle
+  karşılaştırılır. Sekmeler: Satış Özeti (KDV dökümü dahil), Ürünler (kategori, seçenek, satılmayanlar),
+  Saatler ve Günler (ısı haritası), Personel, Kayıp ve Denetim, Gelir – Gider, Mutfak. Her sekme CSV
+  (Excel'de açılır) ve PDF olarak kaydedilir.
+- Raporlar bu bilgisayardaki kayıtlardan hesaplanır, internetsiz çalışır ve kasa Z raporuyla aynı hesabı kullanır.
+  Günlük özet ayrıca buluta (`dailyStats`) yazılır; ileride telefondan rapor bakmak için.
+- Garson **Vardiyam** düğmesiyle bugünkü kendi cirosunu, bahşişini ve işlemlerini görür.
+
 ## Mutfak / bar ekranı (tablet)
 
 1. **Ayarlar → Modüller**'de "Mutfak / Bar Ekranı"nı açın.

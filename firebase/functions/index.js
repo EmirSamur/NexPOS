@@ -46,6 +46,7 @@ const {
   expectedCash,
 } = require('./src/lib');
 const { OrderError, applyOrderOp, mergeOrders, tableStatusFor, stampCount } = require('./src/orders');
+const { businessDayOf, contribution, refundContribution, merge } = require('./src/stats');
 
 initializeApp();
 const db = getFirestore();
@@ -625,6 +626,12 @@ function orderHandler(op) {
       const q = await tx.get(db.collection('kitchenTickets').where('orderId', 'in', ids));
       for (const d of q.docs) if (d.data().status !== 'served') ticketRefs.set(d.id, d);
     }
+    // Günlük özet (dailyStats): kapanan/iptal edilen adisyonun ve iadenin günü
+    let statsRef = null;
+    let statsSnap = null;
+    if (['takePayment', 'cancelOrder'].includes(op) && order) statsRef = db.doc(`dailyStats/${order.businessDay}`);
+    if (op === 'refundPayment' && typeof at === 'string') statsRef = db.doc(`dailyStats/${businessDayOf(at)}`);
+    if (statsRef) statsSnap = await tx.get(statsRef);
     let products = [];
     if (op === 'addItems' && Array.isArray(p.items)) {
       const ids = [...new Set(p.items.map((i) => i?.productId).filter((x) => typeof x === 'string' && x))];
@@ -720,6 +727,16 @@ function orderHandler(op) {
       tx.set(db.doc(`payments/${pay.paymentId}`), {
         ...pay, orderId: next.id, orderNo: next.no, businessDay: next.businessDay, terminalId, createdAt: now,
       });
+    }
+
+    let delta = null;
+    if (op === 'takePayment' && next.status === 'paid') delta = contribution(next);
+    if (op === 'cancelOrder') delta = contribution(next);
+    if (op === 'refundPayment') delta = refundContribution(next.refunds[next.refunds.length - 1]);
+    if (delta && statsRef) {
+      const current = statsSnap.exists ? statsSnap.data() : {};
+      delete current.updatedAt;
+      tx.set(statsRef, { ...merge(current, delta), day: statsRef.id, updatedAt: now });
     }
 
     if (op === 'refundPayment') {

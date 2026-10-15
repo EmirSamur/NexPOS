@@ -1,4 +1,16 @@
-# 7. Ekran: Ana Sayfa (Gösterge Paneli) ve Raporlar (tarif, onay bekliyor)
+# 7. Ekran: Ana Sayfa (Gösterge Paneli) ve Raporlar
+
+> Durum: **uygulandı.** Sorulara verilen cevaplar (hepsi öneri yönünde): günlük özet buluta yazılıyor
+> (telefonda görme sayfası sonra), eski NexPOS satışları "eski kayıt" olarak görünüyor, dışa aktarma CSV + PDF,
+> garson "Vardiyam"da kendi cirosunu ve bahşişini görüyor.
+>
+> Uygulamada netleşenler:
+> - Hesaplar `reports.py`'de; kasa Z raporu KDV ve iskonto dağıtımında aynı fonksiyonları kullanıyor.
+> - Sunucudaki `src/stats.js` aynı "katkı" hesabını yapıyor; ortak adisyon senaryolarındaki her adisyon için iki
+>   dilin sonucu testte birebir karşılaştırılıyor, emülatörde de bulut özeti yerel raporla aynı çıkıyor.
+> - İptal/ikram/iskonto satırlarına işlem saati (`actionAt`, `discount.at`) eklendi; denetim listesi bunu gösterir.
+> - Tablolar sütun başlığına tıklanarak sıralanır; varsayılan: ürün ve personel ciroya göre, denetim en yeni üstte.
+> - Kayıp ve Denetim sekmesini yalnızca Yönetici ve Müdür görür.
 
 ## Bugünkü durum ve sorun
 
@@ -137,12 +149,12 @@ Net satış                 56.470 ₺
 
 ## "Bitti" sayılma ölçütü
 
-- [ ] Ana Sayfa bugünün rakamlarını, geçen haftanın aynı saatine göre karşılaştırmasını, saatlik grafiği,
+- [x] Ana Sayfa bugünün rakamlarını, geçen haftanın aynı saatine göre karşılaştırmasını, saatlik grafiği,
       en çok satanları ve uyarıları gösteriyor; internetsiz çalışıyor
-- [ ] Dönem seçici ve önceki dönem karşılaştırması bütün sekmelerde çalışıyor
-- [ ] Satış özeti ve KDV dökümü, aynı dönemin kasa Z raporlarının toplamıyla kuruşu kuruşuna tutuyor (otomatik test)
-- [ ] Ürün, seçenek, saat ısı haritası, personel, kayıp/denetim, gelir-gider ve mutfak sekmeleri doğru
-- [ ] CSV ve PDF dışa aktarma
-- [ ] Bulut günlük özeti (`dailyStats`) yerel hesapla aynı (emülatör testi)
-- [ ] "Vardiyam" yeni hesapla, yalnızca kendi satırı
-- [ ] Eski NexPOS kayıtları seçilen şekilde görünüyor
+- [x] Dönem seçici ve önceki dönem karşılaştırması bütün sekmelerde çalışıyor
+- [x] Satış özeti ve KDV dökümü, aynı dönemin kasa Z raporlarının toplamıyla kuruşu kuruşuna tutuyor (otomatik test)
+- [x] Ürün, seçenek, saat ısı haritası, personel, kayıp/denetim, gelir-gider ve mutfak sekmeleri doğru
+- [x] CSV ve PDF dışa aktarma
+- [x] Bulut günlük özeti (`dailyStats`) yerel hesapla aynı (emülatör testi)
+- [x] "Vardiyam" yeni hesapla, yalnızca kendi satırı
+- [x] Eski NexPOS kayıtları seçilen şekilde görünüyor

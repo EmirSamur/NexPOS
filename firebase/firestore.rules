@@ -125,6 +125,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Günlük özet (7. ekran): yalnızca yönetici ve müdür okur (telefondan rapor için hazırlık).
+    match /dailyStats/{day} {
+      allow read: if isManagerPlus();
+      allow write: if false;
+    }
+
     match /auditLogs/{logId} {
       allow read: if isManagerPlus();
       allow write: if false;

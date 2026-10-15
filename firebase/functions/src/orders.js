@@ -188,6 +188,7 @@ function applyOrderOp(order, op, payload, ctx) {
       line.reason = str(p.reason, 'Gerekçe', 120);
       line.by = ctx.staffId;
       line.approvedBy = p.approvedBy || ctx.staffId;
+      line.actionAt = ctx.at;
       break;
     }
     case 'setDiscount': {
@@ -201,7 +202,7 @@ function applyOrderOp(order, op, payload, ctx) {
       if (d.type === 'amount' && !isInt(d.value, 1, 10_000_000)) fail('İskonto tutarı kuruş cinsinden olmalıdır.');
       if (!['percent', 'amount'].includes(d.type)) fail('İskonto türü geçersiz.');
       o.discount = { type: d.type, value: d.value, reason: str(p.reason, 'Gerekçe', 120, { optional: true }),
-        by: ctx.staffId, approvedBy: p.approvedBy || ctx.staffId };
+        by: ctx.staffId, approvedBy: p.approvedBy || ctx.staffId, at: ctx.at };
       break;
     }
     case 'requestBill': {

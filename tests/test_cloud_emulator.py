@@ -430,3 +430,62 @@ def test_mutfak_ekrani_hazir_kasaya_iner_teslim_buluta_gider(db, client):
     # Tablet personel ve PIN verisini okuyamaz
     with pytest.raises(Exception):
         client.list_docs('staffPins', tablet)
+
+
+def test_gunluk_ozet_bulutta_yerel_raporla_ayni(db, client):
+    import requests
+    import pos
+    import reports
+    from cloud.admin_api import AdminApi
+    from cloud.pairing import pair_terminal
+    from cloud.sync import SyncEngine
+
+    requests.delete('http://127.0.0.1:8080/emulator/v1/projects/demo-nexpos/databases/(default)/documents',
+                    timeout=10).raise_for_status()
+    email = f'rapor-{uuid.uuid4().hex[:6]}@kafe.test'
+    owner_id = create_owner(email)
+    creds, _ = pair_terminal(client, email, 'sahip-sifre-1', 'Kasa 1')
+    api = AdminApi(client, client.sign_in_with_password(email, 'sahip-sifre-1'))
+    engine = SyncEngine(client, creds)
+    cats, prods = db.legacy_import_payload()
+    res = api.import_menu(cats, prods)
+    db.apply_import_mapping(res['categories'], res['products'])
+    waiter = api.create_staff('Cem Akar', 'waiter', '730591')['staffId']
+    engine.run_once()
+    user = db.login_with_pin(waiter, '730591')
+    menu = {p['name']: p for p in db.menu_products()}
+
+    def order(items):
+        o = pos.open_order(user)
+        for name, qty in items:
+            pos.add_line(user, o['id'], pos.product_line(menu[name], qty=qty))
+        return pos.send_pending(user, o['id'])[0]
+
+    # İnternetsiz bir gün: iskonto, ikram, iptal, bölünmüş ödeme, adisyon iptali, iade
+    o1 = order([('Latte', 2), ('Tost', 1)])
+    o1 = pos.set_discount(user, o1['id'], {'type': 'percent', 'value': 15}, 'Öğrenci', owner_id)
+    o1 = pos.take_payment(user, o1['id'], 'cash', 5000)
+    o1 = pos.take_payment(user, o1['id'], 'card', o1['remaining'], tip=500)
+    o2 = order([('Latte', 3)])
+    o2, one = pos.split_line(user, o2['id'], o2['items'][0]['lineId'], 1)
+    o2 = pos.comp_line(user, o2['id'], one, 'Doğum günü', owner_id)
+    o2 = pos.take_payment(user, o2['id'], 'meal', o2['total'])
+    o3 = order([('Tost', 2), ('Latte', 1)])
+    o3 = pos.void_line(user, o3['id'], o3['items'][0]['lineId'], 'Yanlış', owner_id)
+    o3 = pos.take_payment(user, o3['id'], 'card', o3['total'])
+    o4 = order([('Tost', 1)])
+    pos.cancel_order(user, o4['id'], 'Vazgeçti', owner_id)
+    pos.refund(user, o3['id'], 'card', 1000, 'Soğuk', approver_id=owner_id)
+
+    status = engine.run_once()
+    assert status.online and db.outbox_counts() == (0, 0), db.get_failed_ops()
+    day = pos.business_day()
+    cloud = client.get_doc(f'dailyStats/{day}', api.session)[1]
+    local = reports.day_stats(day)
+    for key in ('orders', 'dineIn', 'takeaway', 'gross', 'discount', 'discountCount', 'revenue', 'tips', 'byPayment',
+                'byStaff', 'byProduct', 'comps', 'voids', 'vat', 'cancelled', 'refunds', 'byHour'):
+        assert cloud.get(key) == local.get(key), key
+    assert local['revenue'] == o1['total'] + o2['total'] + o3['total']
+    # Terminal günlük özeti okuyamaz (yalnızca yönetici/müdür)
+    with pytest.raises(Exception):
+        client.get_doc(f'dailyStats/{day}', engine._ensure_session())

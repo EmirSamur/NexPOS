@@ -498,20 +498,24 @@ Siparişi değiştiren her işlem bir **callable function** üzerinden yapılır
 
 ## 10. Raporlama ve kayıt
 
-### `dailyStats/{businessDay}`: `takePayment` ve `voidItem` günceller
+### `dailyStats/{businessDay}`: günlük özet (yalnızca fonksiyonlar yazar; yönetici/müdür okur)
+Adisyon ödenip kapanınca ya da iptal edilince katkısı açıldığı iş gününe, iade yapıldığı iş gününe eklenir
+(`src/stats.js`; NexPOS'taki `reports.py` ile aynı hesap).
 ```ts
 {
-  revenue, orderCount, avgTicket, guestCount,
-  byHour: { "08": { revenue, orders }, ... },
-  byPayment: { cash, card, app },
-  byProduct: { [productId]: { name, qty, revenue, cost } },
-  byCategory: { [categoryId]: { revenue, qty } },
-  byStaff: { [uid]: { revenue, orders } },
-  discounts, comps, voids, refunds,
-  avgPrepSeconds: { bar, kitchen },
-  newCustomers, stampsGiven, rewardsUsed
+  day, orders, dineIn, takeaway,
+  gross, discount, discountCount, revenue,        // revenue = gross − discount
+  tips, byPayment: { cash, card, meal },
+  byHour: { "14": { revenue, orders } },           // kapanış saati (terminal yerel saati)
+  byStaff: { [staffId]: { revenue, orders } },     // adisyonu açan garson
+  byProduct: { [productId | "n:<ad>"]: { name, qty, revenue, comps?, voids? } },
+  comps: { count, amount }, voids: { count, amount },   // liste fiyatıyla, satışa dahil değil
+  vat: { "10": kdvDahilTutar, ... },
+  cancelled, refunds: { count, amount, cash?, card?, meal? },
+  updatedAt
 }
 ```
+> Ürün maliyeti, misafir sayısı, hazırlama süresi ve sadakat alanları ilgili ekranlarda eklenecek.
 
 ### `auditLogs/{id}`
 `{ action: "void"|"comp"|"discount"|"refund"|"price_change"|"cash_diff"|"role_change", actor, target, before?, after?, reason?, at }`

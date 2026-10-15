@@ -15,8 +15,9 @@ from datetime import datetime
 
 import database
 import pos
-from cloud.orders import OrderError, compute_totals, line_total
+from cloud.orders import OrderError, line_total
 from pos import PAYMENT_LABELS, now_iso
+from reports import vat_amount, vat_by_rate  # raporlarla aynı hesap
 
 METHODS = ('cash', 'card', 'meal')
 TAX_RATES = (0, 1, 10, 20)
@@ -195,21 +196,6 @@ def expected_cash(session, orders=None):
     return session['openingCash'] + cash_in - cash_out + moves
 
 
-def vat_by_rate(order):
-    """Adisyonun KDV dahil tutarı oranlara dağıtılır (iskonto orantılı, kuruş farkı son satırda)."""
-    lines = [l for l in order['items'] if l['status'] == 'active' and line_total(l) > 0]
-    t = compute_totals(order)
-    gross = {}
-    left = t['discountAmount']
-    for i, l in enumerate(lines):
-        lt = line_total(l)
-        share = left if i == len(lines) - 1 else (t['discountAmount'] * lt) // t['subtotal']
-        left -= share
-        rate = l.get('taxRate', 10)
-        gross[rate] = gross.get(rate, 0) + lt - share
-    return gross
-
-
 def build_report(session):
     """X (ara) ya da Z (kapanış) raporu. Bütün tutarlar kuruş."""
     orders = _orders_touched(session)
@@ -252,7 +238,7 @@ def build_report(session):
         for rate, g in vat_by_rate(o).items():
             vat_gross[rate] = vat_gross.get(rate, 0) + g
         staff[o['waiterId']] = staff.get(o['waiterId'], 0) + o['total']
-    vat = [{'rate': r, 'gross': g, 'vat': (g * r * 2 + (100 + r)) // ((100 + r) * 2)}  # yarım yukarı
+    vat = [{'rate': r, 'gross': g, 'vat': vat_amount(g, r)}
            for r, g in sorted(vat_gross.items())]
 
     total_sales = sum(sales.values())

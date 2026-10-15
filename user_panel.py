@@ -372,15 +372,15 @@ class UserPanel(QWidget):
         self._refresh_bolgeler()
 
     def _show_shift_summary(self):
-        summary = database.get_shift_summary(self.user['id'])
-        tutar = summary['toplam_tutar'] or 0
-        sayi = summary['siparis_sayisi'] or 0
+        """Vardiyam: bugünkü kendi satırı (raporlarla aynı hesap)."""
+        import reports
+        r = reports.my_shift(self.user['cloud_id'])
         InfoDialog(
-            "Vardiya Özetim",
-            f"Bugünkü performansınız:\n\n"
-            f"✅  Tamamlanan Sipariş: {sayi} adet\n"
-            f"💰  Toplam Ciro: ₺{tutar:,.2f}\n"
-            f"📊  Ortalama Adisyon: ₺{(tutar/sayi if sayi else 0):,.2f}",
+            "Vardiyam (bugün)",
+            f"✅  Adisyon: {r['orders']}\n"
+            f"💰  Ciro: {format_tl(r['revenue'])}\n"
+            f"📊  Ortalama adisyon: {format_tl(r['average'])}\n"
+            f"🎁  Bahşiş: {format_tl(r['tips'])}\n"
+            f"%  İskonto: {r['discount']} · İkram: {r['comps']} ürün · İptal: {r['voids']} ürün",
             COLORS['success'], self
         ).exec()
-
