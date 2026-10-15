@@ -41,6 +41,7 @@ const {
   gridLayout,
   validateGeneralSettings,
 } = require('./src/lib');
+const { OrderError, applyOrderOp, mergeOrders, tableStatusFor, stampCount } = require('./src/orders');
 
 initializeApp();
 const db = getFirestore();
@@ -532,6 +533,200 @@ const OP_HANDLERS = {
     });
     return { status: 'ok' };
   },
+};
+
+// ---------------------------------------------------------------------------
+// Sipariş işlemleri (4. ekran)
+//
+// Terminal her işlemi önce kendinde uygular, sonra kuyruktan buraya gönderir. Sunucu aynı
+// mantığı (src/orders.js) bulut kaydı üzerinde tekrar çalıştırır: toplamları kendisi hesaplar,
+// yetkiyi denetler, masa durumunu, mutfak/bar fişlerini ve ödeme kayıtlarını yazar.
+// ---------------------------------------------------------------------------
+
+// İşlem → gereken yetki. Onaylayan (payload.approvedBy) varsa yetki onun üzerinden aranır.
+function requiredPermission(op, payload, order) {
+  if (op === 'voidItem') return 'voidItem';
+  if (op === 'compItem') return 'comp';
+  if (op === 'setDiscount') return payload.discount === null ? 'openTable' : 'discount';
+  if (op === 'cancelOrder') {
+    const sent = (order?.items || []).some((l) => l.status === 'active' && l.state === 'sent');
+    return sent ? 'voidItem' : 'openTable';
+  }
+  return 'openTable';
+}
+
+const TABLE_STATUS_FIELDS = (order, status) => (status === 'empty'
+  ? { status: 'empty', currentOrderId: null, openedAt: null, waiterId: null }
+  : { status, currentOrderId: order.id, openedAt: order.openedAt, waiterId: order.waiterId });
+
+function orderHandler(op) {
+  return async (tx, { op: envelope, terminalId, staff, matrix }) => {
+    if (!staff) return { status: 'rejected', error: 'Personel bulunamadı.' };
+    const p = envelope.payload;
+    if (typeof p.orderId !== 'string' || !p.orderId) return { status: 'rejected', error: 'Adisyon belirtilmedi.' };
+    const at = envelope.createdAt;
+    const ctx = { staffId: envelope.staffId, at };
+
+    // ---- Okumalar (transaction kuralı: tüm okumalar yazmalardan önce)
+    const orderRef = db.doc(`orders/${p.orderId}`);
+    const orderSnap = await tx.get(orderRef);
+    const order = orderSnap.exists ? orderSnap.data() : null;
+    let source = null;
+    let sourceRef = null;
+    if (op === 'mergeOrders') {
+      sourceRef = db.doc(`orders/${p.sourceOrderId}`);
+      const s = await tx.get(sourceRef);
+      source = s.exists ? s.data() : null;
+    }
+    const approverId = typeof p.approvedBy === 'string' && p.approvedBy ? p.approvedBy : envelope.staffId;
+    let approver = staff;
+    if (approverId !== envelope.staffId) {
+      const a = await tx.get(db.doc(`staff/${approverId}`));
+      approver = a.exists && a.data().active === true ? a.data() : null;
+    }
+    const tableIds = new Set();
+    if (op === 'openOrder' && p.tableId) tableIds.add(p.tableId);
+    if (order?.tableId) tableIds.add(order.tableId);
+    if (op === 'moveOrder' && p.toTableId) tableIds.add(p.toTableId);
+    if (source?.tableId) tableIds.add(source.tableId);
+    const tableSnaps = new Map();
+    for (const id of tableIds) tableSnaps.set(id, await tx.get(db.doc(`tables/${id}`)));
+    let products = [];
+    if (op === 'addItems' && Array.isArray(p.items)) {
+      const ids = [...new Set(p.items.map((i) => i?.productId).filter((x) => typeof x === 'string' && x))];
+      products = ids.length ? await tx.getAll(...ids.map((x) => db.doc(`products/${x}`))) : [];
+    }
+
+    // ---- Yetki
+    const permission = requiredPermission(op, p, order);
+    if (!approver || !hasPermission(matrix, approver.role, permission, approver.permissions)) {
+      return { status: 'rejected', error: `Bu işlem için yetki yok (${permission}).` };
+    }
+    // Masa kuralları
+    if (op === 'openOrder' && p.tableId) {
+      const t = tableSnaps.get(p.tableId);
+      if (!t.exists || t.data().deleted === true) return { status: 'rejected', error: 'Masa bulunamadı.' };
+      const busy = t.data().currentOrderId;
+      if (busy && busy !== p.orderId && ['occupied', 'bill_requested'].includes(t.data().status)) {
+        return { status: 'rejected', error: 'Masada açık bir adisyon var.' };
+      }
+    }
+    if (op === 'moveOrder') {
+      const t = tableSnaps.get(p.toTableId);
+      if (!t || !t.exists || t.data().deleted === true) return { status: 'rejected', error: 'Hedef masa bulunamadı.' };
+      if (['occupied', 'bill_requested'].includes(t.data().status)) {
+        return { status: 'rejected', error: 'Hedef masa dolu; birleştirmeyi kullanın.' };
+      }
+    }
+
+    // ---- Uygula
+    let next;
+    let nextSource = null;
+    try {
+      if (op === 'mergeOrders') [next, nextSource] = mergeOrders(order, source, ctx);
+      else next = applyOrderOp(order, op, p, ctx);
+    } catch (e) {
+      if (e instanceof OrderError) return { status: 'rejected', error: e.message };
+      throw e;
+    }
+
+    // ---- Yazmalar
+    const now = FieldValue.serverTimestamp();
+    const stamp = { terminalId, updatedAt: now };
+    const finalize = (o) => ({ ...o, ...stamp, stamps: o.status === 'paid' ? stampCount(o) : null });
+    tx.set(orderRef, finalize(next));
+    if (nextSource) tx.set(sourceRef, finalize(nextSource));
+
+    // Masa durumları
+    const statusByTable = new Map();
+    if (order?.tableId && order.tableId !== next.tableId) statusByTable.set(order.tableId, ['empty', next]);
+    if (next.tableId) statusByTable.set(next.tableId, [tableStatusFor(next), next]);
+    if (nextSource?.tableId) statusByTable.set(nextSource.tableId, ['empty', nextSource]);
+    for (const [tableId, [st, o]] of statusByTable) {
+      const snap = tableSnaps.get(tableId);
+      if (!snap || !snap.exists) continue;
+      // Başka bir adisyonun masasını boşaltma
+      if (st === 'empty' && snap.data().currentOrderId && snap.data().currentOrderId !== o.id) continue;
+      tx.update(snap.ref, { ...TABLE_STATUS_FIELDS(o, st), updatedAt: now });
+    }
+
+    // Mutfak / bar fişleri
+    if (op === 'sendItems') {
+      const byTicket = new Map();
+      for (const line of next.items.filter((l) => p.lineIds.includes(l.lineId))) {
+        if (!byTicket.has(line.ticketId)) byTicket.set(line.ticketId, { station: line.station, lines: [] });
+        byTicket.get(line.ticketId).lines.push({
+          lineId: line.lineId, name: line.name, qty: line.qty, note: line.note || '',
+          options: (line.options || []).map((x) => x.name),
+        });
+      }
+      for (const [ticketId, t] of byTicket) {
+        tx.set(db.doc(`kitchenTickets/${ticketId}`), {
+          orderId: next.id, orderNo: next.no, tableName: next.tableName || '', type: next.type,
+          station: t.station, lines: t.lines, status: 'new', createdAt: at, terminalId, updatedAt: now,
+        });
+      }
+    }
+
+    // Ödeme kaydı (kasa ve raporlar için ayrı koleksiyon)
+    if (op === 'takePayment') {
+      const pay = next.payments[next.payments.length - 1];
+      tx.set(db.doc(`payments/${pay.paymentId}`), {
+        ...pay, orderId: next.id, orderNo: next.no, businessDay: next.businessDay, terminalId, createdAt: now,
+      });
+    }
+
+    // Fiyat farkı: terminal fiyatı geçerli kalır, kayda düşer
+    if (op === 'addItems') {
+      const current = new Map(products.filter((x) => x.exists).map((x) => [x.id, x.data().price]));
+      const mismatches = p.items
+        .filter((i) => i?.productId && current.has(i.productId) && current.get(i.productId) !== i.unitPrice)
+        .map((i) => ({ productId: i.productId, name: i.name, terminal: i.unitPrice, menu: current.get(i.productId) }));
+      if (mismatches.length) {
+        audit(tx, { action: 'price_mismatch', actor: envelope.staffId, target: `orders/${next.id}`, after: mismatches,
+          terminalId, clientAt: parseClientTime(at) });
+      }
+    }
+
+    const auditable = { voidItem: 'order_void', compItem: 'order_comp', setDiscount: 'order_discount',
+      cancelOrder: 'order_cancel', mergeOrders: 'order_merge', moveOrder: 'order_move' };
+    if (auditable[op]) {
+      audit(tx, { action: auditable[op], actor: envelope.staffId, approvedBy: approverId, target: `orders/${next.id}`,
+        detail: p.lineId || p.toTableId || p.sourceOrderId || null, reason: p.reason || null,
+        after: op === 'setDiscount' ? next.discount : null, terminalId, clientAt: parseClientTime(at) });
+    }
+    return { status: 'ok' };
+  };
+}
+
+const ORDER_OPS = ['openOrder', 'addItems', 'updateItem', 'removeItem', 'sendItems', 'voidItem', 'compItem',
+  'setDiscount', 'requestBill', 'moveOrder', 'takePayment', 'cancelOrder', 'mergeOrders'];
+for (const name of ORDER_OPS) OP_HANDLERS[name] = orderHandler(name);
+
+// Mutfak/bar fişinin durumu: new → preparing → ready → served
+OP_HANDLERS.updateTicket = async (tx, { op, staff }) => {
+  if (!staff) return { status: 'rejected', error: 'Personel bulunamadı.' };
+  const p = op.payload;
+  if (!['new', 'preparing', 'ready', 'served'].includes(p.status)) return { status: 'rejected', error: 'Fiş durumu geçersiz.' };
+  const ref = db.doc(`kitchenTickets/${p.ticketId}`);
+  const snap = await tx.get(ref);
+  if (!snap.exists) return { status: 'rejected', error: 'Fiş bulunamadı.' };
+  tx.update(ref, { status: p.status, [`${p.status}At`]: op.createdAt, updatedAt: FieldValue.serverTimestamp() });
+  return { status: 'ok' };
+};
+
+// Boş masayı elle rezerve işaretleme
+OP_HANDLERS.setTableReserved = async (tx, { op, staff, matrix }) => {
+  if (!staff) return { status: 'rejected', error: 'Personel bulunamadı.' };
+  if (!hasPermission(matrix, staff.role, 'openTable', staff.permissions)) return { status: 'rejected', error: 'Yetki yok.' };
+  const p = op.payload;
+  const ref = db.doc(`tables/${p.tableId}`);
+  const snap = await tx.get(ref);
+  if (!snap.exists || snap.data().deleted === true) return { status: 'rejected', error: 'Masa bulunamadı.' };
+  const current = snap.data().status || 'empty';
+  if (!['empty', 'reserved'].includes(current)) return { status: 'rejected', error: 'Dolu masa rezerve edilemez.' };
+  tx.update(ref, { status: p.reserved === true ? 'reserved' : 'empty', updatedAt: FieldValue.serverTimestamp() });
+  return { status: 'ok' };
 };
 
 function parseClientTime(value) {

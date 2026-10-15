@@ -71,13 +71,13 @@ def test_eşleme_giriş_kuyruk_ve_iptal(db, client):
     assert db.user_can(user, 'discount')
     db.enqueue_op('audit', {'action': 'approval_voiditem', 'detail': 'Latte ×1', 'approvedBy': owner_id},
                   waiter_id)
-    db.enqueue_op('addItems', {}, waiter_id)  # sunucu henüz desteklemiyor → kuyrukta bekler
+    db.enqueue_op('futureOp', {}, waiter_id)  # sunucu henüz desteklemiyor → kuyrukta bekler
     assert db.outbox_counts() == (3, 0)
 
     status = engine.run_once()
     assert status.online
     assert db.outbox_counts() == (1, 0)  # yalnızca desteklenmeyen işlem kaldı
-    assert db.get_pending_ops()[0]['op'] == 'addItems'
+    assert db.get_pending_ops()[0]['op'] == 'futureOp'
 
     # Sunucu giriş zamanını personel kaydına yazdı ve bu da terminale geri indi.
     engine.run_once()

@@ -91,6 +91,21 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Siparişler, mutfak/bar fişleri ve ödemeler: yalnızca personel ve terminal okur;
+    // yazma terminal kuyruğundan (syncOps) gelir.
+    match /orders/{id} {
+      allow read: if isStaff() || isActiveTerminal();
+      allow write: if false;
+    }
+    match /kitchenTickets/{id} {
+      allow read: if isStaff() || isActiveTerminal();
+      allow write: if false;
+    }
+    match /payments/{id} {
+      allow read: if isManagerPlus() || isActiveTerminal();
+      allow write: if false;
+    }
+
     match /auditLogs/{logId} {
       allow read: if isManagerPlus();
       allow write: if false;

@@ -1,0 +1,1302 @@
+[
+ {
+  "name": "iskonto üst üste binmez (eski NexPOS hatası)",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 2,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setDiscount",
+    "payload": {
+     "orderId": "o1",
+     "discount": {
+      "type": "percent",
+      "value": 10
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l2",
+       "productId": "p-l2",
+       "name": "Latte",
+       "unitPrice": 8000,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "subtotal": 27000,
+    "discountAmount": 2700,
+    "total": 24300,
+    "status": "open"
+   }
+  }
+ },
+ {
+  "name": "seçenek fiyat farkları adetle çarpılır",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 2,
+       "station": "bar",
+       "options": [
+        {
+         "groupId": "size",
+         "optionId": "m",
+         "name": "Orta",
+         "priceDelta": 1000
+        },
+        {
+         "groupId": "milk",
+         "optionId": "oat",
+         "name": "Yulaf",
+         "priceDelta": 1500
+        }
+       ],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "subtotal": 24000,
+    "total": 24000
+   }
+  }
+ },
+ {
+  "name": "yüzde iskonto yarım kuruşu yukarı yuvarlar",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Latte",
+       "unitPrice": 1005,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setDiscount",
+    "payload": {
+     "orderId": "o1",
+     "discount": {
+      "type": "percent",
+      "value": 10
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "discountAmount": 101,
+    "total": 904
+   }
+  }
+ },
+ {
+  "name": "tutar iskontosu ara toplamı aşamaz",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Latte",
+       "unitPrice": 3000,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setDiscount",
+    "payload": {
+     "orderId": "o1",
+     "discount": {
+      "type": "amount",
+      "value": 5000
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "discountAmount": 3000,
+    "total": 0
+   }
+  }
+ },
+ {
+  "name": "iptal ve ikram toplamdan düşer",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      },
+      {
+       "lineId": "l2",
+       "productId": "p-l2",
+       "name": "Latte",
+       "unitPrice": 13000,
+       "qty": 1,
+       "station": "kitchen",
+       "options": [],
+       "stampEligible": true
+      },
+      {
+       "lineId": "l3",
+       "productId": "p-l3",
+       "name": "Latte",
+       "unitPrice": 2000,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2",
+      "l3"
+     ],
+     "ticketIds": {
+      "bar": "tk-bar",
+      "kitchen": "tk-kit"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "voidItem",
+    "payload": {
+     "orderId": "o1",
+     "lineId": "l2",
+     "reason": "Müşteri vazgeçti",
+     "approvedBy": "m1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "compItem",
+    "payload": {
+     "orderId": "o1",
+     "lineId": "l3",
+     "reason": "Bekleme telafisi"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "subtotal": 9500,
+    "total": 9500
+   }
+  },
+  "expectLines": {
+   "o1": [
+    {
+     "lineId": "l1",
+     "state": "sent",
+     "status": "active",
+     "ticketId": "tk-bar"
+    },
+    {
+     "lineId": "l2",
+     "state": "sent",
+     "status": "void",
+     "ticketId": "tk-kit",
+     "approvedBy": "m1"
+    },
+    {
+     "lineId": "l3",
+     "state": "sent",
+     "status": "comp"
+    }
+   ]
+  }
+ },
+ {
+  "name": "bekleyen satır silinir, adet ve not değişir",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      },
+      {
+       "lineId": "l2",
+       "productId": "p-l2",
+       "name": "Latte",
+       "unitPrice": 8000,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "removeItem",
+    "payload": {
+     "orderId": "o1",
+     "lineId": "l2"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "updateItem",
+    "payload": {
+     "orderId": "o1",
+     "lineId": "l1",
+     "qty": 3,
+     "note": "az şekerli"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "subtotal": 28500
+   }
+  },
+  "expectLines": {
+   "o1": [
+    {
+     "lineId": "l1",
+     "qty": 3,
+     "note": "az şekerli",
+     "state": "pending"
+    }
+   ]
+  }
+ },
+ {
+  "name": "gönderilmiş satır silinemez",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1"
+     ],
+     "ticketIds": {
+      "bar": "tk-bar",
+      "kitchen": "tk-kit"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "removeItem",
+    "payload": {
+     "orderId": "o1",
+     "lineId": "l1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "silinemez"
+ },
+ {
+  "name": "gönderilmemiş satır iptal edilmez",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "voidItem",
+    "payload": {
+     "orderId": "o1",
+     "lineId": "l1",
+     "reason": "x"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "silinir"
+ },
+ {
+  "name": "nakit ödeme: para üstü, adisyon kapanır",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      },
+      {
+       "lineId": "l2",
+       "productId": "p-l2",
+       "name": "Latte",
+       "unitPrice": 13000,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2"
+     ],
+     "ticketIds": {
+      "bar": "tk-bar",
+      "kitchen": "tk-kit"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "pay1",
+     "method": "cash",
+     "amount": 22500,
+     "received": 30000
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "status": "paid",
+    "paid": 22500,
+    "remaining": 0,
+    "closedAt": "2026-10-15T12:00:00+03:00"
+   }
+  },
+  "expectPayments": {
+   "o1": [
+    {
+     "paymentId": "pay1",
+     "method": "cash",
+     "change": 7500,
+     "tip": 0
+    }
+   ]
+  }
+ },
+ {
+  "name": "parçalı ödeme: kart + bahşiş, sonra nakit",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Latte",
+       "unitPrice": 10000,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1"
+     ],
+     "ticketIds": {
+      "bar": "tk-bar",
+      "kitchen": "tk-kit"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "pay1",
+     "method": "card",
+     "amount": 6000,
+     "tip": 1000
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "pay2",
+     "method": "meal",
+     "amount": 4000
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "status": "paid",
+    "paid": 10000
+   }
+  }
+ },
+ {
+  "name": "kalandan fazla ödeme alınmaz",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Latte",
+       "unitPrice": 10000,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1"
+     ],
+     "ticketIds": {
+      "bar": "tk-bar",
+      "kitchen": "tk-kit"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "pay1",
+     "method": "card",
+     "amount": 10001
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "fazla"
+ },
+ {
+  "name": "gönderilmemiş ürün varken ödeme alınmaz",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Latte",
+       "unitPrice": 10000,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "pay1",
+     "method": "card",
+     "amount": 10000
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "Gönderilmemiş"
+ },
+ {
+  "name": "tamamı ikram edilen adisyon 0 ₺ ile kapanır",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Latte",
+       "unitPrice": 10000,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1"
+     ],
+     "ticketIds": {
+      "bar": "tk-bar",
+      "kitchen": "tk-kit"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "compItem",
+    "payload": {
+     "orderId": "o1",
+     "lineId": "l1",
+     "reason": "x"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "pay1",
+     "method": "cash",
+     "amount": 0
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "status": "paid",
+    "total": 0
+   }
+  }
+ },
+ {
+  "name": "ödeme alınmış adisyon iptal edilemez",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Latte",
+       "unitPrice": 10000,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1"
+     ],
+     "ticketIds": {
+      "bar": "tk-bar",
+      "kitchen": "tk-kit"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "pay1",
+     "method": "card",
+     "amount": 5000
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "cancelOrder",
+    "payload": {
+     "orderId": "o1",
+     "reason": "x"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "iptal edilemez"
+ },
+ {
+  "name": "kapanmış adisyona ürün eklenmez",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "cancelOrder",
+    "payload": {
+     "orderId": "o1",
+     "reason": "Müşteri gitti"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Latte",
+       "unitPrice": 100,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "kapanmış"
+ },
+ {
+  "name": "masa taşıma ve hesap isteme",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "requestBill",
+    "payload": {
+     "orderId": "o1",
+     "value": true
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "moveOrder",
+    "payload": {
+     "orderId": "o1",
+     "toTableId": "t9",
+     "toTableName": "Masa 9"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "tableId": "t9",
+    "tableName": "Masa 9",
+    "billRequested": true
+   }
+  },
+  "expectTableStatus": {
+   "o1": "bill_requested"
+  }
+ },
+ {
+  "name": "birleştirme: kaynak satırlar hedefe geçer, kaynak kapanır",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o2",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t2",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o2",
+     "items": [
+      {
+       "lineId": "l2",
+       "productId": "p-l2",
+       "name": "Latte",
+       "unitPrice": 8000,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o2",
+     "lineIds": [
+      "l2"
+     ],
+     "ticketIds": {
+      "bar": "tk-bar",
+      "kitchen": "tk-kit"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "mergeOrders",
+    "payload": {
+     "orderId": "o1",
+     "sourceOrderId": "o2"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "subtotal": 17500,
+    "status": "open"
+   },
+   "o2": {
+    "status": "merged",
+    "mergedInto": "o1",
+    "total": 0
+   }
+  },
+  "expectTableStatus": {
+   "o1": "occupied",
+   "o2": "empty"
+  }
+ },
+ {
+  "name": "aynı satır kimliği iki kez eklenmez",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Latte",
+       "unitPrice": 100,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Latte",
+       "unitPrice": 100,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "zaten eklenmiş"
+ },
+ {
+  "name": "masasız sipariş masa durumunu etkilemez",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A2",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "type": "takeaway",
+    "tableId": null
+   }
+  },
+  "expectTableStatus": {
+   "o1": "empty"
+  }
+ }
+]

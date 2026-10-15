@@ -174,7 +174,7 @@ test('terminal: eşleme, okuma yetkileri, işlem kuyruğu ve iptal', async () =>
       staffId: ownerId,
       createdAt: new Date().toISOString(),
     },
-    { opId: 'op-00000003', op: 'addItems', payload: {}, staffId: ownerId, createdAt: new Date().toISOString() },
+    { opId: 'op-00000003', op: 'futureOp', payload: {}, staffId: ownerId, createdAt: new Date().toISOString() },
     { opId: 'op-00000004', op: 'staffLogin', payload: {}, staffId: 'yok-boyle-biri', createdAt: new Date().toISOString() },
   ];
   const first = await term.call('syncOps', { ops });
