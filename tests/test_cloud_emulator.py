@@ -240,3 +240,81 @@ def test_salon_aktarim_plan_qr_ayarlar(db, client):
     assert 'general' in status.changed
     assert db.general_settings() == {'cafeName': 'Velvet Kafe', 'qrBaseUrl': 'https://velvet.web.app/masa',
                                      'idleLockMinutes': 5}
+
+
+def test_siparis_internetsiz_akis_sonra_senkron(db, client):
+    import requests
+    import pos
+    from cloud.admin_api import AdminApi
+    from cloud.pairing import pair_terminal
+    from cloud.sync import SyncEngine
+
+    requests.delete('http://127.0.0.1:8080/emulator/v1/projects/demo-nexpos/databases/(default)/documents',
+                    timeout=10).raise_for_status()
+    email = f'pos-{uuid.uuid4().hex[:6]}@kafe.test'
+    owner_id = create_owner(email)
+    creds, _ = pair_terminal(client, email, 'sahip-sifre-1', 'POS Kasa')
+    api = AdminApi(client, client.sign_in_with_password(email, 'sahip-sifre-1'))
+    engine = SyncEngine(client, creds)
+
+    # Hazırlık: menü + salon + garson + müdür (buluta), terminale iner
+    cats, prods = db.legacy_import_payload()
+    res = api.import_menu(cats, prods)
+    db.apply_import_mapping(res['categories'], res['products'])
+    res = api.import_floor(db.legacy_floor_payload())
+    db.apply_floor_mapping(res['areas'], res['tables'])
+    waiter = api.create_staff('Cem Akar', 'waiter', '730591')['staffId']
+    manager = api.create_staff('Mert Kaya', 'manager', '583920', email=f'm-{uuid.uuid4().hex[:6]}@kafe.test',
+                               password='mudur-sifre-1')['staffId']
+    milk = api.save_option_group({'name': 'Süt', 'options': [{'id': 'normal', 'name': 'Normal', 'priceDelta': 0},
+                                                            {'id': 'oat', 'name': 'Yulaf', 'priceDelta': 1500}]})['id']
+    latte_id = next(p for p in (api.client.list_docs('products', api.session)) if p[1]['name'] == 'Latte')[0]
+    latte_doc = client.get_doc(f'products/{latte_id}', api.session)[1]
+    api.save_product({'categoryId': latte_doc['categoryId'], 'name': 'Latte', 'price': 9500,
+                      'optionGroupIds': [milk]}, latte_id)
+    engine.run_once()
+    engine.run_once()
+    user = db.login_with_pin(waiter, '730591')
+
+    # Eski açık adisyonlar taşınır (örnek veride 4 masa)
+    assert pos.migrate_legacy_open_orders(user) == 4
+
+    # ---- İnternetsiz: hiçbir senkron çağrılmadan baştan sona
+    salon = db.floor_areas()[0]
+    m1 = next(t for t in db.floor_tables(salon['id']) if t['name'] == 'Masa 1')
+    order = pos.open_order(user, {'id': m1['id'], 'name': m1['name']})
+    latte = db.menu_item('products', latte_id)
+    group = db.menu_item('optionGroups', milk)
+    oat = next(o for o in group['options'] if o['id'] == 'oat')
+    pos.add_line(user, order['id'], pos.product_line(latte, [(milk, oat)], qty=2))
+    tost = next(p for p in db.menu_products() if p['name'] == 'Tost')
+    order = pos.add_line(user, order['id'], pos.product_line(tost, note='bol kaşarlı'))
+    order, _ = pos.send_pending(user, order['id'])
+    order = pos.set_discount(user, order['id'], {'type': 'percent', 'value': 10}, 'Sürekli müşteri', manager)
+    order = pos.void_line(user, order['id'], order['items'][1]['lineId'], 'Vazgeçti', manager)
+    assert order['total'] == 2 * 11000 - 2200
+    order = pos.take_payment(user, order['id'], 'card', order['total'], tip=1000)
+    assert order['status'] == 'paid'
+
+    pending_before, _ = db.outbox_counts()
+    assert pending_before > 10
+    status = engine.run_once()
+    assert status.online and db.outbox_counts() == (0, 0), db.get_failed_ops()
+
+    cloud = client.get_doc(f"orders/{order['id']}", api.session)[1]
+    for k in ('subtotal', 'discountAmount', 'total', 'paid', 'status', 'no', 'businessDay'):
+        assert cloud[k] == order[k], k
+    assert cloud['stamps'] == 2
+    assert [l['status'] for l in cloud['items']] == ['active', 'void']
+    assert client.get_doc(f"tables/{m1['id']}", api.session)[1]['status'] == 'empty'
+    tickets = {d[1]['station']: d[1] for d in client.list_docs('kitchenTickets', api.session)
+               if d[1]['orderId'] == order['id']}
+    assert tickets['bar']['lines'][0]['options'] == ['Yulaf'] and tickets['kitchen']['lines'][0]['note'] == 'bol kaşarlı'
+    pay = client.get_doc(f"payments/{order['payments'][0]['paymentId']}", api.session)[1]
+    assert (pay['method'], pay['tip'], pay['amount']) == ('card', 1000, order['total'])
+
+    # Taşınan eski adisyonlar da bulutta açık ve masaları dolu
+    moved = [o for o in pos.open_orders() if o['tableName'] == 'Masa 2'][0]
+    assert client.get_doc(f"orders/{moved['id']}", api.session)[1]['total'] == 25500
+    m2 = next(t for t in db.floor_tables(salon['id']) if t['name'] == 'Masa 2')
+    assert client.get_doc(f"tables/{m2['id']}", api.session)[1]['status'] == 'occupied'

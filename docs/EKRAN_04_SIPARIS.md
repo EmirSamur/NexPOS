@@ -1,7 +1,15 @@
-# 4. Ekran: Garson Ekranı ve Sipariş (tarif, onay bekliyor)
+# 4. Ekran: Garson Ekranı ve Sipariş (onaylandı, uygulandı)
 
 Kafenin her gün en çok kullanılan ekranı. İlk üç ekranda hazırlanan her şey burada buluşur: PIN ile
 giren garson (1), menü ve seçenekler (2), masa planı (3).
+
+> Onaylanan kararlar: gün dönümü 05:00; ürünler adisyonda bekler ve "Gönder" ile tek seferde gider;
+> ödeme yöntemleri Nakit, Kredi Kartı, Yemek Kartı ("Cari Hesap" kaldırıldı); kart/yemek kartında isteğe
+> bağlı bahşiş; masasız (gel-al / paket) sipariş bu ekranda.
+>
+> Uygulama notları: adisyon mantığı sunucuda (`firebase/functions/src/orders.js`) ve kasada
+> (`cloud/orders.py`) aynıdır; ikisi ortak `order_vectors.json` senaryolarıyla test edilir. Gönderilmemiş
+> ürün varken ödeme alınmaz. Taşınan eski adisyonların fişleri mutfağa yeniden düşmez.
 
 ## 0. Bugün NexPOS'ta ne var, ne değişiyor?
 
@@ -110,16 +118,16 @@ akışı aynıdır. Açık masasız siparişler planın yanında küçük kartla
 
 ## 5. "Bitti" sayılma ölçütü
 
-- [ ] Masaya dokununca sipariş ekranı açılıyor; seçenekli ürün seçenek penceresiyle, seçeneksiz ürün tek
+- [x] Masaya dokununca sipariş ekranı açılıyor; seçenekli ürün seçenek penceresiyle, seçeneksiz ürün tek
       dokunuşla ekleniyor; zorunlu seçenek ve tükenen ürün/seçenek kuralları çalışıyor
-- [ ] Fiyatlar ve toplamlar kuruş olarak tutuluyor; satır fiyatı sonradan menüde değişse de adisyon değişmiyor
-- [ ] "Gönder" bekleyen satırları bar ve mutfak fişlerine bölüyor; pano fişleri gösteriyor
-- [ ] Gönderilmiş satır iptali ve ikram yetki/gerekçe istiyor, kayda geçiyor; iptal edilen satır toplamdan düşüyor
-- [ ] İskonto bir kez uygulanıyor; ürün eklendikçe üst üste binmiyor (eski hata için test)
-- [ ] Ödeme yöntemiyle kaydediliyor, para üstü doğru; adisyon kapanıyor, masa boşalıyor
-- [ ] Taşıma, birleştirme, hesap isteme ve masasız sipariş çalışıyor
-- [ ] İnternet yokken baştan sona (aç → ekle → gönder → öde) çalışıyor; internet gelince bulutta sipariş,
+- [x] Fiyatlar ve toplamlar kuruş olarak tutuluyor; satır fiyatı sonradan menüde değişse de adisyon değişmiyor
+- [x] "Gönder" bekleyen satırları bar ve mutfak fişlerine bölüyor; pano fişleri gösteriyor
+- [x] Gönderilmiş satır iptali ve ikram yetki/gerekçe istiyor, kayda geçiyor; iptal edilen satır toplamdan düşüyor
+- [x] İskonto bir kez uygulanıyor; ürün eklendikçe üst üste binmiyor (eski hata için test)
+- [x] Ödeme yöntemiyle kaydediliyor, para üstü doğru; adisyon kapanıyor, masa boşalıyor
+- [x] Taşıma, birleştirme, hesap isteme ve masasız sipariş çalışıyor
+- [x] İnternet yokken baştan sona (aç → ekle → gönder → öde) çalışıyor; internet gelince bulutta sipariş,
       masa durumu, fişler ve ödeme doğru oluşuyor; aynı işlem iki kez gönderilse de bir kez işleniyor
-- [ ] Sunucu toplamları yeniden hesaplıyor; fark varsa `price_mismatch` kaydı düşüyor
-- [ ] Açık eski siparişler yeni yapıya bir kez taşınıyor; dashboard ve raporlar bozulmuyor
-- [ ] Emülatör testleri: her işlem türü, sıra, idempotentlik, yetki, toplamlar, masa durumu
+- [x] Sunucu toplamları yeniden hesaplıyor; fark varsa `price_mismatch` kaydı düşüyor
+- [x] Açık eski siparişler yeni yapıya bir kez taşınıyor; dashboard ve raporlar bozulmuyor
+- [x] Emülatör testleri: her işlem türü, sıra, idempotentlik, yetki, toplamlar, masa durumu

@@ -107,6 +107,22 @@ Yönetim paneli → Tanımlamalar → **Masa / Bölgeler**:
 - Garson ekranında **Plan / Liste** görünümü arasında geçilir; plan görünümünde boş masaya sağ tıklayıp
   **Rezerve et** seçilebilir.
 
+## Sipariş ve ödeme
+
+- Garson masaya dokununca tam ekran sipariş ekranı açılır. Seçenekli ürünlerde (boy, süt, ekstra)
+  seçenek penceresi çıkar; tükenen ürün ve seçenek eklenemez.
+- Ürünler önce adisyonda **bekler**; **Gönder** ile bar ve mutfak fişlerine bölünüp gider.
+  Fişler **Fiş Panosu**'nda (Yeni → Hazırlanıyor → Hazır) görünür.
+- Gönderilmiş ürünün iptali (`voidItem`), ikram (`comp`) ve iskonto (`discount`) yetki ister;
+  yetkisi olmayan garson için yetkili PIN onayı açılır. Hepsi `auditLogs`'a yazılır.
+- Ödeme yöntemleri: Nakit (para üstü hesaplanır), Kredi Kartı ve Yemek Kartı (isteğe bağlı bahşiş).
+  Kısmi ödeme alınabilir; kalan tutar adisyonda açık kalır.
+- Masa taşıma, masaları birleştirme, hesap isteme ve **masasız sipariş** (gel-al / paket) vardır.
+- Adisyon numaraları terminal harfi + günlük sıra numarasıdır (`A47`); gün 05:00'te döner.
+- Her şey internetsiz çalışır; işlemler internet gelince buluta gider ve sunucu toplamları yeniden
+  hesaplar. Terminalin fiyatı menüden farklıysa `price_mismatch` kaydı düşer.
+- NexPOS'un eski sürümünde açık kalmış adisyonlar ilk açılışta bir kez yeni yapıya taşınır.
+
 ## Geliştirme: emülatörle çalışma
 
 Canlı veriye dokunmadan denemek için:

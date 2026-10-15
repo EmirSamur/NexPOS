@@ -114,6 +114,16 @@ def init_database():
     c.execute("""CREATE TABLE IF NOT EXISTS login_attempts (
         staff_id TEXT PRIMARY KEY, failures INTEGER DEFAULT 0, locked_until REAL DEFAULT 0)""")
 
+    # Siparişler (4. ekran): adisyonun tam durumu JSON olarak (cloud/orders.py ile aynı yapı).
+    # Kapanan adisyonlar raporlar için eski orders/order_items tablolarına da yazılır.
+    c.execute("""CREATE TABLE IF NOT EXISTS pos_orders (
+        id TEXT PRIMARY KEY, data TEXT NOT NULL, status TEXT NOT NULL, table_id TEXT,
+        business_day TEXT, legacy_order_id INTEGER, updated_at TEXT)""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_pos_orders_status ON pos_orders(status, table_id)")
+    c.execute("""CREATE TABLE IF NOT EXISTS pos_tickets (
+        id TEXT PRIMARY KEY, order_id TEXT NOT NULL, data TEXT NOT NULL, status TEXT NOT NULL,
+        station TEXT, created_at TEXT)""")
+
     # Buluttaki personel, eski siparişlerin bağlı olduğu users tablosunda da bir
     # satırla temsil edilir (garson_id yabancı anahtarı bozulmasın diye).
     user_cols = [r[1] for r in c.execute("PRAGMA table_info(users)").fetchall()]
@@ -256,17 +266,47 @@ def delete_region(region_id):
 
 
 def get_tables_by_region(region_id):
+    """Bölgenin masaları; açık adisyonun tutarı ve açılış saati pos_orders'tan gelir."""
     conn = get_connection()
     rows = conn.execute("""
-        SELECT t.*, u.ad_soyad as garson_adi,
-               o.toplam_tutar, o.tarih as siparis_tarihi
+        SELECT t.*, u.ad_soyad as garson_adi
         FROM tables t
         LEFT JOIN users u ON t.garson_id = u.id
-        LEFT JOIN orders o ON o.masa_id = t.id AND o.durum IN ('hazirlaniyor','bekliyor','teslimatta')
         WHERE t.region_id = ? AND COALESCE(t.silindi,0)=0 ORDER BY t.id
     """, (region_id,)).fetchall()
+    open_orders = {}
+    for r in conn.execute("SELECT table_id, data FROM pos_orders WHERE status='open' AND table_id IS NOT NULL"):
+        open_orders[r['table_id']] = json.loads(r['data'])
+    # Henüz taşınmamış eski açık adisyonlar (eski kayıt)
+    legacy = {r['masa_id']: r for r in conn.execute("""SELECT masa_id, toplam_tutar, tarih FROM orders
+        WHERE durum IN ('hazirlaniyor','bekliyor')""")}
     conn.close()
-    return [dict(r) for r in rows]
+    result = []
+    for r in rows:
+        t = dict(r)
+        order = open_orders.get(t.get('cloud_id'))
+        if order:
+            t['toplam_tutar'] = order['total'] / 100
+            t['siparis_tarihi'] = _local_minute(order['openedAt'])
+            t['order_id'] = order['id']
+        elif t['id'] in legacy:
+            t['toplam_tutar'] = legacy[t['id']]['toplam_tutar']
+            t['siparis_tarihi'] = legacy[t['id']]['tarih']
+            t['order_id'] = None
+        else:
+            t['toplam_tutar'] = None
+            t['siparis_tarihi'] = None
+            t['order_id'] = None
+        result.append(t)
+    return result
+
+
+def _local_minute(iso):
+    """'2026-10-15T12:05:30+03:00' → '2026-10-15 12:05' (yerel saat)"""
+    try:
+        return datetime.fromisoformat(iso).astimezone().strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return None
 
 
 def add_table(ad, region_id):
@@ -502,11 +542,13 @@ def get_dashboard_stats():
         (today,)).fetchone()[0]
     oo = conn.execute(
         "SELECT COALESCE(SUM(toplam_tutar),0) FROM orders WHERE durum IN ('hazirlaniyor','bekliyor')").fetchone()[0]
+    oo += sum(json.loads(r['data'])['total'] for r in
+              conn.execute("SELECT data FROM pos_orders WHERE status='open'")) / 100
     te = conn.execute(
         "SELECT COALESCE(SUM(tutar),0) FROM expenses WHERE date(masraf_tarihi) >= date(?,'-30 days')",
         (today,)).fetchone()[0]
-    tt = conn.execute("SELECT COUNT(*) FROM tables").fetchone()[0]
-    oc = conn.execute("SELECT COUNT(*) FROM tables WHERE durum='dolu'").fetchone()[0]
+    tt = conn.execute("SELECT COUNT(*) FROM tables WHERE COALESCE(silindi,0)=0").fetchone()[0]
+    oc = conn.execute("SELECT COUNT(*) FROM tables WHERE durum IN ('dolu','hesap') AND COALESCE(silindi,0)=0").fetchone()[0]
     conn.close()
     return {'total_sales': ts, 'guest_count': gc, 'open_orders': oo,
             'total_expense': te, 'total_tables': tt, 'occupied_tables': oc}
@@ -1243,16 +1285,20 @@ def area_has_open_orders(area_id=None, table_ids=None):
     return sorted({r['ad'] for r in rows})
 
 
-def set_table_reserved(local_table_id, reserved):
+def set_table_reserved(local_table_id, reserved, staff_id=None):
     """Boş masayı elle rezerve işaretler / işareti kaldırır (dolu masaya dokunmaz)."""
     conn = get_connection()
     if reserved:
         cur = conn.execute("UPDATE tables SET durum='rezerve' WHERE id=? AND durum='bos'", (local_table_id,))
     else:
         cur = conn.execute("UPDATE tables SET durum='bos' WHERE id=? AND durum='rezerve'", (local_table_id,))
+    changed = cur.rowcount == 1
+    row = conn.execute("SELECT cloud_id FROM tables WHERE id=?", (local_table_id,)).fetchone()
+    if changed and staff_id and row and row['cloud_id']:
+        enqueue_op('setTableReserved', {'tableId': row['cloud_id'], 'reserved': bool(reserved)}, staff_id, conn=conn)
     conn.commit()
     conn.close()
-    return cur.rowcount == 1
+    return changed
 
 
 def legacy_floor_payload():

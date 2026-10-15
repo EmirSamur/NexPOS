@@ -154,7 +154,7 @@ class PlanItem(QGraphicsObject):
         painter.setFont(f)
         if self.editable:
             sub = f"👤 {self.info.get('capacity', 0)}"
-        elif state == 'dolu':
+        elif state in ('dolu', 'hesap'):
             total = self.status.get('toplam_tutar')
             sub = elapsed_text(self.status.get('siparis_tarihi'))
             if total:
@@ -886,7 +886,7 @@ class FloorStatusView(QWidget):
         ly.addWidget(self.view, 1)
         legend = QHBoxLayout()
         legend.addStretch()
-        for key, label in (('dolu', 'Dolu'), ('rezerve', 'Rezerve'), ('bos', 'Boş')):
+        for key, label in (('dolu', 'Dolu'), ('hesap', 'Hesap istendi'), ('rezerve', 'Rezerve'), ('bos', 'Boş')):
             fill, border, _ = STATUS_STYLE[key]
             dot = QLabel(f"  {label}  ")
             dot.setStyleSheet(f"background: {fill}; border: 2px solid {border}; border-radius: 8px; "

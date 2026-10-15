@@ -11,6 +11,21 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPen, QBrush, QLinearGradient
 from styles import COLORS, FONTS, ICONS
 
 
+def clear_layout(layout, keep=()):
+    """Layout'taki öğeleri hemen kaldırır (deleteLater beklenirken ekranda kalmasınlar).
+    keep içindeki kalıcı widget'lar silinmez, yalnızca layout'tan çıkarılır."""
+    while layout.count():
+        item = layout.takeAt(0)
+        w = item.widget()
+        if w is None:
+            continue
+        if w in keep:
+            continue
+        w.hide()
+        w.setParent(None)
+        w.deleteLater()
+
+
 def add_shadow(widget, blur=20, offset_y=4, color=QColor(0, 0, 0, 30)):
     """Widget'a gölge efekti ekle"""
     shadow = QGraphicsDropShadowEffect(widget)
@@ -160,7 +175,8 @@ class TableCard(QFrame):
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedSize(190, 135)
 
-        is_occupied = table_data.get('durum') == 'dolu'
+        is_occupied = table_data.get('durum') in ('dolu', 'hesap')
+        bill = table_data.get('durum') == 'hesap'
         if is_occupied:
             bg_style = f"background-color: {COLORS['table_occupied']};"
             border_c = COLORS['table_occupied_border']
@@ -196,10 +212,10 @@ class TableCard(QFrame):
             nm.setFont(QFont(FONTS['family'], FONTS['size_md'], QFont.Bold))
             nm.setStyleSheet(f"color: {COLORS['text_dark']}; background: transparent;")
 
-            badge = QLabel("DOLU")
+            badge = QLabel("HESAP" if bill else "DOLU")
             badge.setFont(QFont(FONTS['family'], 8, QFont.Bold))
             badge.setStyleSheet(f"""
-                color: white; background: {COLORS['danger']};
+                color: white; background: {COLORS['warning'] if bill else COLORS['danger']};
                 padding: 2px 8px; border-radius: 4px;
             """)
 
