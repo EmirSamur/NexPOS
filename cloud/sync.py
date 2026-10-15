@@ -35,7 +35,7 @@ PULL_COLLECTIONS = {
 }
 
 # Tek doküman olarak çekilen ayarlar: settings/<ad> → settings_cache[<ad>]
-PULL_SETTINGS = ('permissions', 'general')
+PULL_SETTINGS = ('permissions', 'general', 'modules')
 
 MENU_CHANGES = {'categories', 'optionGroups', 'products'}
 

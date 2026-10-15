@@ -120,6 +120,10 @@ def init_database():
         id TEXT PRIMARY KEY, data TEXT NOT NULL, status TEXT NOT NULL, table_id TEXT,
         business_day TEXT, legacy_order_id INTEGER, updated_at TEXT)""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_pos_orders_status ON pos_orders(status, table_id)")
+    # Kasa oturumları (6. ekran): açılış, hareketler, kapanış ve Z raporu JSON olarak.
+    c.execute("""CREATE TABLE IF NOT EXISTS cash_sessions (
+        id TEXT PRIMARY KEY, data TEXT NOT NULL, status TEXT NOT NULL, business_day TEXT,
+        opened_at TEXT, closed_at TEXT)""")
     c.execute("""CREATE TABLE IF NOT EXISTS pos_tickets (
         id TEXT PRIMARY KEY, order_id TEXT NOT NULL, data TEXT NOT NULL, status TEXT NOT NULL,
         station TEXT, created_at TEXT)""")
@@ -908,6 +912,15 @@ def user_can(user, permission):
     return has_permission(get_permission_matrix(), user.get('role'), permission, user.get('permissions'))
 
 
+def staff_can(staff_id, permission):
+    """Aktif personelin (bulut kimliği) yetkisi var mı? Onaylayan denetimi için."""
+    row = get_staff(staff_id) if staff_id else None
+    if not row or not row['active'] or row['deleted']:
+        return False
+    perms = json.loads(row['permissions']) if row['permissions'] else None
+    return has_permission(get_permission_matrix(), row['role'], permission, perms)
+
+
 def staff_with_permission(permission, exclude_id=None):
     """Yetkili onayı penceresinde listelenecek kişiler."""
     matrix = get_permission_matrix()
@@ -1334,3 +1347,35 @@ def general_settings():
         'qrBaseUrl': data.get('qrBaseUrl') or '',
         'idleLockMinutes': data.get('idleLockMinutes') or 3,
     }
+
+
+# Modüller (5. ve 6. ekran): settings/modules. Sunucudaki validateModules ile aynı varsayılanlar.
+DEFAULT_MODULES = {
+    'kds': {'enabled': False, 'warnMinutes': 10, 'lateMinutes': 20, 'sound': True},
+    'cashSession': {'required': False, 'diffReasonThreshold': 2000},
+    'printing': {'enabled': False, 'kitchenTickets': False},
+    'paymentMethods': {'cash': True, 'card': True, 'meal': True},
+    'tips': True,
+}
+
+
+def modules():
+    """Önbellekteki modül ayarları; eksik alanlar varsayılandan doldurulur."""
+    data = get_setting('modules') or {}
+    out = {}
+    for key, default in DEFAULT_MODULES.items():
+        value = data.get(key)
+        if isinstance(default, dict):
+            value = value if isinstance(value, dict) else {}
+            out[key] = {k: (value[k] if type(value.get(k)) is type(v) else v) for k, v in default.items()}
+        else:
+            out[key] = value if type(value) is type(default) else default
+    return out
+
+
+def open_cash_session():
+    """Bu terminalde açık kasa oturumu: {'id', ...data} ya da None."""
+    conn = get_connection()
+    row = conn.execute("SELECT data FROM cash_sessions WHERE status='open' ORDER BY opened_at DESC LIMIT 1").fetchone()
+    conn.close()
+    return json.loads(row['data']) if row else None

@@ -14,6 +14,7 @@ from widgets import TableCard, OrderCard, InfoDialog, add_shadow, ToastNotificat
 from menu_pages import SoldOutDialog
 from floor_editor import FloorStatusView
 from pos_screen import POSScreen, TicketBoard
+from cash_screen import CashPage
 from cloud.context import ctx
 import pos
 from money import format_tl
@@ -44,6 +45,8 @@ class UserPanel(QWidget):
         self.pos_screen = POSScreen(self.user)
         self.pos_screen.back_requested.connect(self._close_pos)
         self.pages.addWidget(self.pos_screen)
+        self.cash_page = CashPage(self.user)                     # 3 (cash yetkisi)
+        self.pages.addWidget(self.cash_page)
 
         # NexPOS'un eski sürümünde açık kalmış adisyonlar bir kez yeni yapıya taşınır
         try:
@@ -85,8 +88,10 @@ class UserPanel(QWidget):
 
         self.tab_bolgeler = QPushButton(f"{ICONS['table']}  Bölgeler")
         self.tab_siparisler = QPushButton(f"{ICONS['menu_food']}  Fiş Panosu")
-        
-        for i, btn in enumerate([self.tab_bolgeler, self.tab_siparisler]):
+        self.tab_kasa = QPushButton("₺  Kasa")
+        self.tab_kasa.setVisible(database.user_can(self.user, 'cash'))
+
+        for i, btn in ((0, self.tab_bolgeler), (1, self.tab_siparisler), (3, self.tab_kasa)):
             btn.setFixedHeight(40)
             btn.setFixedWidth(160)
             btn.setCursor(Qt.PointingHandCursor)
@@ -169,11 +174,14 @@ class UserPanel(QWidget):
         self.pages.setCurrentIndex(idx)
         self.tab_bolgeler.setChecked(idx == 0)
         self.tab_siparisler.setChecked(idx == 1)
+        self.tab_kasa.setChecked(idx == 3)
         self._update_tab_styles()
         if idx == 0:
             self._refresh_bolgeler()
         elif idx == 1:
             self.ticket_board.refresh()
+        elif idx == 3:
+            self.cash_page.refresh()
 
     def _update_tab_styles(self):
         active_style = f"""
@@ -187,15 +195,12 @@ class UserPanel(QWidget):
             QPushButton:hover {{ background: rgba(0,0,0,0.04); color: {COLORS['text_primary']}; }}
         """
         
-        self.tab_bolgeler.setStyleSheet(active_style if self.tab_bolgeler.isChecked() else inactive_style)
-        self.tab_siparisler.setStyleSheet(active_style if self.tab_siparisler.isChecked() else inactive_style)
-        
-        if self.tab_bolgeler.isChecked():
-            add_shadow(self.tab_bolgeler, blur=8, offset_y=2, color=QColor(0,0,0,10))
-            self.tab_siparisler.setGraphicsEffect(None)
-        else:
-            add_shadow(self.tab_siparisler, blur=8, offset_y=2, color=QColor(0,0,0,10))
-            self.tab_bolgeler.setGraphicsEffect(None)
+        for tab in (self.tab_bolgeler, self.tab_siparisler, self.tab_kasa):
+            tab.setStyleSheet(active_style if tab.isChecked() else inactive_style)
+            if tab.isChecked():
+                add_shadow(tab, blur=8, offset_y=2, color=QColor(0,0,0,10))
+            else:
+                tab.setGraphicsEffect(None)
 
     # ==================== BÖLGELER ====================
     def _create_bolgeler_page(self):

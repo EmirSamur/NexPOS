@@ -13,8 +13,8 @@ import uuid
 from datetime import datetime, timedelta
 
 import database
-from cloud.orders import (
-    OrderError, apply_order_op, compute_totals, line_total, merge_orders, table_status_for
+from cloud.orders import (  # noqa: F401 (line_total ekranlar için dışa açık)
+    OrderError, apply_order_op, compute_totals, line_total, lines_share, merge_orders, table_status_for
 )
 
 DAY_START_HOUR = 5  # gün dönümü: 05:00'ten önce kapanan hesap önceki güne yazılır
@@ -148,6 +148,8 @@ def _write_legacy_closed(conn, order):
 def _commit_op(conn, before, after, op, payload, staff_id, extra_tables=()):
     _save(conn, after)
     tables = {t for t in (before.get('tableId') if before else None, after.get('tableId'), *extra_tables) if t}
+    if op == 'refundPayment':
+        tables = set()  # iade kapanmış adisyondadır; masanın şimdiki durumuna dokunmaz
     for t in tables:
         _sync_legacy_table(conn, t, after)
     if before and before['status'] == 'open' and after['status'] == 'paid':
@@ -220,6 +222,7 @@ def product_line(product, selected_options=(), qty=1, note=''):
         'qty': qty,
         'note': note or '',
         'station': category.get('station') or 'kitchen',
+        'taxRate': product.get('taxRate') if product.get('taxRate') in (0, 1, 10, 20) else 10,
         'stampEligible': bool(stamp),
     }
 
@@ -316,12 +319,75 @@ def merge_into(user, target_id, source_id):
         conn.close()
 
 
-def take_payment(user, order_id, method, amount, tip=0, received=None):
+def _cash_session_id(method):
+    """Açık kasa oturumu varsa her ödeme/iade ona yazılır. Zorunlu kasa modülünde nakit için şarttır."""
+    row = database.open_cash_session()
+    if row:
+        return row['id']
+    if method == 'cash' and database.modules()['cashSession']['required']:
+        raise OrderError("Kasa açılmadan nakit işlem yapılamaz. Önce Kasa ekranından kasayı açın.")
+    return None
+
+
+def take_payment(user, order_id, method, amount, tip=0, received=None, line_ids=None):
+    """line_ids verilirse "ürün seçerek böl": tutar, seçilen satırların payı olmalıdır (bkz. lines_payable)."""
     payload = {'orderId': order_id, 'paymentId': _new_id('P'), 'method': method, 'amount': int(amount),
                'tip': int(tip or 0)}
     if method == 'cash':
         payload['received'] = int(received if received is not None else amount)
+    if line_ids:
+        payload['lineIds'] = list(line_ids)
+    session_id = _cash_session_id(method)
+    if session_id:
+        payload['cashSessionId'] = session_id
     return _run('takePayment', payload, user)
+
+
+def lines_payable(order, line_ids):
+    """Seçilen satırlar için alınacak tutar: kalan bütün satırlar seçildiyse kalan tutarın tamamı."""
+    unpaid = [l['lineId'] for l in order['items'] if l['status'] == 'active' and not l.get('paidBy')]
+    if line_ids and all(lid in line_ids for lid in unpaid):
+        return compute_totals(order)['remaining']
+    return lines_share(order, line_ids)
+
+
+def equal_share(remaining, people_left):
+    """Eşit bölmede bu kişinin payı: kalan / kalan kişi (aşağı); son kişi kalanın tamamını öder."""
+    people_left = max(1, int(people_left))
+    return remaining if people_left == 1 else remaining // people_left
+
+
+def split_line(user, order_id, line_id, qty):
+    """Satırdan qty adedi ayrı bir satıra ayırır (3 latteden 1'i). Yeni satırı döndürür."""
+    new_id = _new_id('L')
+    order = _run('splitLine', {'orderId': order_id, 'lineId': line_id, 'qty': int(qty), 'newLineId': new_id}, user)
+    return order, new_id
+
+
+def require_permission(user, approver_id, permission):
+    """Sunucu aynı denetimi yapar; yerelde de yapılır ki kuyruktaki işlem sonradan reddedilmesin."""
+    if not database.staff_can(approver_id or user['cloud_id'], permission):
+        raise OrderError(f"Bu işlem için yetki yok ({permission}). Yetkili onayı gerekir.")
+
+
+def refund(user, order_id, method, amount, reason, approver_id=None):
+    """Ödenmiş adisyonda (kısmi) iade. refund yetkisi gerekir (ekran onay ister)."""
+    require_permission(user, approver_id, 'refund')
+    payload = {'orderId': order_id, 'refundId': _new_id('R'), 'method': method, 'amount': int(amount),
+               'reason': reason, 'approvedBy': approver_id or user['cloud_id']}
+    session_id = _cash_session_id(method)
+    if session_id:
+        payload['cashSessionId'] = session_id
+    return _run('refundPayment', payload, user)
+
+
+def closed_orders(day=None):
+    """Bir iş gününün ödenmiş adisyonları (en yeni önce) — iade ve raporlar için."""
+    conn = database.get_connection()
+    rows = conn.execute("SELECT data FROM pos_orders WHERE status='paid' AND business_day=? ORDER BY updated_at DESC",
+                        (day or business_day(),)).fetchall()
+    conn.close()
+    return [json.loads(r['data']) for r in rows]
 
 
 def cancel_order(user, order_id, reason, approver_id=None):
@@ -343,6 +409,17 @@ def set_ticket_status(user, ticket_id, status):
         return ticket
     finally:
         conn.close()
+
+
+def mark_ticket_printed(ticket_id):
+    """Kâğıda basılan fiş tekrar basılmasın (yalnızca yerel)."""
+    conn = database.get_connection()
+    row = conn.execute("SELECT data FROM pos_tickets WHERE id=?", (ticket_id,)).fetchone()
+    if row:
+        conn.execute("UPDATE pos_tickets SET data=? WHERE id=?",
+                     (json.dumps({**json.loads(row['data']), 'printed': True}, ensure_ascii=False), ticket_id))
+        conn.commit()
+    conn.close()
 
 
 def needs_approval_to_cancel(order):

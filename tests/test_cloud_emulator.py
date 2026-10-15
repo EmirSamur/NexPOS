@@ -318,3 +318,57 @@ def test_siparis_internetsiz_akis_sonra_senkron(db, client):
     assert client.get_doc(f"orders/{moved['id']}", api.session)[1]['total'] == 25500
     m2 = next(t for t in db.floor_tables(salon['id']) if t['name'] == 'Masa 2')
     assert client.get_doc(f"tables/{m2['id']}", api.session)[1]['status'] == 'occupied'
+
+
+def test_kasa_internetsiz_oturum_bolme_iade_sonra_senkron(db, client):
+    import requests
+    import cash
+    import pos
+    from cloud.admin_api import AdminApi
+    from cloud.pairing import pair_terminal
+    from cloud.sync import SyncEngine
+
+    requests.delete('http://127.0.0.1:8080/emulator/v1/projects/demo-nexpos/databases/(default)/documents',
+                    timeout=10).raise_for_status()
+    email = f'kasa-{uuid.uuid4().hex[:6]}@kafe.test'
+    owner_id = create_owner(email)
+    creds, _ = pair_terminal(client, email, 'sahip-sifre-1', 'Kasa 1')
+    api = AdminApi(client, client.sign_in_with_password(email, 'sahip-sifre-1'))
+    engine = SyncEngine(client, creds)
+    cats, prods = db.legacy_import_payload()
+    res = api.import_menu(cats, prods)
+    db.apply_import_mapping(res['categories'], res['products'])
+    cashier = api.create_staff('Selin Er', 'cashier', '640218')['staffId']
+    saved = api.save_modules({'cashSession': {'required': True}, 'printing': {'enabled': True}})
+    assert saved['cashSession']['required'] is True
+    engine.run_once()
+    assert db.modules()['cashSession']['required'] is True   # modül ayarı terminale indi
+    user = db.login_with_pin(cashier, '640218')
+
+    # ---- İnternetsiz: kasa aç, böl, öde, iade, hareket, kapat
+    latte = next(p for p in db.menu_products() if p['name'] == 'Latte')
+    order = pos.open_order(user)
+    with pytest.raises(pos.OrderError, match='Kasa açılmadan'):
+        pos.take_payment(user, order['id'], 'cash', 1)
+    session = cash.open_session(user, 50000)
+    order = pos.add_line(user, order['id'], pos.product_line(latte, qty=3))
+    order, _ = pos.send_pending(user, order['id'])
+    order, one = pos.split_line(user, order['id'], order['items'][0]['lineId'], 1)
+    order = pos.take_payment(user, order['id'], 'cash', pos.lines_payable(order, [one]), line_ids=[one])
+    rest = [l['lineId'] for l in order['items'] if not l.get('paidBy')]
+    order = pos.take_payment(user, order['id'], 'card', pos.lines_payable(order, rest), line_ids=rest)
+    pos.refund(user, order['id'], 'cash', 1000, 'Soğuk geldi', approver_id=owner_id)
+    cash.add_movement(user, 'out', 2000, 'Süt', expense=True)
+    expected = cash.expected_cash(cash.current_session())
+    z = cash.close_session(user, expected)
+
+    status = engine.run_once()
+    assert status.online and db.outbox_counts() == (0, 0), db.get_failed_ops()
+    cloud = client.get_doc(f"cashSessions/{session['id']}", api.session)[1]
+    assert (cloud['status'], cloud['expectedCash'], cloud['difference']) == ('closed', expected, 0)
+    assert cloud['report']['sales']['total'] == z['sales']['total'] == order['total']
+    assert cloud['movements'][0]['expense'] is True
+    o = client.get_doc(f"orders/{order['id']}", api.session)[1]
+    assert (o['status'], o['refunded'], [l.get('paidBy') is not None for l in o['items']]) == ('paid', 1000, [True, True])
+    refund = [d for d in client.list_docs('refunds', api.session) if d[1]['orderId'] == order['id']]
+    assert refund and refund[0][1]['cashSessionId'] == session['id']

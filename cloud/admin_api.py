@@ -103,6 +103,10 @@ class AdminApi:
         return self._call('saveGeneralSettings', {'cafeName': cafe_name, 'qrBaseUrl': qr_base_url,
                                                   'idleLockMinutes': idle_lock_minutes})
 
+    def save_modules(self, data):
+        """settings/modules (yalnızca yönetici). Kaydedilen (doğrulanmış) ayarı döndürür."""
+        return self._call('saveModules', data)
+
     def upload_product_image(self, data, content_type='image/jpeg'):
         """Fotoğrafı Storage'a yükler ve herkese açık indirme adresini döndürür."""
         self.session = self.client.ensure_fresh(self.session)

@@ -331,27 +331,49 @@ Siparişi değiştiren her işlem bir **callable function** üzerinden yapılır
 ### `payments/{id}`
 ```ts
 {
-  orderId, cashSessionId,
-  method: "cash"|"card"|"app"|"other",
-  amount, tip?: number,
-  splitOf?: { mode: "equal"|"items", lineIds?: string[] },  // bölünmüş hesap
-  refundOf?: paymentId,            // iade ise negatif tutar
-  by: uid, at
+  orderId, orderNo, businessDay, paymentId,
+  method: "cash"|"card"|"meal",
+  amount, tip, received?, change,   // received/change yalnızca nakitte
+  lineIds: string[] | null,         // "ürün seçerek böl" ile ödenen satırlar
+  cashSessionId: string | null,     // açık kasa oturumu varsa
+  by: uid, at, terminalId
 }
 ```
+> Eşit bölme ayrı bir alan tutmaz: her kişi ayrı bir ödemedir, kuruş farkı son ödemede kapanır.
+
+### `refunds/{id}`: ödenmiş adisyonda iade (6. ekran)
+```ts
+{ orderId, orderNo, businessDay, refundId, method, amount, reason,
+  by: uid, approvedBy: uid, at, cashSessionId: string | null, terminalId }
+```
+> Adisyon `paid` kalır; `orders.refunds[]` ve `orders.refunded` toplamı da güncellenir. `refund` yetkisi gerekir.
 
 ### `cashSessions/{id}`: kasa açılış ve kapanışı (Z raporu)
 ```ts
 {
-  businessDay, status: "open"|"closed",
-  openedBy, openedAt, openingCash,
-  cashIn: [ { amount, reason, by, at } ],     // kasaya para girişi
-  cashOut: [ { amount, reason, by, at } ],    // gider, bozuk para vs.
+  terminalId, businessDay, status: "open"|"closed",
+  openedBy, approvedBy, openedAt, openingCash,
+  movements: [ { movementId, type: "in"|"out", amount, reason, expense, by, approvedBy, at } ],
   closedBy?, closedAt?,
-  expectedCash?, countedCash?, difference?,
-  totals?: { cash, card, app, other, refunds, discounts, comps, voids }
+  countedCash?, expectedCash?,      // expectedCash sunucuda yeniden hesaplanır
+  terminalExpectedCash?, difference?, differenceReason?,
+  report?: { sales, refunds, tips, discount, comps, voids, vat, orders, staff, cash }
 }
 ```
+> Beklenen nakit = açılış + nakit tahsilat − nakit iade + giriş − çıkış. Terminalle sunucu farklı
+> hesaplarsa `cash_expected_mismatch` kaydı düşer. Terminal başına bir açık oturum olabilir.
+
+### `settings/modules`: açılıp kapanan modüller (5. ve 6. ekran, yalnızca owner yazar)
+```ts
+{
+  kds: { enabled, warnMinutes: 10, lateMinutes: 20, sound },
+  cashSession: { required, diffReasonThreshold: 2000 },   // kuruş
+  printing: { enabled, kitchenTickets },
+  paymentMethods: { cash, card, meal },
+  tips: boolean
+}
+```
+> Yazıcı seçimi bulutta değil, her bilgisayarda yereldir.
 
 ### `counters/orders-{businessDay}`
 `{ last: 47 }`: günlük sipariş numarası (transaction ile artar)
@@ -504,7 +526,7 @@ Siparişi değiştiren her işlem bir **callable function** üzerinden yapılır
 | `areas`, `tables` | personel | manager+ (yerleşim); durum alanları yalnızca fonksiyon |
 | `orders` | personel; müşteri kendi siparişini | yalnızca fonksiyon |
 | `kitchenTickets` | personel | barista/kitchen yalnızca `status` alanı |
-| `payments`, `cashSessions` | cashier+ | yalnızca fonksiyon |
+| `payments`, `refunds`, `cashSessions` | manager+ ve terminal | yalnızca fonksiyon |
 | `customers/{uid}` | sahibi, cashier+ | sahibi yalnızca `name`, `birthDate`, `marketingConsent` |
 | `customers/*/loyaltyEvents`, `rewards` | sahibi, cashier+ | yalnızca fonksiyon |
 | `dailyStats`, `auditLogs` | manager+ | yalnızca fonksiyon |

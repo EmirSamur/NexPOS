@@ -149,6 +149,8 @@ class LineRow(QFrame):
             ly.addWidget(lbl)
         if not dead:
             text, color = STATE_BADGE[(line['state'], line['status'])]
+            if line.get('paidBy'):
+                text, color = "💳 ödendi", COLORS['info_dark']
             badge = QLabel(text)
             badge.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: bold; background: transparent;")
             ly.addWidget(badge)
@@ -169,6 +171,7 @@ class POSScreen(QWidget):
         self.table = None      # {'id', 'name'} ya da masasız siparişte None
         self.order = None
         self.category = '__top__'
+        self.split_people = {}  # adisyon → eşit bölmede kalan kişi sayısı
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 12, 16, 12)
@@ -283,15 +286,19 @@ class POSScreen(QWidget):
         self.btn_move.clicked.connect(self._move)
         self.btn_merge = _btn("⧉ Birleştir", height=42)
         self.btn_merge.clicked.connect(self._merge)
-        self.btn_cancel = _btn("✖ Adisyonu İptal", height=42)
+        self.btn_cancel = _btn("✖ İptal", height=42)
         self.btn_cancel.clicked.connect(self._cancel)
+        self.btn_print = _btn("🖨 Yazdır", height=42)
+        self.btn_print.setToolTip("Adisyonu (bilgi fişi) yazdır")
+        self.btn_print.clicked.connect(self._print_bill)
         actions.addWidget(self.btn_send, 0, 0, 1, 2)
         actions.addWidget(self.btn_pay, 0, 2)
         actions.addWidget(self.btn_discount, 1, 0)
         actions.addWidget(self.btn_bill, 1, 1)
         actions.addWidget(self.btn_move, 1, 2)
         actions.addWidget(self.btn_merge, 2, 0)
-        actions.addWidget(self.btn_cancel, 2, 1, 1, 2)
+        actions.addWidget(self.btn_print, 2, 1)
+        actions.addWidget(self.btn_cancel, 2, 2)
         pl.addLayout(actions)
         body.addWidget(panel)
 
@@ -410,6 +417,8 @@ class POSScreen(QWidget):
         self.btn_move.setEnabled(bool(o) and bool(self.table))
         self.btn_merge.setEnabled(bool(o) and bool(self.table))
         self.btn_cancel.setEnabled(bool(o) and not (o or {}).get('payments'))
+        self.btn_print.setVisible(database.modules()['printing']['enabled'])
+        self.btn_print.setEnabled(bool(o) and has_items)
         self.btn_pay.setEnabled(bool(o) and bool(items) and pending == 0)
         self.btn_pay.setToolTip("Önce bekleyen ürünleri gönderin." if pending else "")
 
@@ -443,7 +452,7 @@ class POSScreen(QWidget):
             self._refresh()
 
     def _line_clicked(self, line):
-        if not self.order or line['status'] != 'active':
+        if not self.order or line['status'] != 'active' or line.get('paidBy'):
             return
         dlg = LineDialog(line, self)
         if dlg.exec() != QDialog.Accepted:
@@ -474,6 +483,17 @@ class POSScreen(QWidget):
             self.order, n = result
             self._refresh()
             ToastNotification(self.window(), f"{n} ürün bar/mutfağa gönderildi.", "success")
+            printing_cfg = database.modules()['printing']
+            if printing_cfg['enabled'] and printing_cfg['kitchenTickets']:
+                import printing
+                for t in pos.tickets(('new',)):
+                    if t['orderId'] == self.order['id'] and not t.get('printed'):
+                        try:
+                            printing.print_html(printing.ticket_html(t), f"Fiş {t['orderNo']} {t['station']}")
+                            pos.mark_ticket_printed(t['id'])
+                        except Exception as e:
+                            _show_error(self, f"Fiş yazdırılamadı: {e}")
+                            break
 
     def _discount(self):
         dlg = DiscountDialog(self.order, self)
@@ -498,6 +518,8 @@ class POSScreen(QWidget):
         if result:
             self.order = result
             self._refresh()
+            if result.get('billRequested') and database.modules()['printing']['enabled']:
+                self._print_bill()
 
     def _move(self):
         dlg = TablePickerDialog("Adisyonu taşı: boş masa seçin", mode='empty', exclude=self.table['id'], parent=self)
@@ -532,22 +554,60 @@ class POSScreen(QWidget):
                 self.back_requested.emit()
 
     def _pay(self):
-        dlg = PaymentDialog(self.order, self)
+        oid = self.order['id']
+        dlg = PaymentDialog(self.order, self, people_left=self.split_people.get(oid))
         if dlg.exec() != QDialog.Accepted:
             return
-        result = self._do(pos.take_payment, self.user, self.order['id'], dlg.method, dlg.amount, tip=dlg.tip,
-                          received=dlg.received)
+        line_ids = None
+        if dlg.line_picks:
+            # Kısmi adet seçilen satırlar önce bölünür; tutar gerçek adisyon üzerinden doğrulanır
+            line_ids = []
+            for line_id, qty in dlg.line_picks.items():
+                line = next(l for l in self.order['items'] if l['lineId'] == line_id)
+                if qty < line['qty']:
+                    result = self._do(pos.split_line, self.user, oid, line_id, qty)
+                    if not result:
+                        return
+                    self.order, new_id = result
+                    line_ids.append(new_id)
+                else:
+                    line_ids.append(line_id)
+            dlg.amount = pos.lines_payable(self.order, line_ids)
+            if dlg.method == 'cash':
+                dlg.received = max(dlg.received or 0, dlg.amount)
+        result = self._do(pos.take_payment, self.user, oid, dlg.method, dlg.amount, tip=dlg.tip,
+                          received=dlg.received, line_ids=line_ids)
         if not result:
+            self._refresh()
             return
         self.order = result
+        if dlg.people_left:
+            self.split_people[oid] = dlg.people_left
+        else:
+            self.split_people.pop(oid, None)
+        last = result['payments'][-1]
         if result['status'] == 'paid':
-            change = sum(p['change'] for p in result['payments'])
-            msg = f"{result['no']} tahsil edildi." + (f" Para üstü: {format_tl(change)}" if change else "")
+            msg = f"{result['no']} tahsil edildi." + (f" Para üstü: {format_tl(last['change'])}" if last['change'] else "")
             ToastNotification(self.window(), msg, "success")
             self.order = None
             self.back_requested.emit()
         else:
+            change = f" · para üstü {format_tl(last['change'])}" if last['change'] else ""
+            ToastNotification(self.window(), f"{format_tl(last['amount'])} alındı{change}. "
+                              f"Kalan: {format_tl(result['remaining'])}", "info")
             self._refresh()
+
+    def _print_bill(self):
+        if not self.order:
+            return
+        import printing
+        try:
+            kind, where = printing.print_html(printing.bill_html(self.order), f"Adisyon {self.order['no']}")
+        except Exception as e:  # yazıcı hatası siparişi engellemesin
+            _show_error(self, f"Adisyon yazdırılamadı: {e}")
+            return
+        ToastNotification(self.window(), "Adisyon yazıcıya gönderildi." if kind == 'printer'
+                          else f"Yazıcı yok; PDF kaydedildi: {where}", "success" if kind == 'printer' else "info")
 
     def _back(self):
         o = self.order
@@ -785,32 +845,105 @@ class DiscountDialog(_Dialog):
 
 
 class PaymentDialog(_Dialog):
-    def __init__(self, order, parent=None):
-        super().__init__(f"Ödeme · {order.get('tableName') or 'Masasız'} · {order['no']}", parent, 480)
+    """
+    Ödeme: tamamı ya da kısmi tutar, eşit bölme (kişi sayısı) veya ürün seçerek bölme.
+    Ürün seçerek bölmede birden fazla adetli satırın bir kısmı seçilebilir (3 latteden 1'i);
+    ekran ödeme öncesinde o satırı böler (pos.split_line).
+
+    Sonuç: method, amount, received, tip, line_picks ({lineId: adet} ya da None), people_left.
+    """
+    MODES = (('full', 'Tamamı'), ('equal', 'Eşit böl'), ('items', 'Ürün seç'))
+
+    def __init__(self, order, parent=None, people_left=None):
+        super().__init__(f"Ödeme · {order.get('tableName') or 'Masasız'} · {order['no']}", parent, 520)
         self.order = order
+        self.modules = database.modules()
         self.remaining = order['total'] - order['paid']
-        self.method = 'cash'
+        self.method = None
+        self.mode = 'full'
         self.amount = self.remaining
         self.received = None
         self.tip = 0
-        total = QLabel(format_tl(self.remaining))
-        total.setAlignment(Qt.AlignCenter)
-        total.setFont(QFont(FONTS['family'], 30, QFont.Bold))
-        total.setStyleSheet(f"color: {COLORS['success']}; background: transparent;")
-        self.body.addWidget(total)
+        self.line_picks = None
+        self.people_left = people_left
+        self.total_label = QLabel(format_tl(self.remaining))
+        self.total_label.setAlignment(Qt.AlignCenter)
+        self.total_label.setFont(QFont(FONTS['family'], 30, QFont.Bold))
+        self.total_label.setStyleSheet(f"color: {COLORS['success']}; background: transparent;")
+        self.body.addWidget(self.total_label)
         if order['paid']:
-            self.body.addWidget(QLabel(f"Daha önce ödenen: {format_tl(order['paid'])}"))
+            self.body.addWidget(QLabel(f"Adisyon {format_tl(order['total'])} · daha önce ödenen: {format_tl(order['paid'])}"))
 
+        # Bölme biçimi
+        self.mode_buttons = {}
+        mode_row = QHBoxLayout()
+        amount_paid = any(not p.get('lineIds') for p in order['payments'])
+        for key, label in self.MODES:
+            b = self._toggle(label)
+            b.clicked.connect(lambda _, k=key: self._set_mode(k))
+            if key == 'items' and amount_paid:
+                b.setEnabled(False)
+                b.setToolTip("Tutar olarak ödeme alınmış adisyonda ürün seçerek bölünemez.")
+            self.mode_buttons[key] = b
+            mode_row.addWidget(b)
+        self.body.addLayout(mode_row)
+
+        # Eşit böl: kalan kişi sayısı
+        self.equal_box = QWidget()
+        el = QHBoxLayout(self.equal_box)
+        el.setContentsMargins(0, 0, 0, 0)
+        el.addWidget(QLabel("Kalan kişi sayısı:"))
+        self.people = QSpinBox()
+        self.people.setRange(1, 20)
+        self.people.setValue(people_left or 2)
+        self.people.setMinimumHeight(38)
+        self.people.valueChanged.connect(self._mode_amount)
+        el.addWidget(self.people)
+        self.equal_hint = QLabel("")
+        self.equal_hint.setStyleSheet(f"color: {COLORS['text_secondary']}; background: transparent;")
+        el.addWidget(self.equal_hint, 1)
+        self.body.addWidget(self.equal_box)
+
+        # Ürün seç: ödenmemiş satırlar, adet seçilebilir
+        self.items_box = QFrame()
+        self.items_box.setStyleSheet(f"QFrame {{ border: 1px solid {COLORS['border_light']}; border-radius: 8px; }}"
+                                     " QLabel, QCheckBox { border: none; }")
+        il = QVBoxLayout(self.items_box)
+        il.setContentsMargins(10, 8, 10, 8)
+        self.picks = []
+        for line in order['items']:
+            if line['status'] != 'active' or line.get('paidBy'):
+                continue
+            row = QHBoxLayout()
+            check = QCheckBox(f"{line['name']}" + (f" ({', '.join(o['name'] for o in line['options'])})"
+                                                   if line.get('options') else ''))
+            qty = QSpinBox()
+            qty.setRange(1, line['qty'])
+            qty.setValue(line['qty'])
+            qty.setSuffix(f" / {line['qty']}")
+            qty.setEnabled(line['qty'] > 1)
+            qty.setFixedWidth(84)
+            unit = pos.line_total(line) // line['qty']
+            price = QLabel(format_tl(pos.line_total(line)))
+            price.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            price.setFixedWidth(90)
+            check.toggled.connect(self._mode_amount)
+            qty.valueChanged.connect(self._mode_amount)
+            qty.valueChanged.connect(lambda v, lbl=price, u=unit: lbl.setText(format_tl(u * v)))
+            row.addWidget(check, 1)
+            row.addWidget(qty)
+            row.addWidget(price)
+            il.addLayout(row)
+            self.picks.append((line, check, qty))
+        self.body.addWidget(self.items_box)
+
+        # Ödeme yöntemi (Modüller → kapalı yöntemler görünmez)
         mrow = QHBoxLayout()
         self.method_buttons = {}
         for key, label in pos.PAYMENT_LABELS.items():
-            b = QPushButton(label)
-            b.setCheckable(True)
-            b.setMinimumHeight(48)
-            b.setStyleSheet(f"""
-                QPushButton {{ background: white; border: 1.5px solid {COLORS['border']}; border-radius: 10px; font-weight: bold; }}
-                QPushButton:checked {{ background: {COLORS['primary']}; color: white; border-color: {COLORS['primary']}; }}
-            """)
+            if not self.modules['paymentMethods'].get(key, True):
+                continue
+            b = self._toggle(label)
             b.clicked.connect(lambda _, k=key: self._set_method(k))
             self.method_buttons[key] = b
             mrow.addWidget(b)
@@ -839,26 +972,83 @@ class PaymentDialog(_Dialog):
         form.addRow(self.tip_label, self.tip_edit)
         self.body.addLayout(form)
         self.warn = QLabel("")
+        self.warn.setWordWrap(True)
         self.warn.setStyleSheet(f"color: {COLORS['danger']}; font-weight: bold; background: transparent;")
         self.body.addWidget(self.warn)
         self.ok = _btn("✓ Tahsil Et", COLORS['success'], height=54)
         self.ok.clicked.connect(self._accept)
         self.body.addWidget(self.ok)
-        self._quick_buttons()
-        self._set_method('cash')
+        self._set_mode('equal' if people_left else 'full')
+        self._set_method(next(iter(self.method_buttons)))
 
-    def _quick_buttons(self):
-        rem = self.remaining
-        values = [rem]
+    def _toggle(self, label):
+        b = QPushButton(label)
+        b.setCheckable(True)
+        b.setMinimumHeight(44)
+        b.setStyleSheet(f"""
+            QPushButton {{ background: white; border: 1.5px solid {COLORS['border']}; border-radius: 10px; font-weight: bold; }}
+            QPushButton:checked {{ background: {COLORS['primary']}; color: white; border-color: {COLORS['primary']}; }}
+            QPushButton:disabled {{ color: {COLORS['text_muted']}; background: {COLORS['bg_input']}; }}
+        """)
+        return b
+
+    # ------------------------------------------------------------------ bölme
+    def _set_mode(self, key):
+        self.mode = key
+        for k, b in self.mode_buttons.items():
+            b.setChecked(k == key)
+        self.equal_box.setVisible(key == 'equal')
+        self.items_box.setVisible(key == 'items')
+        self.amount_edit.setReadOnly(key == 'items')
+        self._mode_amount()
+        self.adjustSize()
+
+    def selected_picks(self):
+        return {line['lineId']: qty.value() for line, check, qty in self.picks if check.isChecked()}
+
+    def preview_items_amount(self, picks):
+        """Seçilen satırlar (kısmi adet dahil) için alınacak tutar; bölme sanal olarak uygulanır."""
+        from cloud.orders import apply_order_op
+        order, ids = self.order, []
+        for i, (line_id, qty) in enumerate(picks.items()):
+            line = next(l for l in order['items'] if l['lineId'] == line_id)
+            if qty < line['qty']:
+                new_id = f"__onizleme{i}"
+                order = apply_order_op(order, 'splitLine', {'lineId': line_id, 'qty': qty, 'newLineId': new_id},
+                                       'onizleme', '')
+                ids.append(new_id)
+            else:
+                ids.append(line_id)
+        return pos.lines_payable(order, ids)
+
+    def _mode_amount(self, *_):
+        if self.mode == 'full':
+            value = self.remaining
+        elif self.mode == 'equal':
+            left = self.people.value()
+            value = pos.equal_share(self.remaining, left)
+            self.equal_hint.setText("son kişi: kalanın tamamı" if left == 1 else f"kişi başı ≈ {format_tl(value)}")
+        else:
+            picks = self.selected_picks()
+            value = self.preview_items_amount(picks) if picks else 0
+        self.total_label.setText(format_tl(value))
+        self.amount_edit.setText(format_tl(value).replace(' ₺', ''))
+        self._rebuild_quick(value)
+
+    def _rebuild_quick(self, amount):
+        clear_layout(self.quick)
+        values = [amount]
         for step in (5000, 10000, 20000):
-            v = -(-rem // step) * step
+            v = -(-amount // step) * step
             if v not in values:
                 values.append(v)
         for v in values[:4]:
             b = _btn(format_tl(v).replace(',00', ''), height=36, bold=False)
             b.clicked.connect(lambda _, x=v: self.received_edit.setText(format_tl(x).replace(' ₺', '')))
+            b.setVisible(self.method == 'cash')
             self.quick.addWidget(b)
 
+    # ------------------------------------------------------------------ yöntem
     def _set_method(self, key):
         self.method = key
         for k, b in self.method_buttons.items():
@@ -868,8 +1058,9 @@ class PaymentDialog(_Dialog):
             w.setVisible(cash)
         for i in range(self.quick.count()):
             self.quick.itemAt(i).widget().setVisible(cash)
+        tips = not cash and self.modules['tips']
         for w in (self.tip_label, self.tip_edit):
-            w.setVisible(not cash)
+            w.setVisible(tips)
         self._recalc()
 
     def _parse(self, edit, default=None):
@@ -881,6 +1072,8 @@ class PaymentDialog(_Dialog):
     def _recalc(self, *_):
         self.warn.setText("")
         try:
+            if self.mode == 'items' and not self.selected_picks():
+                raise ValueError("Ödenecek ürünleri işaretleyin.")
             amount = self._parse(self.amount_edit, 0)
             if amount <= 0 and self.remaining > 0:
                 raise ValueError("Tutar sıfırdan büyük olmalı.")
@@ -891,7 +1084,7 @@ class PaymentDialog(_Dialog):
                 if received < amount:
                     raise ValueError("Alınan nakit tutardan az.")
                 self.change.setText(format_tl(received - amount))
-            else:
+            elif self.tip_edit.isVisible():
                 self._parse(self.tip_edit, 0)
             self.ok.setEnabled(True)
         except ValueError as e:
@@ -905,7 +1098,9 @@ class PaymentDialog(_Dialog):
             self.tip = 0
         else:
             self.received = None
-            self.tip = self._parse(self.tip_edit, 0)
+            self.tip = self._parse(self.tip_edit, 0) if self.tip_edit.isVisible() else 0
+        self.line_picks = self.selected_picks() if self.mode == 'items' else None
+        self.people_left = self.people.value() - 1 if self.mode == 'equal' and self.people.value() > 1 else None
         self.accept()
 
 

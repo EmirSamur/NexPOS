@@ -1,4 +1,16 @@
-# 5. ve 6. Ekran: Mutfak/Bar Ekranı ve Kasa (tarif, onay bekliyor)
+# 5. ve 6. Ekran: Mutfak/Bar Ekranı ve Kasa
+
+> Durum: tarif onaylandı. **Modül altyapısı ve 6. ekran (Kasa) uygulandı.** 5. ekran (KDS) sırada.
+>
+> Uygulamada netleşenler:
+> - Kasa işlemleri ve iade yetkisi hem ekranda hem kasa servisinde (cash.py, pos.py) hem sunucuda denetlenir;
+>   kuyruğa giren işlem sonradan reddedilmez.
+> - Ödenmiş (ürün seçerek bölmede) satır iptal edilemez; iade yapılır. Ürün seçerek ödeme alındıktan sonra
+>   iskonto değiştirilemez.
+> - Z raporu kapsamı: oturum açıkken alınan ödemeler/iadeler; adisyon sayısı, iskonto, ikram, KDV ve personel
+>   dökümü son ödemesi bu oturumda alınan (kapanan) adisyonlardan hesaplanır.
+> - Fark gerekçe eşiği modül ayarıdır (varsayılan 20 ₺).
+> - PDF fişler veritabanının yanındaki `fisler/` klasörüne kaydedilir.
 
 İki ekran da **modül** olarak gelir: Yönetici ayarlardan açar ya da kapatır. Kapalı modül hiçbir ekranda
 görünmez ve iş akışını etkilemez. Böylece küçük bir kafe yalnızca kasayla, büyük bir kafe mutfak ekranı
@@ -163,15 +175,15 @@ iade edilir. İade `refund` yetkisi ve gerekçe ister; Z raporunda ayrı satırd
 
 ## "Bitti" sayılma ölçütü
 
-- [ ] Modüller ayarlardan açılıp kapanıyor, değişiklik kasaya iniyor; kapalı modül hiçbir ekranda görünmüyor
-- [ ] Eşit bölme kuruş farkını son ödemede kapatıyor; ürün bazında bölmede aynı satır iki kez ödenemiyor
-- [ ] Kasa açılış, hareket ve kapanış çalışıyor; beklenen nakit doğru; fark gerekçesi zorunlu oluyor;
+- [x] Modüller ayarlardan açılıp kapanıyor, değişiklik kasaya iniyor; kapalı modül hiçbir ekranda görünmüyor
+- [x] Eşit bölme kuruş farkını son ödemede kapatıyor; ürün bazında bölmede aynı satır iki kez ödenemiyor
+- [x] Kasa açılış, hareket ve kapanış çalışıyor; beklenen nakit doğru; fark gerekçesi zorunlu oluyor;
       zorunlu modülde kasa kapalıyken nakit alınamıyor
-- [ ] Z raporundaki bütün kalemler adisyonlarla tutuyor (otomatik test); PDF ve yazıcı çıktısı alınıyor
-- [ ] İade yetki ve gerekçe istiyor; Z raporuna düşüyor
-- [ ] Bilgi fişi ve mutfak fişi yazdırılabiliyor; yazıcı yoksa PDF kaydediliyor
+- [x] Z raporundaki bütün kalemler adisyonlarla tutuyor (otomatik test); PDF ve yazıcı çıktısı alınıyor
+- [x] İade yetki ve gerekçe istiyor; Z raporuna düşüyor
+- [x] Bilgi fişi ve mutfak fişi yazdırılabiliyor; yazıcı yoksa PDF kaydediliyor
 - [ ] KDS tablette eşleniyor, panelden iptal edilebiliyor; fişler canlı düşüyor; gecikme renkleri,
       satır işaretleme, Hazır, Geri al ve toplu bekleyen çalışıyor
 - [ ] Hazır olan fiş kasada bildirim olarak çıkıyor; internet kesilince kasa uyarı gösteriyor
-- [ ] İnternetsiz: kasa oturumu, ödeme, bölme ve iade çalışıyor; internet gelince buluta gidiyor
+- [x] İnternetsiz: kasa oturumu, ödeme, bölme ve iade çalışıyor; internet gelince buluta gidiyor
 - [ ] Emülatör testleri: modül ayarları, kasa işlemleri, Z hesaplaması, KDS eşleme ve yetkileri

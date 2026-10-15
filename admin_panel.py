@@ -21,6 +21,9 @@ from admin_access_pages import cloud_action
 from cloud.context import ctx
 from qr_print import default_base_url
 from cloud.permissions import PANEL_ROLES
+from cash_screen import CashPage
+from modules_page import ModulesPanel
+from pos import now_iso as pos_now
 import database
 
 # Sayfa → görmek için gereken yetki (None: herkes). Sıra, self.pages sırasıyla aynıdır.
@@ -35,6 +38,7 @@ PAGE_PERMISSIONS = [
     'manageUsers',   # 7 Yetkiler
     'settings',      # 8 Ayarlar
     'settings',      # 9 Terminaller
+    'cash',          # 10 Kasa
 ]
 
 class AdminPanel(QWidget):
@@ -73,6 +77,8 @@ class AdminPanel(QWidget):
         self.pages.addWidget(self._create_settings_page())      # 8
         self.terminals_page = TerminalsPage(self.user)
         self.pages.addWidget(self.terminals_page)               # 9
+        self.cash_page = CashPage(self.user)
+        self.pages.addWidget(self.cash_page)                    # 10
         content_w.addWidget(self.pages, 1)
 
         cf = QFrame()
@@ -187,6 +193,8 @@ class AdminPanel(QWidget):
         self.menu_layout.addWidget(btn_siparis)
 
         isl = ExpandableSection("İşlemler", ICONS['money'])
+        btn_kasa = isl.add_sub_button("Kasa", ICONS['dot'])
+        btn_kasa.clicked.connect(lambda: self._show_page(10))
         btn_gd = isl.add_sub_button("Gider / Masraf", ICONS['dot'])
         btn_gd.clicked.connect(lambda: self._show_page(3))
         self.sidebar_buttons.append(btn_gd)
@@ -219,6 +227,7 @@ class AdminPanel(QWidget):
         btn_term.clicked.connect(lambda: self._show_page(9))
         self.sidebar_buttons.append(btn_term)
         self.menu_layout.addWidget(btn_term)
+        self.sidebar_buttons.append(btn_kasa)  # sayfa 10
 
         self.menu_layout.addStretch()
 
@@ -284,7 +293,8 @@ class AdminPanel(QWidget):
 
         kasa = QPushButton("Kasa İşlemleri")
         apply_topbar_style(kasa, COLORS['bg_warning'], COLORS['warning'], COLORS['warning_dark'])
-        kasa.clicked.connect(lambda: InfoDialog("Kasa İşlemleri", "Son açılış: Bugün 08:30\nKasadaki Nakit: ₺1,450.00\nKasa işlemlerine sadece yöneticiler müdahale edebilir.", COLORS['warning'], self).exec())
+        kasa.clicked.connect(lambda: self._show_page(10))
+        kasa.setVisible(database.user_can(self.user, 'cash'))
         ly.addWidget(kasa)
 
         destek = QPushButton("Destek İste")
@@ -323,7 +333,7 @@ class AdminPanel(QWidget):
                    "Kategori ve Ürün Tanımlama / Şube Ürünleri",
                    "Gider/Masraf İşlemleri", "Zayi İşlemleri",
                    "Restaurant İstatistikleri", "Kullanıcılar", "Yetki / İzin Ekranı", "Sistem Ayarları",
-                   "Terminaller"]
+                   "Terminaller", "Kasa"]
         if idx < len(titles):
             self.page_title.setText(titles[idx])
 
@@ -485,6 +495,9 @@ class AdminPanel(QWidget):
         """Ana pencere her senkronda çağırır: menü sayfası çevrimiçi durumu ve değişiklikleri günceller."""
         self.menu_page.on_sync_status(status)
         self.floor_page.on_sync_status(status)
+        if 'modules' in status.changed:
+            self.modules_panel.refresh()
+            self.cash_page.refresh()
         if 'general' in status.changed:
             self.shop_label.setText(f"  {ICONS['home']}  {database.general_settings()['cafeName'].upper()}")
 
@@ -1172,17 +1185,46 @@ class AdminPanel(QWidget):
         pl = QFormLayout(prnt)
         pl.setContentsMargins(24, 24, 24, 24)
         pl.setSpacing(20)
+        # Yazıcı bu bilgisayara özeldir (bulut ayarı değildir)
+        import printing
+        current_printer = printing.printer_settings()
         yazici = QComboBox()
-        yazici.addItems(["Varsayılan Sistem Yazıcısı", "Mutfak Fişi (Ağ)", "Kapat"])
+        yazici.addItem("Yazıcı yok — PDF olarak kaydet", "")
+        for name in printing.available_printers():
+            yazici.addItem(name, name)
+        if current_printer['name'] and yazici.findData(current_printer['name']) < 0:
+            yazici.addItem(f"{current_printer['name']} (bulunamadı)", current_printer['name'])
+        yazici.setCurrentIndex(max(0, yazici.findData(current_printer['name'])))
         yazici.setFixedHeight(40)
         kagit = QComboBox()
-        kagit.addItems(["80mm Termal", "58mm Termal", "A4"])
+        for key, (label, _) in printing.PAPERS.items():
+            kagit.addItem(label, key)
+        kagit.setCurrentIndex(max(0, kagit.findData(current_printer['paper'])))
         kagit.setFixedHeight(40)
-        
+        deneme = QPushButton("Deneme fişi yazdır")
+        deneme.setFixedHeight(36)
+
+        def test_print():
+            printing.save_printer_settings(yazici.currentData(), kagit.currentData())
+            sample = {'no': 'A0', 'type': 'takeaway', 'tableName': '', 'openedAt': pos_now(), 'discount': None,
+                      'payments': [], 'items': [{'name': 'Deneme ürünü', 'qty': 1, 'unitPrice': 1000, 'options': [],
+                                                 'status': 'active', 'state': 'sent'}]}
+            kind, where = printing.print_html(printing.bill_html(sample), "Deneme fişi")
+            ToastNotification(self, "Deneme fişi yazıcıya gönderildi." if kind == 'printer'
+                              else f"PDF kaydedildi: {where}", "success" if kind == 'printer' else "info")
+        deneme.clicked.connect(test_print)
         pl.addRow("Bağlı Yazıcı:", yazici)
         pl.addRow("Kağıt Boyutu:", kagit)
-        
+        pl.addRow("", deneme)
+        yazici_not = QLabel("Yazıcı seçimi yalnızca bu bilgisayar için geçerlidir. Windows'a sürücüsü kurulu her yazıcı "
+                            "(80/58 mm termal ya da A4) kullanılabilir. Fişlerin mali değeri yoktur.")
+        yazici_not.setWordWrap(True)
+        yazici_not.setStyleSheet(f"color: {COLORS['text_secondary']}; background: transparent;")
+        pl.addRow(yazici_not)
+
+        self.modules_panel = ModulesPanel(self.user)
         tabs.addTab(genel, "Genel Ayarlar")
+        tabs.addTab(self.modules_panel, "Modüller")
         tabs.addTab(prnt, "Yazıcı Ayarları")
         
         ly.addWidget(tabs, 1)
@@ -1194,8 +1236,6 @@ class AdminPanel(QWidget):
                 with open(conf_path, "r", encoding="utf-8") as f:
                     cfg = json.load(f)
                     tema.setCurrentIndex(cfg.get("tema", 0))
-                    yazici.setCurrentIndex(cfg.get("yazici", 0))
-                    kagit.setCurrentIndex(cfg.get("kagit", 0))
             except Exception: pass
         
         act_ly = QHBoxLayout()
@@ -1208,9 +1248,10 @@ class AdminPanel(QWidget):
         """)
         def save():
             # Bu bilgisayara özel ayarlar (tema, yazıcı) yerelde kalır
-            cfg = {"tema": tema.currentIndex(), "yazici": yazici.currentIndex(), "kagit": kagit.currentIndex()}
+            cfg = {"tema": tema.currentIndex()}
             with open(conf_path, "w", encoding="utf-8") as f:
                 json.dump(cfg, f)
+            printing.save_printer_settings(yazici.currentData(), kagit.currentData())
             current = database.general_settings()
             new = (isim.text().strip(), qr_url.text().strip(), kilit.value())
             if new == (current['cafeName'], current['qrBaseUrl'], current['idleLockMinutes']):
