@@ -208,9 +208,11 @@ class TableCard(QFrame):
         if is_occupied:
             # Üst: Masa adı + durum badge
             top = QHBoxLayout()
-            nm = QLabel(table_data.get('ad', ''))
+            nm = QLabel(("🔔 " if table_data.get('ready') else "") + table_data.get('ad', ''))
             nm.setFont(QFont(FONTS['family'], FONTS['size_md'], QFont.Bold))
             nm.setStyleSheet(f"color: {COLORS['text_dark']}; background: transparent;")
+            if table_data.get('ready'):
+                nm.setToolTip("Mutfakta/barda hazır ürün var")
 
             badge = QLabel("HESAP" if bill else "DOLU")
             badge.setFont(QFont(FONTS['family'], 8, QFont.Bold))

@@ -32,7 +32,10 @@ Kafe ve restoran işletmelerinin masa takibi, sipariş yönetimi, finansal rapor
 - Masa transfer — aktif siparişi başka bir masaya taşıma
 - Sipariş panosu: Mutfakta / Hazır aşamalarını gerçek zamanlı takip
 - Vardiya özeti — o güne ait tamamlanan sipariş sayısı ve toplam ciro
-- Nakit / Kredi Kartı ödeme alma ve masa otomatik kapatma
+- Nakit / Kredi Kartı / Yemek Kartı ödeme; hesabı eşit bölme ya da ürün seçerek bölme
+- Kasa: açılış, para giriş/çıkışı, X ve Z raporu (KDV dökümü, personel, kasa farkı), iade
+- Bilgi fişi (adisyon), mutfak/bar fişi ve rapor yazdırma; yazıcı yoksa PDF
+- Mutfak / bar ekranı: tablette çalışan web sayfası, fişler canlı düşer, hazır olunca kasada 🔔
 
 ### Yönetici Paneli
 - Dashboard: Son 30 günlük satış, açık siparişler, gider ve masa doluluk özeti

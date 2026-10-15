@@ -11,6 +11,7 @@
 //   - Terminal (kafedeki NexPOS): uid = "terminal-<id>", custom claim
 //     { terminal: true, terminalId }.
 
+const { randomInt } = require('crypto');
 const { initializeApp } = require('firebase-admin/app');
 const { getAuth } = require('firebase-admin/auth');
 const { getFirestore, FieldValue, Timestamp } = require('firebase-admin/firestore');
@@ -89,10 +90,12 @@ async function requireStaff(request, permission) {
   return { uid, role, staff: staffSnap.data() };
 }
 
-async function requireTerminal(request) {
+// Kasa terminali (NexPOS). Mutfak ekranı (kds) bu fonksiyonları çağıramaz; allowKds ile
+// yalnızca ortak olanlara (canlılık sinyali) izin verilir.
+async function requireTerminal(request, { allowKds = false } = {}) {
   requireAuth(request);
-  const { terminal, terminalId } = request.auth.token;
-  if (terminal !== true || typeof terminalId !== 'string') {
+  const { terminal, terminalId, kds } = request.auth.token;
+  if (terminal !== true || typeof terminalId !== 'string' || (kds === true && !allowKds)) {
     throw new HttpsError('permission-denied', 'Bu işlem yalnızca kayıtlı terminallerden yapılabilir.');
   }
   const ref = db.doc(`terminals/${terminalId}`);
@@ -284,7 +287,7 @@ exports.revokeTerminal = onCall(async (request) => {
 
 // Terminal her senkronda çağırır: canlı olduğunu ve kuyruktaki işlem sayısını bildirir.
 exports.terminalHeartbeat = onCall(async (request) => {
-  const { ref } = await requireTerminal(request);
+  const { ref } = await requireTerminal(request, { allowKds: true });
   const pending = Number.isInteger(request.data?.pending) && request.data.pending >= 0 ? request.data.pending : 0;
   const appVersion = typeof request.data?.appVersion === 'string' ? request.data.appVersion.slice(0, 20) : null;
   await ref.update({
@@ -610,6 +613,18 @@ function orderHandler(op) {
         return { status: 'rejected', error: 'Kasa açılmadan nakit işlem yapılamaz.' };
       }
     }
+    // Mutfak/bar fişleri: iptal edilen ürün fişte "İPTAL" görünsün, taşınan masanın adı güncellensin
+    const ticketRefs = new Map();
+    if (order && ['voidItem', 'cancelOrder'].includes(op)) {
+      const lines = order.items.filter((l) => l.status === 'active' && l.state === 'sent'
+        && (op === 'cancelOrder' || l.lineId === p.lineId) && l.ticketId);
+      for (const id of new Set(lines.map((l) => l.ticketId))) ticketRefs.set(id, await tx.get(db.doc(`kitchenTickets/${id}`)));
+    }
+    if (order && ['moveOrder', 'mergeOrders'].includes(op)) {
+      const ids = [order.id, ...(source ? [source.id] : [])];
+      const q = await tx.get(db.collection('kitchenTickets').where('orderId', 'in', ids));
+      for (const d of q.docs) if (d.data().status !== 'served') ticketRefs.set(d.id, d);
+    }
     let products = [];
     if (op === 'addItems' && Array.isArray(p.items)) {
       const ids = [...new Set(p.items.map((i) => i?.productId).filter((x) => typeof x === 'string' && x))];
@@ -683,8 +698,19 @@ function orderHandler(op) {
       for (const [ticketId, t] of byTicket) {
         tx.set(db.doc(`kitchenTickets/${ticketId}`), {
           orderId: next.id, orderNo: next.no, tableName: next.tableName || '', type: next.type,
-          station: t.station, lines: t.lines, status: 'new', createdAt: at, terminalId, updatedAt: now,
+          station: t.station, lines: t.lines, doneLineIds: [], status: 'new', createdAt: at, terminalId, updatedAt: now,
         });
+      }
+    }
+
+    for (const [, snap] of ticketRefs) {
+      if (!snap.exists) continue;
+      if (op === 'voidItem' || op === 'cancelOrder') {
+        const voided = new Set(next.items.filter((l) => l.status === 'void' || op === 'cancelOrder').map((l) => l.lineId));
+        tx.update(snap.ref, { lines: snap.data().lines.map((l) => (voided.has(l.lineId) ? { ...l, voided: true } : l)),
+          ...(op === 'cancelOrder' ? { cancelled: true } : {}), updatedAt: now });
+      } else {
+        tx.update(snap.ref, { tableName: next.tableName || '', updatedAt: now });
       }
     }
 
@@ -875,6 +901,118 @@ OP_HANDLERS.closeCashSession = async (tx, { op, terminalId, staff, matrix }) => 
   }
   return { status: 'ok' };
 };
+
+// ---------------------------------------------------------------------------
+// Mutfak / bar ekranı (5. ekran, KDS)
+//
+// Tablet, panelde üretilen 6 haneli kodla eşlenir ve ayrı bir cihaz hesabı alır
+// (claims: terminal, terminalId, kds, station). Bu hesap yalnızca fişleri ve modül/genel
+// ayarları okuyabilir; personel, PIN ve sipariş verisine erişemez. Fiş durumunu
+// updateKitchenTicket ile değiştirir. Terminaller sayfasından iptal edilebilir.
+// ---------------------------------------------------------------------------
+
+const KDS_STATIONS = ['bar', 'kitchen', 'all'];
+const PAIRING_MINUTES = 10;
+const PAIRING_MAX_FAILURES = 30; // 10 dakikada; kod tahminine karşı
+
+exports.createKdsPairingCode = onCall(async (request) => {
+  const actor = await requireStaff(request, 'settings');
+  const name = request.data?.name ? requireString(request.data.name, 'Ekran adı', { max: 40 }) : 'Mutfak ekranı';
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+    const ref = db.doc(`kdsPairings/${code}`);
+    const created = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (snap.exists && snap.data().used !== true && snap.data().expiresAt.toMillis() > Date.now()) return false;
+      tx.set(ref, { name, used: false, createdBy: actor.uid, createdAt: FieldValue.serverTimestamp(),
+        expiresAt: Timestamp.fromMillis(Date.now() + PAIRING_MINUTES * 60_000) });
+      return true;
+    });
+    if (created) return { code, expiresInMinutes: PAIRING_MINUTES };
+  }
+  throw new HttpsError('unavailable', 'Kod üretilemedi, tekrar deneyin.');
+});
+
+// Tabletten giriş yapmadan çağrılır: { code, station, name? } → customToken
+exports.pairKds = onCall(async (request) => {
+  const code = request.data?.code;
+  const station = request.data?.station;
+  if (typeof code !== 'string' || !/^\d{6}$/.test(code)) throw new HttpsError('invalid-argument', 'Kod 6 haneli olmalıdır.');
+  if (!KDS_STATIONS.includes(station)) throw new HttpsError('invalid-argument', 'İstasyon geçersiz.');
+  const guardRef = db.doc('pairingGuard/kds');
+  const pairingRef = db.doc(`kdsPairings/${code}`);
+  const ref = db.collection('terminals').doc();
+  const outcome = await db.runTransaction(async (tx) => {
+    const [guard, pairing] = await Promise.all([tx.get(guardRef), tx.get(pairingRef)]);
+    const now = Date.now();
+    const g = guard.exists && now - guard.data().windowStart < PAIRING_MINUTES * 60_000
+      ? guard.data() : { windowStart: now, failures: 0 };
+    if (g.failures >= PAIRING_MAX_FAILURES) return { error: 'resource-exhausted' };
+    const p = pairing.exists ? pairing.data() : null;
+    if (!p || p.used === true || p.expiresAt.toMillis() <= now) {
+      tx.set(guardRef, { windowStart: g.windowStart, failures: g.failures + 1 });
+      return { error: 'not-found' };
+    }
+    const name = typeof request.data?.name === 'string' && request.data.name.trim()
+      ? request.data.name.trim().slice(0, 40) : p.name;
+    tx.update(pairingRef, { used: true, usedAt: FieldValue.serverTimestamp(), terminalId: ref.id });
+    tx.set(ref, { name, kind: 'kds', station, letter: null, deviceUid: TERMINAL_UID_PREFIX + ref.id, revoked: false,
+      pendingOps: 0, appVersion: null, lastSeenAt: FieldValue.serverTimestamp(), createdBy: p.createdBy,
+      createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
+    audit(tx, { action: 'kds_pair', actor: p.createdBy, target: ref.id, after: { name, station } });
+    return { name };
+  });
+  if (outcome.error === 'resource-exhausted') {
+    throw new HttpsError('resource-exhausted', 'Çok fazla hatalı deneme. Birkaç dakika sonra tekrar deneyin.');
+  }
+  if (outcome.error) throw new HttpsError('not-found', 'Kod geçersiz ya da süresi dolmuş. Panelden yeni kod alın.');
+  const uid = TERMINAL_UID_PREFIX + ref.id;
+  const claims = { terminal: true, terminalId: ref.id, kds: true, station };
+  await getAuth().createUser({ uid, displayName: `Mutfak ekranı · ${outcome.name}` });
+  await getAuth().setCustomUserClaims(uid, claims);
+  const customToken = await getAuth().createCustomToken(uid, claims);
+  return { terminalId: ref.id, name: outcome.name, station, customToken };
+});
+
+// Mutfak ekranı fiş durumu: Başla (preparing), Hazır (ready), Geri al (ready → preparing),
+// hazırlanan satırların işaretlenmesi (doneLineIds). Teslim (served) kasadan yapılır.
+exports.updateKitchenTicket = onCall(async (request) => {
+  requireAuth(request);
+  const { kds, terminalId, station } = request.auth.token;
+  if (kds !== true || typeof terminalId !== 'string') {
+    throw new HttpsError('permission-denied', 'Bu işlem yalnızca mutfak ekranından yapılabilir.');
+  }
+  const term = await db.doc(`terminals/${terminalId}`).get();
+  if (!term.exists || term.data().revoked === true) throw new HttpsError('permission-denied', 'Bu ekran iptal edilmiş.');
+  const ticketId = requireString(request.data?.ticketId, 'Fiş', { max: 64 });
+  const status = request.data?.status;
+  const done = request.data?.doneLineIds;
+  if (status !== undefined && !['new', 'preparing', 'ready'].includes(status)) {
+    throw new HttpsError('invalid-argument', 'Fiş durumu geçersiz.');
+  }
+  if (done !== undefined && (!Array.isArray(done) || done.length > 50 || done.some((x) => typeof x !== 'string'))) {
+    throw new HttpsError('invalid-argument', 'Satır listesi geçersiz.');
+  }
+  const ref = db.doc(`kitchenTickets/${ticketId}`);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new HttpsError('not-found', 'Fiş bulunamadı.');
+    const t = snap.data();
+    if (station !== 'all' && t.station !== station) throw new HttpsError('permission-denied', 'Bu fiş başka istasyonun.');
+    if (t.status === 'served') throw new HttpsError('failed-precondition', 'Fiş teslim edilmiş.');
+    const update = { updatedAt: FieldValue.serverTimestamp(), updatedByKds: terminalId };
+    if (status !== undefined && status !== t.status) {
+      update.status = status;
+      update[`${status}At`] = new Date().toISOString();
+    }
+    if (done !== undefined) {
+      const ids = new Set(t.lines.map((l) => l.lineId));
+      update.doneLineIds = [...new Set(done)].filter((x) => ids.has(x));
+    }
+    tx.update(ref, update);
+    return { status: update.status || t.status };
+  });
+});
 
 function parseClientTime(value) {
   const ms = Date.parse(value);

@@ -15,7 +15,7 @@ bunu arka planda çalıştırır.
 import json
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import database
 from cloud.firebase_client import ApiError, OfflineError, Session
@@ -32,7 +32,11 @@ PULL_COLLECTIONS = {
     'products': lambda docs: database.upsert_menu('products', docs),
     'areas': lambda docs: database.upsert_floor('areas', docs),
     'tables': lambda docs: database.upsert_floor('tables', docs),
+    'kitchenTickets': database.upsert_cloud_tickets,   # mutfak ekranındaki Başla / Hazır
 }
+
+# Yalnızca yakın geçmişi gereken koleksiyonlar (ilk senkronda tümü indirilmez)
+RECENT_ONLY = {'kitchenTickets'}
 
 # Tek doküman olarak çekilen ayarlar: settings/<ad> → settings_cache[<ad>]
 PULL_SETTINGS = ('permissions', 'general', 'modules')
@@ -102,6 +106,9 @@ class SyncEngine:
         for collection, store in PULL_COLLECTIONS.items():
             key = f'pull:{collection}'
             since = database.get_sync_state(key)
+            if not since and collection in RECENT_ONLY:
+                # Geçmiş fişler gerekmez; ilk senkronda yalnızca son bir gün
+                since = (datetime.now(timezone.utc) - timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%S.000000Z')
             docs = self.client.query_updated_since(collection, since, session)
             if docs:
                 store(docs)

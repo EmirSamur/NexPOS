@@ -1147,7 +1147,10 @@ class TablePickerDialog(_Dialog):
 # =====================================================================
 
 class TicketBoard(QWidget):
-    """Gönderilen fişler: Yeni → Hazırlanıyor → Hazır → (teslim edildi). Ayrı KDS ekranı 5. ekranda."""
+    """
+    Gönderilen fişler: Yeni → Hazırlanıyor → Hazır → (teslim edildi).
+    Mutfak ekranı (KDS) modülü açıkken Başla/Hazır tabletten gelir; pano yedek olarak çalışır.
+    """
     COLUMNS = (('new', 'Yeni', COLORS['warning']), ('preparing', 'Hazırlanıyor', COLORS['info']),
                ('ready', 'Hazır', COLORS['success']))
     NEXT = {'new': ('preparing', "Hazırlamaya başla"), 'preparing': ('ready', "Hazır"), 'ready': ('served', "Teslim edildi")}
@@ -1164,7 +1167,9 @@ class TicketBoard(QWidget):
         self.filter.addItem("🍳 Mutfak", 'kitchen')
         self.filter.currentIndexChanged.connect(self.refresh)
         bar.addWidget(self.filter)
-        bar.addStretch()
+        self.kds_note = QLabel()
+        self.kds_note.setWordWrap(True)
+        bar.addWidget(self.kds_note, 1)
         root.addLayout(bar)
         cols = QHBoxLayout()
         cols.setSpacing(14)
@@ -1195,6 +1200,15 @@ class TicketBoard(QWidget):
         self.timer.start(5000)
 
     def refresh(self):
+        kds = database.modules()['kds']['enabled']
+        offline = bool(ctx.last_status) and not ctx.last_status.online
+        if kds and offline:
+            self.kds_note.setText("⚠ İnternet yok: mutfak ekranına ulaşılamıyor, fişleri buradan takip edin.")
+            self.kds_note.setStyleSheet(f"color: {COLORS['danger']}; font-weight: bold; background: transparent;")
+        else:
+            self.kds_note.setText("Mutfak ekranı açık: Başla / Hazır tabletten gelir. 🔔 Hazır fişi teslim edince işaretleyin."
+                                  if kds else "")
+            self.kds_note.setStyleSheet(f"color: {COLORS['text_secondary']}; background: transparent;")
         station = self.filter.currentData()
         all_tickets = [t for t in pos.tickets() if station is None or t['station'] == station]
         for key, (head, inner, title) in self.col_layouts.items():

@@ -456,7 +456,7 @@ class TerminalsPage(QWidget):
         ly.addWidget(self.local_box)
 
         self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["Ad", "Harf", "Durum", "Son Görülme", "Bekleyen İşlem", "Sürüm"])
+        self.table.setHorizontalHeaderLabels(["Ad", "Harf / Tür", "Durum", "Son Görülme", "Bekleyen İşlem", "Sürüm"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -465,7 +465,11 @@ class TerminalsPage(QWidget):
         ly.addWidget(self.table, 1)
 
         actions = QHBoxLayout()
-        self.revoke_btn = _button("⛔ Terminali İptal Et", primary=False)
+        self.kds_btn = _button("🍳 Mutfak Ekranı Ekle")
+        self.kds_btn.setToolTip("Mutfak/bar tableti için eşleme kodu üretir (Modüller → Mutfak Ekranı açık olmalı).")
+        self.kds_btn.clicked.connect(self._add_kds)
+        actions.addWidget(self.kds_btn)
+        self.revoke_btn = _button("⛔ Terminali / Ekranı İptal Et", primary=False)
         self.revoke_btn.clicked.connect(self._revoke)
         actions.addWidget(self.revoke_btn)
         actions.addStretch()
@@ -476,6 +480,7 @@ class TerminalsPage(QWidget):
         self.refresh_local()
 
     def refresh_local(self):
+        self.kds_btn.setVisible(database.modules()['kds']['enabled'])
         pending, failed = database.outbox_counts()
         status = ctx.last_status
         conn = ("🟢 Çevrimiçi" if status and status.online else "🟠 Çevrimdışı")
@@ -500,13 +505,15 @@ class TerminalsPage(QWidget):
                   lambda m: QMessageBox.warning(self, "Yüklenemedi", m))
 
     def _show_terminals(self, docs):
-        self.terminals = sorted(docs, key=lambda d: d[1].get('letter', ''))
+        self.terminals = sorted(docs, key=lambda d: (d[1].get('kind') == 'kds', d[1].get('letter') or '', d[1].get('name', '')))
         self.table.setRowCount(len(self.terminals))
         now = datetime.now(timezone.utc)
         for i, (tid, t) in enumerate(self.terminals):
             mine = ctx.creds and tid == ctx.creds.terminal_id
             self.table.setItem(i, 0, QTableWidgetItem(t.get('name', '') + ("  (bu bilgisayar)" if mine else "")))
-            self.table.setItem(i, 1, QTableWidgetItem(t.get('letter', '')))
+            kind = (f"Mutfak ekranı · {KDS_STATIONS.get(t.get('station'), '')}" if t.get('kind') == 'kds'
+                    else t.get('letter', ''))
+            self.table.setItem(i, 1, QTableWidgetItem(kind))
             seen = t.get('lastSeenAt')
             if t.get('revoked'):
                 state, color = "İptal edildi", COLORS['text_muted']
@@ -524,6 +531,12 @@ class TerminalsPage(QWidget):
             self.table.setItem(i, 4, QTableWidgetItem(str(t.get('pendingOps', 0))))
             self.table.setItem(i, 5, QTableWidgetItem(t.get('appVersion') or ''))
 
+    def _add_kds(self):
+        def show(result):
+            KdsCodeDialog(result['code'], result['expiresInMinutes'], self).exec()
+            self._load()
+        cloud_action(self, lambda api: api.create_kds_pairing_code(), "Eşleme kodu üretildi.", show)
+
     def _revoke(self):
         rows = self.table.selectionModel().selectedRows()
         if not rows:
@@ -536,8 +549,53 @@ class TerminalsPage(QWidget):
         warn = ("\n\nDİKKAT: Bu, şu an kullandığınız bilgisayar. İptal edilince NexPOS kilitlenir ve "
                 "yeniden bağlanması gerekir.") if mine else ""
         if QMessageBox.question(self, "Terminali İptal Et",
-                                f"{t.get('name')} ({t.get('letter')}) iptal edilsin mi?{warn}",
+                                f"{t.get('name')} ({t.get('letter') or 'mutfak ekranı'}) iptal edilsin mi?{warn}",
                                 QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
             return
         cloud_action(self, lambda api: api.revoke_terminal(tid), f"{t.get('name')} iptal edildi.",
                      lambda _: self._load())
+
+
+KDS_STATIONS = {'kitchen': 'Mutfak', 'bar': 'Bar', 'all': 'Mutfak + Bar'}
+
+
+def kds_url():
+    """Mutfak ekranının adresi: QR adresiyle aynı alan adı, /mutfak yolu."""
+    from urllib.parse import urlsplit
+    from qr_print import default_base_url
+    base = database.general_settings()['qrBaseUrl'] or (default_base_url(ctx.config.project_id) if ctx.config else '')
+    parts = urlsplit(base)
+    return f"{parts.scheme}://{parts.netloc}/mutfak" if parts.netloc else "/mutfak"
+
+
+class KdsCodeDialog(QDialog):
+    """Eşleme kodu: tablette adres açılır, kod girilir, istasyon seçilir."""
+
+    def __init__(self, code, minutes, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Mutfak Ekranı Ekle")
+        self.setStyleSheet("QDialog { background: white; }")
+        self.setMinimumWidth(460)
+        ly = QVBoxLayout(self)
+        ly.setContentsMargins(28, 24, 28, 24)
+        ly.setSpacing(12)
+        steps = QLabel(f"1. Mutfaktaki tablette şu adresi açın:<br><b style='font-size:15px'>{kds_url()}</b><br><br>"
+                       "2. Aşağıdaki kodu girin ve istasyonu (Mutfak / Bar / İkisi) seçin.")
+        steps.setTextFormat(Qt.RichText)
+        steps.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        steps.setWordWrap(True)
+        ly.addWidget(steps)
+        big = QLabel(" ".join(code))
+        big.setAlignment(Qt.AlignCenter)
+        big.setFont(QFont("Consolas", 40, QFont.Bold))
+        big.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        big.setStyleSheet(f"color: {COLORS['primary']}; background: {COLORS['primary_bg']}; border-radius: 12px; padding: 14px;")
+        ly.addWidget(big)
+        note = QLabel(f"Kod {minutes} dakika geçerlidir ve bir kez kullanılır. Tablet, bu listede ayrı bir satır olarak "
+                      "görünür ve buradan iptal edilebilir.")
+        note.setWordWrap(True)
+        note.setStyleSheet(f"color: {COLORS['text_secondary']}; background: transparent;")
+        ly.addWidget(note)
+        ok = _button("Tamam")
+        ok.clicked.connect(self.accept)
+        ly.addWidget(ok)

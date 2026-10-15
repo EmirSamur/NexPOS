@@ -83,7 +83,8 @@ def bill_html(order):
     """Adisyon (ön fiş): müşteriye hesabı göstermek için."""
     cafe = database.general_settings()['cafeName']
     t = compute_totals(order)
-    where = f"Masa {_e(order.get('tableName'))}" if order['type'] == 'dine_in' else 'Paket'
+    from pos import place_label
+    where = _e(place_label(order))
     rows = []
     for l in order['items']:
         opts = ''.join(f"<br><span class='muted'>&nbsp;&nbsp;+ {_e(o['name'])}</span>" for o in l.get('options') or [])
@@ -111,7 +112,8 @@ def bill_html(order):
 def ticket_html(ticket):
     """Mutfak / bar fişi (KDS'nin kâğıt yedeği)."""
     station = 'BAR' if ticket['station'] == 'bar' else 'MUTFAK'
-    where = f"MASA {_e(ticket.get('tableName'))}" if ticket.get('type') == 'dine_in' else 'PAKET'
+    from pos import place_label
+    where = _e(place_label(ticket).upper())
     lines = ''.join(
         f"<tr><td class='big'>{l['qty']} × {_e(l['name'])}"
         + ''.join(f"<br>&nbsp;&nbsp;+ {_e(o)}" for o in l.get('options') or [])

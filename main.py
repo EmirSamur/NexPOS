@@ -135,8 +135,27 @@ class MainWindow(QMainWindow):
             self.user_panel.on_menu_changed()
         if 'permissions' in status.changed and self._current_user:
             self.status_bar.showMessage("Yetki matrisi güncellendi.", 5000)
+        if 'kitchenTickets' in status.changed:
+            self._on_tickets_changed()
+        # Mutfak ekranı internetten çalışır: bağlantı koparsa kasaya bir kez uyarı düşer
+        was_online, self._was_online = getattr(self, '_was_online', True), status.online
+        if was_online and not status.online and self._current_user and database.modules()['kds']['enabled']:
+            ToastNotification(self, "İnternet yok: mutfak ekranı yeni fiş alamaz. Fişleri Fiş Panosu'ndan takip edin.",
+                              "warning")
         if status.revoked:
             self._on_revoked()
+
+    def _on_tickets_changed(self):
+        """Mutfak/bar ekranında "Hazır" denen fişler kasada bildirilir; masada 🔔 görünür."""
+        ready = database.take_ready_notifications()
+        if ready and self._current_user:
+            import pos
+            names = ", ".join(f"{pos.place_label(t)} · {t['orderNo']}" for t in ready[:4])
+            more = f" (+{len(ready) - 4})" if len(ready) > 4 else ""
+            ToastNotification(self, f"🔔 Hazır: {names}{more}", "success")
+            QApplication.beep()
+        if self.user_panel:
+            self.user_panel.on_tickets_changed()
 
     def _on_revoked(self):
         self._stop_sync()

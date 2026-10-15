@@ -159,6 +159,13 @@ class UserPanel(QWidget):
         
         return bar
 
+    def on_tickets_changed(self):
+        """Mutfak ekranından fiş durumu indi: plan (🔔) ve fiş panosu tazelenir."""
+        if self.pages.currentIndex() == 0:
+            self._refresh_bolgeler()
+        elif self.pages.currentIndex() == 1:
+            self.ticket_board.refresh()
+
     def on_menu_changed(self):
         """Menü buluttan güncellendiğinde (fiyat, tükendi) açık ekranları tazeler."""
         if self.pages.currentWidget() is self.pos_screen:

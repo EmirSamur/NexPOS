@@ -1,6 +1,6 @@
 # 5. ve 6. Ekran: Mutfak/Bar Ekranı ve Kasa
 
-> Durum: tarif onaylandı. **Modül altyapısı ve 6. ekran (Kasa) uygulandı.** 5. ekran (KDS) sırada.
+> Durum: **uygulandı** (modül altyapısı, 6. ekran Kasa, 5. ekran Mutfak/Bar Ekranı).
 >
 > Uygulamada netleşenler:
 > - Kasa işlemleri ve iade yetkisi hem ekranda hem kasa servisinde (cash.py, pos.py) hem sunucuda denetlenir;
@@ -11,6 +11,11 @@
 >   dökümü son ödemesi bu oturumda alınan (kapanan) adisyonlardan hesaplanır.
 > - Fark gerekçe eşiği modül ayarıdır (varsayılan 20 ₺).
 > - PDF fişler veritabanının yanındaki `fisler/` klasörüne kaydedilir.
+> - Mutfak ekranı Firebase web SDK'sını CDN'den değil, kendi Hosting adresinden yükler (`hosting/mutfak/vendor`).
+> - Tablet hesabı yalnızca fişleri ve modül/genel ayarları okur; kasa terminali fonksiyonlarını çağıramaz.
+> - Kod tahminine karşı: 10 dakikada 30 hatalı denemeden sonra eşleme geçici olarak kapanır.
+> - Adisyon iptal edilince fişi "İPTAL EDİLDİ" görünür ve tabletten "Kaldır" ile kaldırılır (kasada bildirim çıkmaz).
+> - Masa adı yalnızca rakamsa "Masa" eklenir ("Masa 5"); "Bahçe 3" gibi adlar olduğu gibi gösterilir.
 
 İki ekran da **modül** olarak gelir: Yönetici ayarlardan açar ya da kapatır. Kapalı modül hiçbir ekranda
 görünmez ve iş akışını etkilemez. Böylece küçük bir kafe yalnızca kasayla, büyük bir kafe mutfak ekranı
@@ -182,8 +187,8 @@ iade edilir. İade `refund` yetkisi ve gerekçe ister; Z raporunda ayrı satırd
 - [x] Z raporundaki bütün kalemler adisyonlarla tutuyor (otomatik test); PDF ve yazıcı çıktısı alınıyor
 - [x] İade yetki ve gerekçe istiyor; Z raporuna düşüyor
 - [x] Bilgi fişi ve mutfak fişi yazdırılabiliyor; yazıcı yoksa PDF kaydediliyor
-- [ ] KDS tablette eşleniyor, panelden iptal edilebiliyor; fişler canlı düşüyor; gecikme renkleri,
+- [x] KDS tablette eşleniyor, panelden iptal edilebiliyor; fişler canlı düşüyor; gecikme renkleri,
       satır işaretleme, Hazır, Geri al ve toplu bekleyen çalışıyor
-- [ ] Hazır olan fiş kasada bildirim olarak çıkıyor; internet kesilince kasa uyarı gösteriyor
+- [x] Hazır olan fiş kasada bildirim olarak çıkıyor; internet kesilince kasa uyarı gösteriyor
 - [x] İnternetsiz: kasa oturumu, ödeme, bölme ve iade çalışıyor; internet gelince buluta gidiyor
-- [ ] Emülatör testleri: modül ayarları, kasa işlemleri, Z hesaplaması, KDS eşleme ve yetkileri
+- [x] Emülatör testleri: modül ayarları, kasa işlemleri, Z hesaplaması, KDS eşleme ve yetkileri

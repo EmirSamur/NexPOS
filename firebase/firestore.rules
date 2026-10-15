@@ -30,11 +30,21 @@ service cloud.firestore {
 
     // İptal edilmiş terminalin token'ı süresi dolana kadar geçerli kalır; bu yüzden
     // her istekte terminal kaydı kontrol edilir.
-    function isActiveTerminal() {
+    function terminalLive() {
       return signedIn()
         && request.auth.token.get('terminal', false) == true
         && exists(/databases/$(database)/documents/terminals/$(request.auth.token.terminalId))
         && get(/databases/$(database)/documents/terminals/$(request.auth.token.terminalId)).data.revoked == false;
+    }
+
+    // Kasa terminali (NexPOS)
+    function isActiveTerminal() {
+      return terminalLive() && request.auth.token.get('kds', false) == false;
+    }
+
+    // Mutfak / bar ekranı (5. ekran): yalnızca fişleri ve modül/genel ayarları okur.
+    function isActiveKds() {
+      return terminalLive() && request.auth.token.get('kds', false) == true;
     }
 
     // Personel listesi: terminal önbelleğe alır (giriş ekranındaki kartlar).
@@ -53,7 +63,7 @@ service cloud.firestore {
 
     // Ayarlar: settings/permissions vb. Yazma yalnızca fonksiyonlardan.
     match /settings/{docId} {
-      allow read: if isStaff() || isActiveTerminal();
+      allow read: if isStaff() || isActiveTerminal() || (isActiveKds() && docId in ['modules', 'general']);
       allow write: if false;
     }
 
@@ -98,7 +108,7 @@ service cloud.firestore {
       allow write: if false;
     }
     match /kitchenTickets/{id} {
-      allow read: if isStaff() || isActiveTerminal();
+      allow read: if isStaff() || isActiveTerminal() || isActiveKds();
       allow write: if false;
     }
     match /payments/{id} {

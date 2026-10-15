@@ -28,6 +28,14 @@ def now_iso():
     return datetime.now().astimezone().isoformat(timespec='seconds')
 
 
+def place_label(doc):
+    """Adisyon ya da fiş için yer adı: "Masa 5" / "Bahçe 3" / "Paket". Yalnız rakamsa "Masa" eklenir."""
+    if doc.get('type') != 'dine_in':
+        return 'Paket'
+    name = (doc.get('tableName') or '').strip()
+    return f"Masa {name}" if name.isdigit() or not name else name
+
+
 def business_day(moment=None):
     moment = moment or datetime.now()
     return (moment - timedelta(hours=DAY_START_HOUR)).strftime('%Y-%m-%d')

@@ -319,14 +319,21 @@ Siparişi değiştiren her işlem bir **callable function** üzerinden yapılır
 ### `kitchenTickets/{id}`: mutfak ve bar ekranı (KDS)
 ```ts
 {
-  orderId, orderNo, tableName, station: "bar"|"kitchen",
-  lines: [ { lineId, name, qty, options: string[], note } ],
+  orderId, orderNo, tableName, type: "dine_in"|"takeaway", station: "bar"|"kitchen",
+  lines: [ { lineId, name, qty, options: string[], note, voided?: true } ],
+  doneLineIds: string[],             // tablette işaretlenen (hazırlanan) satırlar
   status: "new"|"preparing"|"ready"|"served",
-  createdAt, startedAt?, readyAt?
+  cancelled?: true,                  // adisyon iptal edildi
+  createdAt, preparingAt?, readyAt?, servedAt?, terminalId, updatedAt
 }
 ```
-> Ekran yalnızca `station == "bar" && status in [new, preparing]` olan fişleri dinler.
-> Hazırlama süresi raporu bu koleksiyondaki `readyAt − createdAt` farkından çıkar.
+> Tablet `status in [new, preparing]` (ve istasyonu) olan fişleri canlı dinler; durumu `updateKitchenTicket`
+> ile değiştirir (served hariç; teslimi kasa yapar). İptal edilen satır `voided`, taşınan masada `tableName`
+> güncellenir. Hazırlama süresi raporu `readyAt − createdAt` farkından çıkar.
+
+### `kdsPairings/{code}`: mutfak ekranı eşleme kodu (yalnızca fonksiyonlar)
+`{ name, used, createdBy, createdAt, expiresAt (10 dk), usedAt?, terminalId? }` — mutfak tableti
+`terminals/{id}` altında `kind: "kds", station` ile kaydolur ve oradan iptal edilir.
 
 ### `payments/{id}`
 ```ts

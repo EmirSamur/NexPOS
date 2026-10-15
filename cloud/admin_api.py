@@ -103,6 +103,10 @@ class AdminApi:
         return self._call('saveGeneralSettings', {'cafeName': cafe_name, 'qrBaseUrl': qr_base_url,
                                                   'idleLockMinutes': idle_lock_minutes})
 
+    def create_kds_pairing_code(self, name=None):
+        """Mutfak ekranı için 10 dakika geçerli 6 haneli eşleme kodu: {'code', 'expiresInMinutes'}"""
+        return self._call('createKdsPairingCode', {'name': name} if name else {})
+
     def save_modules(self, data):
         """settings/modules (yalnızca yönetici). Kaydedilen (doğrulanmış) ayarı döndürür."""
         return self._call('saveModules', data)

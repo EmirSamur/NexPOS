@@ -284,6 +284,7 @@ def get_tables_by_region(region_id):
     # Henüz taşınmamış eski açık adisyonlar (eski kayıt)
     legacy = {r['masa_id']: r for r in conn.execute("""SELECT masa_id, toplam_tutar, tarih FROM orders
         WHERE durum IN ('hazirlaniyor','bekliyor')""")}
+    ready = {r['order_id'] for r in conn.execute("SELECT DISTINCT order_id FROM pos_tickets WHERE status='ready'")}
     conn.close()
     result = []
     for r in rows:
@@ -293,6 +294,7 @@ def get_tables_by_region(region_id):
             t['toplam_tutar'] = order['total'] / 100
             t['siparis_tarihi'] = _local_minute(order['openedAt'])
             t['order_id'] = order['id']
+            t['ready'] = order['id'] in ready   # mutfakta hazır bekleyen ürün var (🔔)
         elif t['id'] in legacy:
             t['toplam_tutar'] = legacy[t['id']]['toplam_tutar']
             t['siparis_tarihi'] = legacy[t['id']]['tarih']
@@ -1379,3 +1381,52 @@ def open_cash_session():
     row = conn.execute("SELECT data FROM cash_sessions WHERE status='open' ORDER BY opened_at DESC LIMIT 1").fetchone()
     conn.close()
     return json.loads(row['data']) if row else None
+
+
+# Mutfak / bar ekranı (5. ekran): fiş durumu buluttan iner.
+TICKET_CLOUD_FIELDS = ('status', 'doneLineIds', 'preparingAt', 'readyAt', 'tableName', 'lines', 'cancelled')
+
+
+def upsert_cloud_tickets(docs):
+    """
+    Mutfak ekranının değiştirdiği fişleri yerel fiş panosuna yansıtır. Kasada "teslim
+    edildi" (served) olan fiş geri açılmaz. Hazır olan fiş bir kez bildirilmek üzere
+    işaretlenir (notifyReady).
+    """
+    conn = get_connection()
+    for ticket_id, data in docs:
+        row = conn.execute("SELECT data FROM pos_tickets WHERE id=?", (ticket_id,)).fetchone()
+        if not row:
+            continue
+        local = json.loads(row['data'])
+        if local.get('status') == 'served':
+            continue
+        merged = {**local, **{k: data[k] for k in TICKET_CLOUD_FIELDS if k in data}}
+        if merged['status'] == 'ready' and local.get('status') != 'ready' and not merged.get('cancelled'):
+            merged['notifyReady'] = True
+        conn.execute("UPDATE pos_tickets SET data=?, status=? WHERE id=?",
+                     (json.dumps(merged, ensure_ascii=False), merged['status'], ticket_id))
+    conn.commit()
+    conn.close()
+
+
+def take_ready_notifications():
+    """Bildirilmemiş "hazır" fişler; döndürülenler bildirildi olarak işaretlenir."""
+    conn = get_connection()
+    rows = conn.execute("SELECT id, data FROM pos_tickets WHERE status='ready'").fetchall()
+    out = []
+    for r in rows:
+        data = json.loads(r['data'])
+        if data.pop('notifyReady', False):
+            out.append(data)
+            conn.execute("UPDATE pos_tickets SET data=? WHERE id=?", (json.dumps(data, ensure_ascii=False), r['id']))
+    conn.commit()
+    conn.close()
+    return out
+
+
+def orders_with_ready_tickets():
+    conn = get_connection()
+    rows = conn.execute("SELECT DISTINCT order_id FROM pos_tickets WHERE status='ready'").fetchall()
+    conn.close()
+    return {r['order_id'] for r in rows}

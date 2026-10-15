@@ -36,8 +36,12 @@ firebase login
 cd firebase
 firebase use --add            # projenizi seçin
 cd functions && npm install && cd ..
-firebase deploy --only firestore,functions,storage
+firebase deploy --only firestore,functions,storage,hosting
 ```
+
+`hosting` mutfak/bar ekranını (`https://<proje>.web.app/mutfak`) yayınlar. Sayfanın kullandığı Firebase
+web SDK dosyaları `hosting/mutfak/vendor/` klasöründedir (tablet her şeyi kafenin kendi adresinden
+yükler); SDK sürümünü yükseltmek için `cd firebase/tests && npm install && cd .. && node scripts/vendor-firebase-sdk.js`.
 
 ## 3. İlk yönetici
 
@@ -123,12 +127,48 @@ Yönetim paneli → Tanımlamalar → **Masa / Bölgeler**:
   hesaplar. Terminalin fiyatı menüden farklıysa `price_mismatch` kaydı düşer.
 - NexPOS'un eski sürümünde açık kalmış adisyonlar ilk açılışta bir kez yeni yapıya taşınır.
 
+## Modüller (Ayarlar → Modüller)
+
+Yalnızca Yönetici açıp kapatır; ayar bulutta tutulur ve bütün cihazlara iner. Modül kapatmak veri silmez.
+
+- **Mutfak / Bar Ekranı (KDS):** sarı/kırmızı gecikme eşikleri (varsayılan 10/20 dk) ve ses.
+- **Zorunlu kasa açılışı:** kasa açılmadan nakit alınmaz; kapanışta bu tutarı aşan fark gerekçe ister.
+- **Bilgi fişi yazdırma:** "Hesap İste"de adisyon basılır; istenirse mutfak/bar fişi de. Yazıcı her
+  bilgisayarda **Ayarlar → Yazıcı Ayarları**'ndan seçilir; yazıcı yoksa PDF `fisler/` klasörüne kaydedilir.
+  Bu fişlerin mali değeri yoktur (ÖKC / e-Arşiv bu kapsamda değildir).
+- **Ödeme yöntemleri ve bahşiş.**
+
+## Kasa
+
+- **Kasa** sayfası (yönetim panelinde İşlemler → Kasa; kasiyerde üstteki **Kasa** sekmesi): açılış
+  nakdi, para girişi/çıkışı (nakit gider Masraflar'a da yazılır), **X raporu** (ara) ve **kapanış (Z)**.
+  Kapanışta sayılan nakit girilir; beklenen nakitle farkı rapora ve buluta yazılır. Sunucu beklenen nakdi
+  kendi kayıtlarından yeniden hesaplar.
+- Ödeme penceresinde **Tamamı / Eşit böl / Ürün seç**. Ürün seçerken birden fazla adetli satırın bir
+  kısmı seçilebilir (3 latteden 1'i); ödenen satır ikinci kez ödenemez.
+- **İade:** Kasa → Bugünün Adisyonları → İade Et (`refund` yetkisi ve gerekçe).
+- Kasa işlemleri `cash` yetkisi ister; yetkisi olmayana yetkili onayı penceresi açılır. Hepsi internetsiz çalışır.
+
+## Mutfak / bar ekranı (tablet)
+
+1. **Ayarlar → Modüller**'de "Mutfak / Bar Ekranı"nı açın.
+2. **Terminaller → Mutfak Ekranı Ekle**: 6 haneli, 10 dakika geçerli bir kod çıkar.
+3. Tablette `https://<proje>.web.app/mutfak` adresini açın (ana ekrana ekleyebilirsiniz), kodu girin,
+   istasyonu seçin (Mutfak / Bar / İkisi). Eşleme tablette kalır; yeniden açınca kod sorulmaz.
+4. Fişler canlı düşer: **Başla → Hazır**, satıra dokununca işaretlenir, iptal edilen ürün "İPTAL" görünür,
+   **Geri al** son kapatılanı döndürür. Hazır olan fiş kasada 🔔 bildirimi olarak çıkar; garson Fiş
+   Panosu'nda **Teslim edildi** deyince kalkar.
+5. Tablet kaybolursa **Terminaller**'den iptal edin; ekran hemen kilitlenir. Tablet yalnızca fişleri
+   okuyabilir; personel, PIN ve satış verisine erişemez.
+6. İnternet kesilirse tablet yeni fiş alamaz; kasa uyarı verir ve fişler **Fiş Panosu**'nda izlenir.
+
 ## Geliştirme: emülatörle çalışma
 
 Canlı veriye dokunmadan denemek için:
 
 ```bash
-cd firebase && firebase emulators:start --project demo-nexpos --only auth,firestore,functions,storage
+cd firebase && firebase emulators:start --project demo-nexpos --only auth,firestore,functions,storage,hosting
+# mutfak ekranı: http://127.0.0.1:5005/mutfak
 # başka bir terminalde:
 FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 GCLOUD_PROJECT=demo-nexpos \
   node firebase/functions/scripts/createOwner.js sahip@kafe.test sahip-sifre-1 "Deniz Yılmaz" 482913
@@ -147,4 +187,7 @@ pip install -r requirements-dev.txt && python -m pytest tests
 # NexPOS ↔ Firebase uçtan uca (emülatör)
 cd firebase && firebase emulators:exec --project demo-nexpos --only auth,firestore,functions,storage \
   "cd .. && NEXPOS_EMULATOR=1 python -m pytest tests"
+# Mutfak ekranı tarayıcıda (Playwright + Chromium)
+cd firebase && firebase emulators:exec --project demo-nexpos --only auth,firestore,functions,hosting \
+  "node tests/kds.browser.js"
 ```

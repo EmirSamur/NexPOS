@@ -372,3 +372,61 @@ def test_kasa_internetsiz_oturum_bolme_iade_sonra_senkron(db, client):
     assert (o['status'], o['refunded'], [l.get('paidBy') is not None for l in o['items']]) == ('paid', 1000, [True, True])
     refund = [d for d in client.list_docs('refunds', api.session) if d[1]['orderId'] == order['id']]
     assert refund and refund[0][1]['cashSessionId'] == session['id']
+
+
+def test_mutfak_ekrani_hazir_kasaya_iner_teslim_buluta_gider(db, client):
+    import requests
+    import pos
+    from cloud.admin_api import AdminApi
+    from cloud.pairing import pair_terminal
+    from cloud.sync import SyncEngine
+
+    requests.delete('http://127.0.0.1:8080/emulator/v1/projects/demo-nexpos/databases/(default)/documents',
+                    timeout=10).raise_for_status()
+    email = f'kds-{uuid.uuid4().hex[:6]}@kafe.test'
+    create_owner(email)
+    creds, _ = pair_terminal(client, email, 'sahip-sifre-1', 'Kasa 1')
+    api = AdminApi(client, client.sign_in_with_password(email, 'sahip-sifre-1'))
+    engine = SyncEngine(client, creds)
+    cats, prods = db.legacy_import_payload()
+    res = api.import_menu(cats, prods)
+    db.apply_import_mapping(res['categories'], res['products'])
+    res = api.import_floor(db.legacy_floor_payload())
+    db.apply_floor_mapping(res['areas'], res['tables'])
+    waiter = api.create_staff('Cem Akar', 'waiter', '730591')['staffId']
+    api.save_modules({'kds': {'enabled': True}})
+    # Mutfak tableti: kodla eşlenir (giriş yapmadan), kendi cihaz hesabını alır
+    code = api.create_kds_pairing_code('Mutfak')['code']
+    paired = client.call('pairKds', {'code': code, 'station': 'all'}, None)
+    tablet = client.sign_in_with_custom_token(paired['customToken'])
+    engine.run_once()
+    user = db.login_with_pin(waiter, '730591')
+
+    salon = db.floor_areas()[0]
+    m1 = next(t for t in db.floor_tables(salon['id']) if t['name'] == 'Masa 1')
+    order = pos.open_order(user, {'id': m1['id'], 'name': m1['name']})
+    tost = next(p for p in db.menu_products() if p['name'] == 'Tost')
+    pos.add_line(user, order['id'], pos.product_line(tost))
+    order, _ = pos.send_pending(user, order['id'])
+    engine.run_once()
+    ticket_id = order['items'][0]['ticketId']
+
+    # Tablet: Başla → Hazır
+    client.call('updateKitchenTicket', {'ticketId': ticket_id, 'status': 'preparing'}, tablet)
+    client.call('updateKitchenTicket', {'ticketId': ticket_id, 'status': 'ready'}, tablet)
+    status = engine.run_once()
+    assert 'kitchenTickets' in status.changed
+    ready = db.take_ready_notifications()
+    assert [t['id'] for t in ready] == [ticket_id]
+    legacy = next(t for t in db.get_tables_by_region(db.get_all_regions()[0]['id']) if t['cloud_id'] == m1['id'])
+    assert legacy['ready'] is True
+
+    # Garson teslim etti → bulutta served; tablet artık değiştiremez
+    pos.set_ticket_status(user, ticket_id, 'served')
+    engine.run_once()
+    assert client.get_doc(f'kitchenTickets/{ticket_id}', api.session)[1]['status'] == 'served'
+    with pytest.raises(Exception, match='teslim'):
+        client.call('updateKitchenTicket', {'ticketId': ticket_id, 'status': 'ready'}, tablet)
+    # Tablet personel ve PIN verisini okuyamaz
+    with pytest.raises(Exception):
+        client.list_docs('staffPins', tablet)

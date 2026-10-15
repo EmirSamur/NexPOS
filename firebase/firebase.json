@@ -35,9 +35,36 @@
     "storage": {
       "port": 9199,
       "host": "127.0.0.1"
+    },
+    "hosting": {
+      "port": 5005,
+      "host": "127.0.0.1"
     }
   },
   "storage": {
     "rules": "storage.rules"
+  },
+  "hosting": {
+    "public": "hosting",
+    "ignore": [
+      "**/.*"
+    ],
+    "rewrites": [
+      {
+        "source": "/mutfak",
+        "destination": "/mutfak/index.html"
+      }
+    ],
+    "headers": [
+      {
+        "source": "/mutfak/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      }
+    ]
   }
 }
