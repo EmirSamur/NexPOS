@@ -105,6 +105,15 @@ service cloud.firestore {
       allow read: if isManagerPlus() || isActiveTerminal();
       allow write: if false;
     }
+    // İadeler ve kasa oturumları (6. ekran): ödemelerle aynı okuma kuralı.
+    match /refunds/{id} {
+      allow read: if isManagerPlus() || isActiveTerminal();
+      allow write: if false;
+    }
+    match /cashSessions/{id} {
+      allow read: if isManagerPlus() || isActiveTerminal();
+      allow write: if false;
+    }
 
     match /auditLogs/{logId} {
       allow read: if isManagerPlus();

@@ -434,7 +434,82 @@ function validateGeneralSettings(input) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Modüller (5. ve 6. ekran): settings/modules. Kapalı modül hiçbir ekranda görünmez;
+// kapatmak veriyi silmez.
+// ---------------------------------------------------------------------------
+
+const DEFAULT_MODULES = {
+  kds: { enabled: false, warnMinutes: 10, lateMinutes: 20, sound: true },
+  cashSession: { required: false, diffReasonThreshold: 2000 },
+  printing: { enabled: false, kitchenTickets: false },
+  paymentMethods: { cash: true, card: true, meal: true },
+  tips: true,
+};
+
+function bool(v, fallback) {
+  if (v === undefined || v === null) return fallback;
+  if (typeof v !== 'boolean') throw new MenuError('Açık/kapalı değeri geçersiz.');
+  return v;
+}
+
+function intIn(v, fallback, min, max, message) {
+  const x = v ?? fallback;
+  if (!Number.isInteger(x) || x < min || x > max) throw new MenuError(message);
+  return x;
+}
+
+function validateModules(input) {
+  const d = input || {};
+  const D = DEFAULT_MODULES;
+  const kds = d.kds || {};
+  const warnMinutes = intIn(kds.warnMinutes, D.kds.warnMinutes, 1, 120, 'Sarı eşik 1-120 dakika olmalıdır.');
+  const lateMinutes = intIn(kds.lateMinutes, D.kds.lateMinutes, 2, 240, 'Kırmızı eşik 2-240 dakika olmalıdır.');
+  if (lateMinutes <= warnMinutes) throw new MenuError('Kırmızı eşik sarı eşikten büyük olmalıdır.');
+  const cs = d.cashSession || {};
+  const pr = d.printing || {};
+  const pm = d.paymentMethods || {};
+  const methods = {
+    cash: bool(pm.cash, true),
+    card: bool(pm.card, true),
+    meal: bool(pm.meal, true),
+  };
+  if (!Object.values(methods).some(Boolean)) throw new MenuError('En az bir ödeme yöntemi açık olmalıdır.');
+  return {
+    kds: { enabled: bool(kds.enabled, D.kds.enabled), warnMinutes, lateMinutes, sound: bool(kds.sound, D.kds.sound) },
+    cashSession: {
+      required: bool(cs.required, D.cashSession.required),
+      diffReasonThreshold: intIn(cs.diffReasonThreshold, D.cashSession.diffReasonThreshold, 0, 10_000_000,
+        'Fark eşiği geçersiz.'),
+    },
+    printing: { enabled: bool(pr.enabled, D.printing.enabled), kitchenTickets: bool(pr.kitchenTickets, false) },
+    paymentMethods: methods,
+    tips: bool(d.tips, D.tips),
+  };
+}
+
+function normalizeModules(stored) {
+  try {
+    return validateModules(stored);
+  } catch (e) {
+    return JSON.parse(JSON.stringify(DEFAULT_MODULES));
+  }
+}
+
+// Kasa oturumunda beklenen nakit: açılış + nakit tahsilat − nakit iade + giriş − çıkış.
+// Para üstü tahsilata dahil değildir (alınan − para üstü = tutar).
+function expectedCash(session, payments, refunds) {
+  const cashIn = payments.filter((p) => p.method === 'cash').reduce((s, p) => s + p.amount, 0);
+  const cashOut = refunds.filter((r) => r.method === 'cash').reduce((s, r) => s + r.amount, 0);
+  const moves = (session.movements || []).reduce((s, m) => s + (m.type === 'in' ? m.amount : -m.amount), 0);
+  return session.openingCash + cashIn - cashOut + moves;
+}
+
 module.exports = {
+  DEFAULT_MODULES,
+  validateModules,
+  normalizeModules,
+  expectedCash,
   CANVAS,
   validateArea,
   validateFloorPlan,

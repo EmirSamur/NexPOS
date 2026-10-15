@@ -1298,5 +1298,1297 @@
   "expectTableStatus": {
    "o1": "empty"
   }
+ },
+ {
+  "name": "KDV oranı varsayılan %10, geçerli oranlar kabul edilir",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Ürün l1",
+       "unitPrice": 100,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      },
+      {
+       "lineId": "l2",
+       "productId": "p-l2",
+       "name": "Ürün l2",
+       "unitPrice": 100,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "taxRate": 20
+      },
+      {
+       "lineId": "l3",
+       "productId": "p-l3",
+       "name": "Ürün l3",
+       "unitPrice": 100,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "taxRate": 1
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectLines": {
+   "o1": [
+    {
+     "taxRate": 10
+    },
+    {
+     "taxRate": 20
+    },
+    {
+     "taxRate": 1
+    }
+   ]
+  }
+ },
+ {
+  "name": "geçersiz KDV oranı reddedilir",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Ürün l1",
+       "unitPrice": 100,
+       "qty": 1,
+       "station": "bar",
+       "options": [],
+       "taxRate": 18
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "KDV oranı geçersiz"
+ },
+ {
+  "name": "satır ayırma: 3 latteden 1'i ayrı satıra",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Ürün l1",
+       "unitPrice": 9500,
+       "qty": 3,
+       "station": "bar",
+       "options": []
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1"
+     ],
+     "ticketIds": {
+      "bar": "k1"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "splitLine",
+    "payload": {
+     "orderId": "o1",
+     "lineId": "l1",
+     "qty": 1,
+     "newLineId": "l1b"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "subtotal": 28500
+   }
+  },
+  "expectLines": {
+   "o1": [
+    {
+     "lineId": "l1",
+     "qty": 2
+    },
+    {
+     "lineId": "l1b",
+     "qty": 1,
+     "splitFrom": "l1",
+     "state": "sent",
+     "ticketId": "k1"
+    }
+   ]
+  }
+ },
+ {
+  "name": "satır ayırma: adet satırdaki adetten az olmalı",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Ürün l1",
+       "unitPrice": 9500,
+       "qty": 2,
+       "station": "bar",
+       "options": []
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1"
+     ],
+     "ticketIds": {
+      "bar": "k1"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "splitLine",
+    "payload": {
+     "orderId": "o1",
+     "lineId": "l1",
+     "qty": 2,
+     "newLineId": "l1b"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "Ayrılacak adet"
+ },
+ {
+  "name": "ürün seçerek bölme: iskonto payı orantılı, kuruş farkı son ödemede kapanır",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Ürün l1",
+       "unitPrice": 10000,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      },
+      {
+       "lineId": "l2",
+       "productId": "p-l2",
+       "name": "Ürün l2",
+       "unitPrice": 7000,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      },
+      {
+       "lineId": "l3",
+       "productId": "p-l3",
+       "name": "Ürün l3",
+       "unitPrice": 3001,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2",
+      "l3"
+     ],
+     "ticketIds": {
+      "bar": "k1"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setDiscount",
+    "payload": {
+     "orderId": "o1",
+     "discount": {
+      "type": "percent",
+      "value": 10
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "p1",
+     "method": "card",
+     "amount": 9001,
+     "lineIds": [
+      "l1"
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "p2",
+     "method": "cash",
+     "amount": 6301,
+     "lineIds": [
+      "l2"
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "p3",
+     "method": "card",
+     "amount": 2699,
+     "lineIds": [
+      "l3"
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "subtotal": 20001,
+    "discountAmount": 2000,
+    "total": 18001,
+    "paid": 18001,
+    "remaining": 0,
+    "status": "paid"
+   }
+  },
+  "expectLines": {
+   "o1": [
+    {
+     "paidBy": "p1"
+    },
+    {
+     "paidBy": "p2"
+    },
+    {
+     "paidBy": "p3"
+    }
+   ]
+  },
+  "expectPayments": {
+   "o1": [
+    {
+     "lineIds": [
+      "l1"
+     ],
+     "amount": 9001
+    },
+    {
+     "lineIds": [
+      "l2"
+     ],
+     "cashSessionId": null
+    },
+    {
+     "lineIds": [
+      "l3"
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "ürün seçerek bölme: tutar payla uyuşmazsa reddedilir",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Ürün l1",
+       "unitPrice": 10000,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      },
+      {
+       "lineId": "l2",
+       "productId": "p-l2",
+       "name": "Ürün l2",
+       "unitPrice": 7000,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      },
+      {
+       "lineId": "l3",
+       "productId": "p-l3",
+       "name": "Ürün l3",
+       "unitPrice": 3001,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2",
+      "l3"
+     ],
+     "ticketIds": {
+      "bar": "k1"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "p1",
+     "method": "card",
+     "amount": 9999,
+     "lineIds": [
+      "l1"
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "payıyla uyuşmuyor"
+ },
+ {
+  "name": "ürün seçerek bölme: ödenmiş satır tekrar ödenemez",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Ürün l1",
+       "unitPrice": 10000,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      },
+      {
+       "lineId": "l2",
+       "productId": "p-l2",
+       "name": "Ürün l2",
+       "unitPrice": 7000,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      },
+      {
+       "lineId": "l3",
+       "productId": "p-l3",
+       "name": "Ürün l3",
+       "unitPrice": 3001,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2",
+      "l3"
+     ],
+     "ticketIds": {
+      "bar": "k1"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "p1",
+     "method": "card",
+     "amount": 10000,
+     "lineIds": [
+      "l1"
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "p2",
+     "method": "card",
+     "amount": 10000,
+     "lineIds": [
+      "l1"
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "ödenmiş ya da geçersiz"
+ },
+ {
+  "name": "ürün seçerek bölme: tutar olarak ödeme sonrası yapılamaz",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Ürün l1",
+       "unitPrice": 10000,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      },
+      {
+       "lineId": "l2",
+       "productId": "p-l2",
+       "name": "Ürün l2",
+       "unitPrice": 7000,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      },
+      {
+       "lineId": "l3",
+       "productId": "p-l3",
+       "name": "Ürün l3",
+       "unitPrice": 3001,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2",
+      "l3"
+     ],
+     "ticketIds": {
+      "bar": "k1"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "p1",
+     "method": "card",
+     "amount": 5000
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "p2",
+     "method": "card",
+     "amount": 7000,
+     "lineIds": [
+      "l2"
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "Tutar olarak ödeme alınmış"
+ },
+ {
+  "name": "ödenmiş satır iptal edilemez",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Ürün l1",
+       "unitPrice": 10000,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      },
+      {
+       "lineId": "l2",
+       "productId": "p-l2",
+       "name": "Ürün l2",
+       "unitPrice": 7000,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      },
+      {
+       "lineId": "l3",
+       "productId": "p-l3",
+       "name": "Ürün l3",
+       "unitPrice": 3001,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2",
+      "l3"
+     ],
+     "ticketIds": {
+      "bar": "k1"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "p1",
+     "method": "card",
+     "amount": 10000,
+     "lineIds": [
+      "l1"
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "voidItem",
+    "payload": {
+     "orderId": "o1",
+     "lineId": "l1",
+     "reason": "x"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "Ödenmiş satır"
+ },
+ {
+  "name": "ürün seçerek ödeme sonrası iskonto değiştirilemez",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Ürün l1",
+       "unitPrice": 10000,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      },
+      {
+       "lineId": "l2",
+       "productId": "p-l2",
+       "name": "Ürün l2",
+       "unitPrice": 7000,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      },
+      {
+       "lineId": "l3",
+       "productId": "p-l3",
+       "name": "Ürün l3",
+       "unitPrice": 3001,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2",
+      "l3"
+     ],
+     "ticketIds": {
+      "bar": "k1"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "p1",
+     "method": "card",
+     "amount": 10000,
+     "lineIds": [
+      "l1"
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setDiscount",
+    "payload": {
+     "orderId": "o1",
+     "discount": {
+      "type": "percent",
+      "value": 10
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "iskonto değiştirilemez"
+ },
+ {
+  "name": "ödeme kasa oturumunu taşır",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Ürün l1",
+       "unitPrice": 5000,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1"
+     ],
+     "ticketIds": {
+      "bar": "k1"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "p1",
+     "method": "cash",
+     "amount": 5000,
+     "received": 10000,
+     "cashSessionId": "cs1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectPayments": {
+   "o1": [
+    {
+     "cashSessionId": "cs1",
+     "change": 5000,
+     "lineIds": null
+    }
+   ]
+  }
+ },
+ {
+  "name": "iade: kısmi iade, adisyon ödenmiş kalır",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Ürün l1",
+       "unitPrice": 5000,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1"
+     ],
+     "ticketIds": {
+      "bar": "k1"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "p1",
+     "method": "card",
+     "amount": 5000
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "refundPayment",
+    "payload": {
+     "orderId": "o1",
+     "refundId": "r1",
+     "method": "card",
+     "amount": 2000,
+     "reason": "Soğuk geldi",
+     "approvedBy": "m1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "status": "paid",
+    "paid": 5000,
+    "refunded": 2000,
+    "remaining": 0
+   }
+  }
+ },
+ {
+  "name": "iade: ödenenden fazla iade edilemez",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Ürün l1",
+       "unitPrice": 5000,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1"
+     ],
+     "ticketIds": {
+      "bar": "k1"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "p1",
+     "method": "card",
+     "amount": 5000
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "refundPayment",
+    "payload": {
+     "orderId": "o1",
+     "refundId": "r1",
+     "method": "cash",
+     "amount": 3000,
+     "reason": "x"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "refundPayment",
+    "payload": {
+     "orderId": "o1",
+     "refundId": "r2",
+     "method": "cash",
+     "amount": 2001,
+     "reason": "x"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "ödenen tutarı aşamaz"
+ },
+ {
+  "name": "iade: açık adisyonda yapılamaz",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Ürün l1",
+       "unitPrice": 5000,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1"
+     ],
+     "ticketIds": {
+      "bar": "k1"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "p1",
+     "method": "card",
+     "amount": 2000
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "refundPayment",
+    "payload": {
+     "orderId": "o1",
+     "refundId": "r1",
+     "method": "cash",
+     "amount": 1000,
+     "reason": "x"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "Yalnızca ödenmiş"
+ },
+ {
+  "name": "iade: gerekçe zorunlu",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "dine_in",
+     "tableId": "t1",
+     "tableName": "Masa 1"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p-l1",
+       "name": "Ürün l1",
+       "unitPrice": 5000,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1"
+     ],
+     "ticketIds": {
+      "bar": "k1"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "p1",
+     "method": "card",
+     "amount": 5000
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "refundPayment",
+    "payload": {
+     "orderId": "o1",
+     "refundId": "r1",
+     "method": "cash",
+     "amount": 1000
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "Gerekçe"
  }
 ]

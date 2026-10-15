@@ -9,6 +9,7 @@
 class OrderError extends Error {}
 
 const STATIONS = ['bar', 'kitchen'];
+const TAX_RATES = [0, 1, 10, 20];
 const PAYMENT_METHODS = ['cash', 'card', 'meal'];
 const ORDER_TYPES = ['dine_in', 'takeaway'];
 
@@ -46,7 +47,17 @@ function computeTotals(order) {
   if (d && d.type === 'amount') discountAmount = Math.min(d.value, subtotal);
   const total = subtotal - discountAmount;
   const paid = order.payments.reduce((s, p) => s + p.amount, 0);
-  return { subtotal, discountAmount, total, paid, remaining: Math.max(total - paid, 0) };
+  const refunded = (order.refunds || []).reduce((s, r) => s + r.amount, 0);
+  return { subtotal, discountAmount, total, paid, refunded, remaining: Math.max(total - paid, 0) };
+}
+
+// Seçilen satırların ödenecek payı: satır toplamı − iskontonun orantılı payı (aşağı yuvarlanır;
+// kuruş farkı son ödemede kapanır).
+function linesShare(order, lineIds) {
+  const t = computeTotals(order);
+  const gross = order.items.filter((l) => lineIds.includes(l.lineId)).reduce((s, l) => s + lineTotal(l), 0);
+  if (!t.discountAmount || !t.subtotal) return gross;
+  return gross - Math.floor((t.discountAmount * gross) / t.subtotal);
 }
 
 function withTotals(order) {
@@ -72,6 +83,8 @@ function validateItem(item, existingIds) {
   if (!isInt(item.unitPrice, 0, 10_000_000)) fail('Birim fiyat kuruş cinsinden tam sayı olmalıdır.');
   if (!isInt(item.qty, 1, 99)) fail('Adet 1-99 arası olmalıdır.');
   if (!STATIONS.includes(item.station)) fail('İstasyon bar ya da mutfak olmalıdır.');
+  const taxRate = item.taxRate ?? 10;
+  if (!TAX_RATES.includes(taxRate)) fail('KDV oranı geçersiz.');
   const options = item.options ?? [];
   if (!Array.isArray(options) || options.length > 20) fail('Seçenekler geçersiz.');
   return {
@@ -87,6 +100,7 @@ function validateItem(item, existingIds) {
     qty: item.qty,
     note: str(item.note, 'Not', 120, { optional: true }),
     station: item.station,
+    taxRate,
     stampEligible: item.stampEligible === true,
     state: 'pending',
     status: 'active',
@@ -122,6 +136,7 @@ function applyOrderOp(order, op, payload, ctx) {
   }
 
   if (!order) fail('Adisyon bulunamadı.');
+  if (op === 'refundPayment') return refund(order, p, ctx);
   if (order.status !== 'open') fail('Adisyon kapanmış.');
   const o = clone(order);
 
@@ -167,6 +182,7 @@ function applyOrderOp(order, op, payload, ctx) {
     case 'compItem': {
       const line = findLine(o, p.lineId);
       if (line.status !== 'active') fail('Satır zaten iptal ya da ikram edilmiş.');
+      if (line.paidBy) fail('Ödenmiş satır iptal edilemez; iade yapılmalıdır.');
       if (op === 'voidItem' && line.state !== 'sent') fail('Gönderilmemiş satır iptal edilmez, silinir.');
       line.status = op === 'voidItem' ? 'void' : 'comp';
       line.reason = str(p.reason, 'Gerekçe', 120);
@@ -175,6 +191,7 @@ function applyOrderOp(order, op, payload, ctx) {
       break;
     }
     case 'setDiscount': {
+      if (o.payments.some((x) => x.lineIds)) fail('Ürün seçerek ödeme alınmış adisyonda iskonto değiştirilemez.');
       if (p.discount === null) {
         o.discount = null;
         break;
@@ -199,6 +216,16 @@ function applyOrderOp(order, op, payload, ctx) {
       o.tableName = str(p.toTableName, 'Masa adı', 40, { optional: true });
       break;
     }
+    case 'splitLine': {
+      const line = findLine(o, p.lineId);
+      if (line.status !== 'active' || line.paidBy) fail('Bu satır bölünemez.');
+      if (!isInt(p.qty, 1, line.qty - 1)) fail('Ayrılacak adet satırdaki adetten az olmalıdır.');
+      const newId = str(p.newLineId, 'Satır kimliği', 64);
+      if (o.items.some((l) => l.lineId === newId)) fail('Bu satır zaten eklenmiş.');
+      line.qty -= p.qty;
+      o.items.splice(o.items.indexOf(line) + 1, 0, { ...clone(line), lineId: newId, qty: p.qty, splitFrom: line.lineId });
+      break;
+    }
     case 'takePayment': {
       const t = computeTotals(o);
       if (o.items.some((l) => l.status === 'active' && l.state === 'pending')) {
@@ -209,6 +236,20 @@ function applyOrderOp(order, op, payload, ctx) {
       if (!PAYMENT_METHODS.includes(p.method)) fail('Ödeme yöntemi geçersiz.');
       if (!isInt(p.amount, t.total === 0 ? 0 : 1, t.remaining)) fail('Ödeme tutarı kalan tutardan fazla olamaz.');
       if (t.total > 0 && p.amount === 0) fail('Ödeme tutarı geçersiz.');
+      let lineIds = null;
+      if (p.lineIds !== undefined && p.lineIds !== null) {
+        // Ürün seçerek bölme
+        if (!Array.isArray(p.lineIds) || p.lineIds.length < 1) fail('Ödenecek satır seçilmedi.');
+        if (o.payments.some((x) => !x.lineIds)) fail('Tutar olarak ödeme alınmış adisyonda ürün seçerek bölünemez.');
+        const unpaid = o.items.filter((l) => l.status === 'active' && !l.paidBy).map((l) => l.lineId);
+        for (const id of p.lineIds) {
+          if (!unpaid.includes(id)) fail('Seçilen satır ödenmiş ya da geçersiz.');
+        }
+        const all = unpaid.every((id) => p.lineIds.includes(id));
+        const expected = all ? t.remaining : linesShare(o, p.lineIds);
+        if (p.amount !== expected) fail('Tutar seçilen ürünlerin payıyla uyuşmuyor.');
+        lineIds = [...p.lineIds];
+      }
       const tip = p.tip ?? 0;
       if (!isInt(tip, 0, 10_000_000)) fail('Bahşiş geçersiz.');
       let received = null;
@@ -217,7 +258,11 @@ function applyOrderOp(order, op, payload, ctx) {
         if (!isInt(received, p.amount, 10_000_000)) fail('Alınan nakit tutardan az olamaz.');
       }
       o.payments.push({ paymentId, method: p.method, amount: p.amount, tip, received,
-        change: received === null ? 0 : received - p.amount, by: ctx.staffId, at: ctx.at });
+        change: received === null ? 0 : received - p.amount, by: ctx.staffId, at: ctx.at,
+        lineIds, cashSessionId: typeof p.cashSessionId === 'string' ? p.cashSessionId : null });
+      if (lineIds) {
+        for (const l of o.items) if (lineIds.includes(l.lineId)) l.paidBy = paymentId;
+      }
       if (computeTotals(o).remaining === 0) {
         o.status = 'paid';
         o.closedAt = ctx.at;
@@ -239,12 +284,29 @@ function applyOrderOp(order, op, payload, ctx) {
   return withTotals(o);
 }
 
+// Kapanmış (ödenmiş) adisyonda iade. Adisyon "paid" kalır; iadeler ayrı listede tutulur.
+function refund(order, p, ctx) {
+  if (order.status !== 'paid') fail('Yalnızca ödenmiş adisyon iade edilebilir.');
+  const o = clone(order);
+  o.refunds = o.refunds || [];
+  const t = computeTotals(o);
+  const refundId = str(p.refundId, 'İade', 64);
+  if (o.refunds.some((r) => r.refundId === refundId)) fail('Bu iade zaten yapılmış.');
+  if (!PAYMENT_METHODS.includes(p.method)) fail('İade yöntemi geçersiz.');
+  if (!isInt(p.amount, 1, t.paid - t.refunded)) fail('İade tutarı ödenen tutarı aşamaz.');
+  o.refunds.push({ refundId, method: p.method, amount: p.amount, reason: str(p.reason, 'Gerekçe', 120),
+    by: ctx.staffId, approvedBy: p.approvedBy || ctx.staffId, at: ctx.at,
+    cashSessionId: typeof p.cashSessionId === 'string' ? p.cashSessionId : null });
+  return withTotals(o);
+}
+
 // İki masanın adisyonunu birleştirir: kaynaktaki satırlar hedefe taşınır, kaynak kapanır.
 function mergeOrders(target, source, ctx) {
   if (!target || !source) fail('Adisyon bulunamadı.');
   if (target.status !== 'open' || source.status !== 'open') fail('Kapanmış adisyon birleştirilemez.');
   if (target.id === source.id) fail('Adisyon kendisiyle birleştirilemez.');
   if (source.payments.length) fail('Ödeme alınmış adisyon birleştirilemez.');
+  if (target.payments.some((x) => x.lineIds)) fail('Ürün seçerek ödeme alınmış adisyona birleştirme yapılamaz.');
   const t = clone(target);
   const s = clone(source);
   const ids = new Set(t.items.map((l) => l.lineId));
@@ -266,6 +328,8 @@ function stampCount(order) {
 
 module.exports = {
   OrderError,
+  TAX_RATES,
+  linesShare,
   PAYMENT_METHODS,
   applyOrderOp,
   mergeOrders,

@@ -196,3 +196,21 @@ test('validateGeneralSettings', () => {
   }
   assert.throws(() => lib.validateGeneralSettings({ cafeName: 'V', qrBaseUrl: 'https://a.b', idleLockMinutes: 0 }), lib.MenuError);
 });
+
+test('modüller: varsayılanlar, eşik sırası ve en az bir ödeme yöntemi', () => {
+  const { validateModules, normalizeModules, DEFAULT_MODULES, MenuError } = require('../src/lib');
+  assert.deepEqual(validateModules({}), DEFAULT_MODULES);
+  assert.equal(validateModules({ kds: { enabled: true } }).kds.enabled, true);
+  assert.throws(() => validateModules({ kds: { warnMinutes: 15, lateMinutes: 15 } }), MenuError);
+  assert.throws(() => validateModules({ paymentMethods: { cash: false, card: false, meal: false } }), MenuError);
+  assert.throws(() => validateModules({ tips: 'evet' }), MenuError);
+  assert.deepEqual(normalizeModules({ kds: { warnMinutes: 'x' } }), DEFAULT_MODULES);
+});
+
+test('beklenen nakit: açılış + nakit tahsilat − nakit iade ± hareketler', () => {
+  const { expectedCash } = require('../src/lib');
+  const session = { openingCash: 50000, movements: [{ type: 'in', amount: 2000 }, { type: 'out', amount: 4000 }] };
+  const pays = [{ method: 'cash', amount: 10000 }, { method: 'card', amount: 25000 }];
+  const refunds = [{ method: 'cash', amount: 3000 }, { method: 'card', amount: 500 }];
+  assert.equal(expectedCash(session, pays, refunds), 55000);
+});

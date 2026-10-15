@@ -10,6 +10,7 @@ Para her zaman kuruş cinsinden tam sayıdır.
 import copy
 
 STATIONS = ('bar', 'kitchen')
+TAX_RATES = (0, 1, 10, 20)
 PAYMENT_METHODS = ('cash', 'card', 'meal')
 ORDER_TYPES = ('dine_in', 'takeaway')
 MAX_MONEY = 10_000_000
@@ -49,8 +50,19 @@ def compute_totals(order):
         discount_amount = min(d['value'], subtotal)
     total = subtotal - discount_amount
     paid = sum(p['amount'] for p in order['payments'])
+    refunded = sum(r['amount'] for r in order.get('refunds') or [])
     return {'subtotal': subtotal, 'discountAmount': discount_amount, 'total': total, 'paid': paid,
-            'remaining': max(total - paid, 0)}
+            'refunded': refunded, 'remaining': max(total - paid, 0)}
+
+
+def lines_share(order, line_ids):
+    """Seçilen satırların ödenecek payı: satır toplamı − iskontonun orantılı payı (aşağı
+    yuvarlanır; kuruş farkı son ödemede kapanır)."""
+    t = compute_totals(order)
+    gross = sum(line_total(l) for l in order['items'] if l['lineId'] in line_ids)
+    if not t['discountAmount'] or not t['subtotal']:
+        return gross
+    return gross - (t['discountAmount'] * gross) // t['subtotal']
 
 
 def with_totals(order):
@@ -86,6 +98,10 @@ def _validate_item(item, existing_ids):
         raise OrderError("Adet 1-99 arası olmalıdır.")
     if item.get('station') not in STATIONS:
         raise OrderError("İstasyon bar ya da mutfak olmalıdır.")
+    tax_rate = item.get('taxRate')
+    tax_rate = 10 if tax_rate is None else tax_rate
+    if isinstance(tax_rate, bool) or tax_rate not in TAX_RATES:
+        raise OrderError("KDV oranı geçersiz.")
     options = item.get('options') or []
     if not isinstance(options, list) or len(options) > 20:
         raise OrderError("Seçenekler geçersiz.")
@@ -105,6 +121,7 @@ def _validate_item(item, existing_ids):
         'qty': item['qty'],
         'note': _str(item.get('note'), 'Not', 120, optional=True),
         'station': item['station'],
+        'taxRate': tax_rate,
         'stampEligible': item.get('stampEligible') is True,
         'state': 'pending',
         'status': 'active',
@@ -142,6 +159,8 @@ def apply_order_op(order, op, payload, staff_id, at):
 
     if not order:
         raise OrderError("Adisyon bulunamadı.")
+    if op == 'refundPayment':
+        return _refund(order, p, staff_id, at)
     if order['status'] != 'open':
         raise OrderError("Adisyon kapanmış.")
     o = copy.deepcopy(order)
@@ -186,6 +205,8 @@ def apply_order_op(order, op, payload, staff_id, at):
         line = _find_line(o, p.get('lineId'))
         if line['status'] != 'active':
             raise OrderError("Satır zaten iptal ya da ikram edilmiş.")
+        if line.get('paidBy'):
+            raise OrderError("Ödenmiş satır iptal edilemez; iade yapılmalıdır.")
         if op == 'voidItem' and line['state'] != 'sent':
             raise OrderError("Gönderilmemiş satır iptal edilmez, silinir.")
         line['status'] = 'void' if op == 'voidItem' else 'comp'
@@ -193,6 +214,8 @@ def apply_order_op(order, op, payload, staff_id, at):
         line['by'] = staff_id
         line['approvedBy'] = p.get('approvedBy') or staff_id
     elif op == 'setDiscount':
+        if any(x.get('lineIds') for x in o['payments']):
+            raise OrderError("Ürün seçerek ödeme alınmış adisyonda iskonto değiştirilemez.")
         if 'discount' in p and p['discount'] is None:
             o['discount'] = None
         else:
@@ -218,6 +241,18 @@ def apply_order_op(order, op, payload, staff_id, at):
             raise OrderError("Hedef masa geçersiz.")
         o['tableId'] = to
         o['tableName'] = _str(p.get('toTableName'), 'Masa adı', 40, optional=True)
+    elif op == 'splitLine':
+        line = _find_line(o, p.get('lineId'))
+        if line['status'] != 'active' or line.get('paidBy'):
+            raise OrderError("Bu satır bölünemez.")
+        if not _is_int(p.get('qty'), 1, line['qty'] - 1):
+            raise OrderError("Ayrılacak adet satırdaki adetten az olmalıdır.")
+        new_id = _str(p.get('newLineId'), 'Satır kimliği', 64)
+        if any(l['lineId'] == new_id for l in o['items']):
+            raise OrderError("Bu satır zaten eklenmiş.")
+        line['qty'] -= p['qty']
+        o['items'].insert(o['items'].index(line) + 1,
+                          {**copy.deepcopy(line), 'lineId': new_id, 'qty': p['qty'], 'splitFrom': line['lineId']})
     elif op == 'takePayment':
         t = compute_totals(o)
         if any(l['status'] == 'active' and l['state'] == 'pending' for l in o['items']):
@@ -232,6 +267,22 @@ def apply_order_op(order, op, payload, staff_id, at):
             raise OrderError("Ödeme tutarı kalan tutardan fazla olamaz.")
         if t['total'] > 0 and amount == 0:
             raise OrderError("Ödeme tutarı geçersiz.")
+        line_ids = None
+        if p.get('lineIds') is not None:
+            # Ürün seçerek bölme
+            if not isinstance(p['lineIds'], list) or not p['lineIds']:
+                raise OrderError("Ödenecek satır seçilmedi.")
+            if any(not x.get('lineIds') for x in o['payments']):
+                raise OrderError("Tutar olarak ödeme alınmış adisyonda ürün seçerek bölünemez.")
+            unpaid = [l['lineId'] for l in o['items'] if l['status'] == 'active' and not l.get('paidBy')]
+            for lid in p['lineIds']:
+                if lid not in unpaid:
+                    raise OrderError("Seçilen satır ödenmiş ya da geçersiz.")
+            covers_all = all(lid in p['lineIds'] for lid in unpaid)
+            expected = t['remaining'] if covers_all else lines_share(o, p['lineIds'])
+            if amount != expected:
+                raise OrderError("Tutar seçilen ürünlerin payıyla uyuşmuyor.")
+            line_ids = list(p['lineIds'])
         tip = p.get('tip', 0) if p.get('tip') is not None else 0
         if not _is_int(tip, 0, MAX_MONEY):
             raise OrderError("Bahşiş geçersiz.")
@@ -242,7 +293,12 @@ def apply_order_op(order, op, payload, staff_id, at):
                 raise OrderError("Alınan nakit tutardan az olamaz.")
         o['payments'].append({'paymentId': payment_id, 'method': p['method'], 'amount': amount, 'tip': tip,
                               'received': received, 'change': 0 if received is None else received - amount,
-                              'by': staff_id, 'at': at})
+                              'by': staff_id, 'at': at, 'lineIds': line_ids,
+                              'cashSessionId': p['cashSessionId'] if isinstance(p.get('cashSessionId'), str) else None})
+        if line_ids:
+            for l in o['items']:
+                if l['lineId'] in line_ids:
+                    l['paidBy'] = payment_id
         if compute_totals(o)['remaining'] == 0:
             o['status'] = 'paid'
             o['closedAt'] = at
@@ -259,6 +315,27 @@ def apply_order_op(order, op, payload, staff_id, at):
     return with_totals(o)
 
 
+def _refund(order, p, staff_id, at):
+    """Kapanmış (ödenmiş) adisyonda iade. Adisyon "paid" kalır; iadeler ayrı listede tutulur."""
+    if order['status'] != 'paid':
+        raise OrderError("Yalnızca ödenmiş adisyon iade edilebilir.")
+    o = copy.deepcopy(order)
+    o['refunds'] = o.get('refunds') or []
+    t = compute_totals(o)
+    refund_id = _str(p.get('refundId'), 'İade', 64)
+    if any(r['refundId'] == refund_id for r in o['refunds']):
+        raise OrderError("Bu iade zaten yapılmış.")
+    if p.get('method') not in PAYMENT_METHODS:
+        raise OrderError("İade yöntemi geçersiz.")
+    if not _is_int(p.get('amount'), 1, t['paid'] - t['refunded']):
+        raise OrderError("İade tutarı ödenen tutarı aşamaz.")
+    o['refunds'].append({'refundId': refund_id, 'method': p['method'], 'amount': p['amount'],
+                         'reason': _str(p.get('reason'), 'Gerekçe', 120), 'by': staff_id,
+                         'approvedBy': p.get('approvedBy') or staff_id, 'at': at,
+                         'cashSessionId': p['cashSessionId'] if isinstance(p.get('cashSessionId'), str) else None})
+    return with_totals(o)
+
+
 def merge_orders(target, source, at):
     """Kaynaktaki satırlar hedefe taşınır, kaynak kapanır. (hedef, kaynak) döndürür."""
     if not target or not source:
@@ -269,6 +346,8 @@ def merge_orders(target, source, at):
         raise OrderError("Adisyon kendisiyle birleştirilemez.")
     if source['payments']:
         raise OrderError("Ödeme alınmış adisyon birleştirilemez.")
+    if any(x.get('lineIds') for x in target['payments']):
+        raise OrderError("Ürün seçerek ödeme alınmış adisyona birleştirme yapılamaz.")
     t, s = copy.deepcopy(target), copy.deepcopy(source)
     ids = {l['lineId'] for l in t['items']}
     for line in s['items']:

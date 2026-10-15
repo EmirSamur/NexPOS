@@ -40,6 +40,9 @@ const {
   newQrToken,
   gridLayout,
   validateGeneralSettings,
+  validateModules,
+  normalizeModules,
+  expectedCash,
 } = require('./src/lib');
 const { OrderError, applyOrderOp, mergeOrders, tableStatusFor, stampCount } = require('./src/orders');
 
@@ -547,6 +550,7 @@ const OP_HANDLERS = {
 function requiredPermission(op, payload, order) {
   if (op === 'voidItem') return 'voidItem';
   if (op === 'compItem') return 'comp';
+  if (op === 'refundPayment') return 'refund';
   if (op === 'setDiscount') return payload.discount === null ? 'openTable' : 'discount';
   if (op === 'cancelOrder') {
     const sent = (order?.items || []).some((l) => l.status === 'active' && l.state === 'sent');
@@ -591,6 +595,21 @@ function orderHandler(op) {
     if (source?.tableId) tableIds.add(source.tableId);
     const tableSnaps = new Map();
     for (const id of tableIds) tableSnaps.set(id, await tx.get(db.doc(`tables/${id}`)));
+    // Kasa oturumu: nakit tahsilat/iade hangi oturuma yazıldı, zorunlu modül açık mı?
+    let modules = null;
+    let session = null;
+    if (op === 'takePayment' || op === 'refundPayment') {
+      modules = normalizeModules((await tx.get(db.doc('settings/modules'))).data());
+      if (typeof p.cashSessionId === 'string' && p.cashSessionId) {
+        const cs = await tx.get(db.doc(`cashSessions/${p.cashSessionId}`));
+        session = cs.exists ? cs.data() : null;
+        if (!session || session.terminalId !== terminalId || session.status !== 'open') {
+          return { status: 'rejected', error: 'Kasa oturumu açık değil.' };
+        }
+      } else if (p.method === 'cash' && modules.cashSession.required) {
+        return { status: 'rejected', error: 'Kasa açılmadan nakit işlem yapılamaz.' };
+      }
+    }
     let products = [];
     if (op === 'addItems' && Array.isArray(p.items)) {
       const ids = [...new Set(p.items.map((i) => i?.productId).filter((x) => typeof x === 'string' && x))];
@@ -642,6 +661,7 @@ function orderHandler(op) {
     if (order?.tableId && order.tableId !== next.tableId) statusByTable.set(order.tableId, ['empty', next]);
     if (next.tableId) statusByTable.set(next.tableId, [tableStatusFor(next), next]);
     if (nextSource?.tableId) statusByTable.set(nextSource.tableId, ['empty', nextSource]);
+    if (op === 'refundPayment') statusByTable.clear(); // iade masayı etkilemez
     for (const [tableId, [st, o]] of statusByTable) {
       const snap = tableSnaps.get(tableId);
       if (!snap || !snap.exists) continue;
@@ -676,6 +696,13 @@ function orderHandler(op) {
       });
     }
 
+    if (op === 'refundPayment') {
+      const r = next.refunds[next.refunds.length - 1];
+      tx.set(db.doc(`refunds/${r.refundId}`), {
+        ...r, orderId: next.id, orderNo: next.no, businessDay: next.businessDay, terminalId, createdAt: now,
+      });
+    }
+
     // Fiyat farkı: terminal fiyatı geçerli kalır, kayda düşer
     if (op === 'addItems') {
       const current = new Map(products.filter((x) => x.exists).map((x) => [x.id, x.data().price]));
@@ -689,10 +716,10 @@ function orderHandler(op) {
     }
 
     const auditable = { voidItem: 'order_void', compItem: 'order_comp', setDiscount: 'order_discount',
-      cancelOrder: 'order_cancel', mergeOrders: 'order_merge', moveOrder: 'order_move' };
+      cancelOrder: 'order_cancel', mergeOrders: 'order_merge', moveOrder: 'order_move', refundPayment: 'order_refund' };
     if (auditable[op]) {
       audit(tx, { action: auditable[op], actor: envelope.staffId, approvedBy: approverId, target: `orders/${next.id}`,
-        detail: p.lineId || p.toTableId || p.sourceOrderId || null, reason: p.reason || null,
+        detail: p.lineId || p.toTableId || p.sourceOrderId || (op === 'refundPayment' ? `${p.amount} ${p.method}` : null), reason: p.reason || null,
         after: op === 'setDiscount' ? next.discount : null, terminalId, clientAt: parseClientTime(at) });
     }
     return { status: 'ok' };
@@ -700,7 +727,8 @@ function orderHandler(op) {
 }
 
 const ORDER_OPS = ['openOrder', 'addItems', 'updateItem', 'removeItem', 'sendItems', 'voidItem', 'compItem',
-  'setDiscount', 'requestBill', 'moveOrder', 'takePayment', 'cancelOrder', 'mergeOrders'];
+  'setDiscount', 'requestBill', 'moveOrder', 'takePayment', 'cancelOrder', 'mergeOrders', 'splitLine',
+  'refundPayment'];
 for (const name of ORDER_OPS) OP_HANDLERS[name] = orderHandler(name);
 
 // Mutfak/bar fişinin durumu: new → preparing → ready → served
@@ -726,6 +754,125 @@ OP_HANDLERS.setTableReserved = async (tx, { op, staff, matrix }) => {
   const current = snap.data().status || 'empty';
   if (!['empty', 'reserved'].includes(current)) return { status: 'rejected', error: 'Dolu masa rezerve edilemez.' };
   tx.update(ref, { status: p.reserved === true ? 'reserved' : 'empty', updatedAt: FieldValue.serverTimestamp() });
+  return { status: 'ok' };
+};
+
+// ---------------------------------------------------------------------------
+// Kasa oturumu (6. ekran): açılış, hareket, kapanış (Z). Terminal internetsiz de açıp kapatır;
+// işlemler kuyruktan sırayla gelir. Beklenen nakdi sunucu kendi kayıtlarından tekrar hesaplar.
+// ---------------------------------------------------------------------------
+
+const MAX_MONEY = 10_000_000;
+const isMoney = (v, min = 0) => Number.isInteger(v) && v >= min && v <= MAX_MONEY;
+const shortText = (v, max = 120) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : '');
+
+// İşlemi yapan ya da onaylayan personelin 'cash' yetkisi
+async function cashApprover(tx, envelope, staff, matrix) {
+  const id = typeof envelope.payload.approvedBy === 'string' && envelope.payload.approvedBy
+    ? envelope.payload.approvedBy : envelope.staffId;
+  let approver = staff;
+  if (id !== envelope.staffId) {
+    const a = await tx.get(db.doc(`staff/${id}`));
+    approver = a.exists && a.data().active === true ? a.data() : null;
+  }
+  return approver && hasPermission(matrix, approver.role, 'cash', approver.permissions) ? id : null;
+}
+
+async function openSession(tx, p, terminalId) {
+  if (typeof p.cashSessionId !== 'string' || !p.cashSessionId) return [null, null];
+  const ref = db.doc(`cashSessions/${p.cashSessionId}`);
+  const snap = await tx.get(ref);
+  const s = snap.exists ? snap.data() : null;
+  return [ref, s && s.terminalId === terminalId && s.status === 'open' ? s : null];
+}
+
+// payload: { cashSessionId, businessDay, openingCash, approvedBy? }
+OP_HANDLERS.openCashSession = async (tx, { op, terminalId, staff, matrix }) => {
+  if (!staff) return { status: 'rejected', error: 'Personel bulunamadı.' };
+  const p = op.payload;
+  const approvedBy = await cashApprover(tx, op, staff, matrix);
+  if (typeof p.cashSessionId !== 'string' || !/^[\w-]{1,64}$/.test(p.cashSessionId)) {
+    return { status: 'rejected', error: 'Kasa oturumu kimliği geçersiz.' };
+  }
+  const ref = db.doc(`cashSessions/${p.cashSessionId}`);
+  const [snap, open] = await Promise.all([
+    tx.get(ref),
+    tx.get(db.collection('cashSessions').where('terminalId', '==', terminalId).where('status', '==', 'open')),
+  ]);
+  if (!approvedBy) return { status: 'rejected', error: 'Bu işlem için yetki yok (cash).' };
+  if (snap.exists) return { status: 'rejected', error: 'Bu kasa oturumu zaten açılmış.' };
+  if (!open.empty) return { status: 'rejected', error: 'Bu terminalde açık bir kasa oturumu var.' };
+  if (!isMoney(p.openingCash)) return { status: 'rejected', error: 'Açılış nakdi geçersiz.' };
+  tx.set(ref, {
+    terminalId, status: 'open', businessDay: shortText(p.businessDay, 10), openingCash: p.openingCash,
+    openedBy: op.staffId, approvedBy, openedAt: op.createdAt, movements: [],
+    closedBy: null, closedAt: null, countedCash: null, expectedCash: null, difference: null, report: null,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  audit(tx, { action: 'cash_open', actor: op.staffId, approvedBy, target: `cashSessions/${p.cashSessionId}`,
+    after: { openingCash: p.openingCash }, terminalId, clientAt: parseClientTime(op.createdAt) });
+  return { status: 'ok' };
+};
+
+// payload: { cashSessionId, movementId, type: in|out, amount, reason, expense?, approvedBy? }
+OP_HANDLERS.cashMovement = async (tx, { op, terminalId, staff, matrix }) => {
+  if (!staff) return { status: 'rejected', error: 'Personel bulunamadı.' };
+  const p = op.payload;
+  const approvedBy = await cashApprover(tx, op, staff, matrix);
+  const [ref, session] = await openSession(tx, p, terminalId);
+  if (!approvedBy) return { status: 'rejected', error: 'Bu işlem için yetki yok (cash).' };
+  if (!session) return { status: 'rejected', error: 'Kasa oturumu açık değil.' };
+  if (!['in', 'out'].includes(p.type)) return { status: 'rejected', error: 'Hareket türü geçersiz.' };
+  if (!isMoney(p.amount, 1)) return { status: 'rejected', error: 'Tutar geçersiz.' };
+  const reason = shortText(p.reason);
+  if (!reason) return { status: 'rejected', error: 'Gerekçe zorunludur.' };
+  if (typeof p.movementId !== 'string' || !p.movementId) return { status: 'rejected', error: 'Hareket kimliği eksik.' };
+  if (session.movements.some((m) => m.movementId === p.movementId)) return { status: 'rejected', error: 'Bu hareket zaten kaydedilmiş.' };
+  if (session.movements.length >= 500) return { status: 'rejected', error: 'Kasa hareketi sınırı aşıldı.' };
+  const movement = { movementId: p.movementId, type: p.type, amount: p.amount, reason,
+    expense: p.type === 'out' && p.expense === true, by: op.staffId, approvedBy, at: op.createdAt };
+  tx.update(ref, { movements: [...session.movements, movement], updatedAt: FieldValue.serverTimestamp() });
+  audit(tx, { action: 'cash_movement', actor: op.staffId, approvedBy, target: `cashSessions/${p.cashSessionId}`,
+    after: movement, reason, terminalId, clientAt: parseClientTime(op.createdAt) });
+  return { status: 'ok' };
+};
+
+// payload: { cashSessionId, countedCash, expectedCash, reason?, report?, approvedBy? }
+OP_HANDLERS.closeCashSession = async (tx, { op, terminalId, staff, matrix }) => {
+  if (!staff) return { status: 'rejected', error: 'Personel bulunamadı.' };
+  const p = op.payload;
+  const approvedBy = await cashApprover(tx, op, staff, matrix);
+  const [ref, session] = await openSession(tx, p, terminalId);
+  const [pays, refs, modSnap] = session ? await Promise.all([
+    tx.get(db.collection('payments').where('cashSessionId', '==', p.cashSessionId)),
+    tx.get(db.collection('refunds').where('cashSessionId', '==', p.cashSessionId)),
+    tx.get(db.doc('settings/modules')),
+  ]) : [];
+  if (!approvedBy) return { status: 'rejected', error: 'Bu işlem için yetki yok (cash).' };
+  if (!session) return { status: 'rejected', error: 'Kasa oturumu açık değil.' };
+  if (!isMoney(p.countedCash) || !isMoney(p.expectedCash)) return { status: 'rejected', error: 'Sayılan nakit geçersiz.' };
+  const modules = normalizeModules(modSnap.data());
+  const reason = shortText(p.reason, 200);
+  // Gerekçe kuralı terminalin gördüğü farka göre uygulanır (terminal bunu zaten zorunlu tutar).
+  if (Math.abs(p.countedCash - p.expectedCash) > modules.cashSession.diffReasonThreshold && !reason) {
+    return { status: 'rejected', error: 'Kasa farkı için gerekçe zorunludur.' };
+  }
+  const expected = expectedCash(session, pays.docs.map((d) => d.data()), refs.docs.map((d) => d.data()));
+  let report = null;
+  if (p.report && typeof p.report === 'object' && JSON.stringify(p.report).length <= 20_000) report = p.report;
+  tx.update(ref, {
+    status: 'closed', closedBy: op.staffId, approvedBy, closedAt: op.createdAt,
+    countedCash: p.countedCash, expectedCash: expected, terminalExpectedCash: p.expectedCash,
+    difference: p.countedCash - expected, differenceReason: reason || null, report,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  audit(tx, { action: 'cash_close', actor: op.staffId, approvedBy, target: `cashSessions/${p.cashSessionId}`,
+    after: { countedCash: p.countedCash, expectedCash: expected, difference: p.countedCash - expected },
+    reason: reason || null, terminalId, clientAt: parseClientTime(op.createdAt) });
+  if (expected !== p.expectedCash) {
+    audit(tx, { action: 'cash_expected_mismatch', actor: op.staffId, target: `cashSessions/${p.cashSessionId}`,
+      after: { server: expected, terminal: p.expectedCash }, terminalId, clientAt: parseClientTime(op.createdAt) });
+  }
   return { status: 'ok' };
 };
 
@@ -1229,6 +1376,21 @@ exports.importFloor = onCall(async (request) => {
     after: { areas: areas.length, tables: count }, at: FieldValue.serverTimestamp() });
   await batch.commit();
   return { areas: areaIds, tables: tableIds };
+});
+
+// Modüller (5. ve 6. ekran): yalnızca Yönetici (owner) değiştirir.
+exports.saveModules = onCall(async (request) => {
+  const actor = await requireStaff(request);
+  if (actor.role !== 'owner') throw new HttpsError('permission-denied', 'Modülleri yalnızca yönetici değiştirebilir.');
+  const data = validated(validateModules, request.data);
+  const ref = db.doc('settings/modules');
+  await db.runTransaction(async (tx) => {
+    const before = await tx.get(ref);
+    tx.set(ref, { ...data, updatedBy: actor.uid, updatedAt: FieldValue.serverTimestamp() });
+    audit(tx, { action: 'modules_change', actor: actor.uid, target: 'settings/modules',
+      before: before.exists ? before.data() : null, after: data });
+  });
+  return data;
 });
 
 // Genel ayarlar: kafe adı (QR etiketi, ekranlar), QR adresi, otomatik kilit süresi.
