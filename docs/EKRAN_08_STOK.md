@@ -1,4 +1,17 @@
-# 8. Ekran: Stok, Reçete ve Tedarik (tarif, onay bekliyor)
+# 8. Ekran: Stok, Reçete ve Tedarik
+
+> Durum: **8a uygulandı**, 8b sırada. Sorulara verilen cevaplar (hepsi öneri yönünde): stok Gönder'de düşer;
+> iptalde "Hazırlandı mı?" sorulur (Modüller'den kapatılabilir); maliyet ağırlıklı ortalama (alışlar 8b'de);
+> malzeme bitince ürün tükendi yapılmaz, yalnızca uyarı; tedarikçi borç bakiyesi 8b'de; hazır şablon var.
+>
+> Uygulamada netleşenler:
+> - Miktarlar temel birimde tam sayı (g, ml, adet); birim maliyet kg / L / adet başına kuruş.
+> - Seçenek etkileri sırası: yerine koy → çarp → ekle. Çarpan adetli malzemelere (bardak) uygulanmaz.
+> - Stok modülü kapalıyken gönderilmiş ürün sonradan iptal edilirse stoğa iade yazılmaz (düşülmemişti).
+> - Silinmiş malzemeye ait hareket satırı sunucuda atlanır, hareket yine kaydedilir.
+> - Reçetede kullanılan malzeme silinemez.
+> - Maliyet ve kâr güncel birim maliyetlerle hesaplanır; ürün penceresinde ve raporlarda yalnızca
+>   `viewReports` yetkisi olan görür.
 
 ## Amaç
 
@@ -177,13 +190,13 @@ Ekran büyük olduğu için iki adımda yapılır, her adım kendi başına işe
 ## "Bitti" sayılma ölçütü
 
 **8a**
-- [ ] Stok modülü açılıp kapanıyor; kapalıyken hiçbir şey stoktan düşmüyor
-- [ ] Malzeme ekleme/düzenleme, birim ve alış birimi dönüşümü, kritik ve hedef seviye
-- [ ] Reçete; seçeneklerin yerine koy / ekle / çarp etkisi; yalnızca pakette düşen malzeme
-- [ ] Gönder'de stoktan düşme, ikramda düşme, iptalde "hazırlandı mı?"; internetsiz çalışıyor, buluta bir kez gidiyor
-- [ ] Ürün maliyeti ve kâr; Raporlar'da maliyet/kâr sütunları, menü analizi, Gelir–Gider'de ürün maliyeti
-- [ ] Kritik stok uyarısı (liste ve Ana Sayfa); ilk sayım; hazır şablon (seçilirse)
-- [ ] Testler: reçete hesabı (seçenekli), düşme/iade senaryoları (yerel + sunucu aynı sonuç), emülatör
+- [x] Stok modülü açılıp kapanıyor; kapalıyken hiçbir şey stoktan düşmüyor
+- [x] Malzeme ekleme/düzenleme, birim ve alış birimi dönüşümü, kritik ve hedef seviye
+- [x] Reçete; seçeneklerin yerine koy / ekle / çarp etkisi; yalnızca pakette düşen malzeme
+- [x] Gönder'de stoktan düşme, ikramda düşme, iptalde "hazırlandı mı?"; internetsiz çalışıyor, buluta bir kez gidiyor
+- [x] Ürün maliyeti ve kâr; Raporlar'da maliyet/kâr sütunları, menü analizi, Gelir–Gider'de ürün maliyeti
+- [x] Kritik stok uyarısı (liste ve Ana Sayfa); ilk sayım; hazır şablon (seçilirse)
+- [x] Testler: reçete hesabı (seçenekli), düşme/iade senaryoları (yerel + sunucu aynı sonuç), emülatör
 
 **8b**
 - [ ] Sayım (taslak, kısmi, onay), sayım farkı ve teorik/gerçek tüketim raporu

@@ -205,25 +205,27 @@ Bu kurallar Genç Ofis'te işe yarayan yaklaşımın aynısı:
 ```ts
 {
   name: "Espresso çekirdeği",
-  unit: "g"|"ml"|"adet",
-  stock: number,                   // yalnızca fonksiyonlar değiştirir
-  criticalLevel: number,           // altına düşünce panelde uyarı ve bildirim
-  unitCost: number,                // kuruş / birim
-  supplierId?: string
+  unit: "g"|"ml"|"adet",               // miktarlar bu birimde tam sayı
+  group: "bar"|"kitchen"|"packaging"|"other",
+  purchaseUnit: { name: "koli", size: 12000 } | null,
+  stock: number,                       // yalnızca stockMove hareketleriyle değişir
+  critical: number, target: number | null,
+  unitCost: number,                    // kuruş / kg, L ya da adet
+  supplierName: string, deleted: boolean
 }
 ```
+Ürün reçetesi `products.recipe: [{ ingredientId, qty, takeawayOnly }]`; seçeneğin etkisi
+`optionGroups.options[].recipeEffect: { replace?: [{from, to}], scale?: 1.5, add?: [{ingredientId, qty}] }`.
 
-### `stockMovements/{id}`: yalnızca fonksiyonlar yazar
+### `stockMovements/{movementId}`: yalnızca fonksiyonlar yazar (kuyruktaki `stockMove` işlemi)
 ```ts
 {
-  ingredientId,
-  type: "sale"|"purchase"|"waste"|"count"|"adjust"|"void_return",
-  qty: number,                     // + giriş, − çıkış
-  orderId?, purchaseOrderId?,
-  reason?: string,                 // fire nedeni vb.
-  by: uid, at: Timestamp
+  type: "sale"|"void_return"|"count"|"adjust"|"waste",
+  lines: [ { ingredientId, qty } ],    // + giriş, − çıkış; applied: uygulanan satırlar
+  orderId?, lineId?, reason?, by, approvedBy, terminalId, at
 }
 ```
+> Yetki: sale/void_return `openTable`, count/adjust `stock`, waste `waste`.
 
 ### `suppliers/{id}`
 `{ name, contactName, phone, email, note }`

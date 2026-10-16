@@ -92,6 +92,7 @@ class IngredientsPage(QWidget):
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(["Malzeme", "Grup", "Stok", "Kritik", "Birim maliyet", "Stok değeri",
                                               "Tedarikçi"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -398,10 +399,14 @@ class RecipeEditor(QWidget):
         ly.addWidget(_muted("Ürün bar/mutfağa gönderilince bu malzemeler stoktan düşer. Miktar malzemenin biriminde "
                             "(g, ml, adet). \"Yalnızca paket\": bardak, kapak gibi paket siparişte düşenler."))
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Malzeme", "Miktar", "Yalnızca paket", "Maliyet"])
+        self.table.setHorizontalHeaderLabels(["Malzeme", "Miktar", "Paket", "Maliyet"])
+        self.table.horizontalHeaderItem(2).setToolTip("Yalnızca paket siparişte düşer")
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        for c, w in ((1, 130), (2, 70), (3, 100)):
+            self.table.horizontalHeader().setSectionResizeMode(c, QHeaderView.Fixed)
+            self.table.setColumnWidth(c, w)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(44)
+        self.table.verticalHeader().setDefaultSectionSize(48)
         ly.addWidget(self.table, 1)
         row = QHBoxLayout()
         add = QPushButton("+ Malzeme")
@@ -417,6 +422,7 @@ class RecipeEditor(QWidget):
         self.effects = _muted("")
         ly.addWidget(self.effects)
         self.summary = QLabel("")
+        self.summary.setWordWrap(True)
         self.summary.setStyleSheet("font-size: 14px; font-weight: bold; background: transparent;")
         ly.addWidget(self.summary)
         if not self.ingredients:
@@ -439,13 +445,20 @@ class RecipeEditor(QWidget):
         qty = QSpinBox()
         qty.setRange(1, 100_000)
         qty.setValue(r.get('qty', 1))
+        qty.setStyleSheet("QSpinBox { padding: 2px 6px; min-height: 30px; max-height: 30px; }")
         take = QCheckBox()
         take.setChecked(r.get('takeawayOnly', False))
         cost = QLabel("")
         combo.currentIndexChanged.connect(self.update_summary)
         qty.valueChanged.connect(self.update_summary)
         take.toggled.connect(self.update_summary)
-        for c, w in enumerate((combo, qty, take, cost)):
+        cost.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        holder = QWidget()
+        hl = QHBoxLayout(holder)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setAlignment(Qt.AlignCenter)
+        hl.addWidget(take)
+        for c, w in enumerate((combo, qty, holder, cost)):
             self.table.setCellWidget(row, c, w)
         self.update_summary()
 
@@ -457,7 +470,8 @@ class RecipeEditor(QWidget):
     def recipe(self):
         out = []
         for r in range(self.table.rowCount()):
-            combo, qty, take = (self.table.cellWidget(r, c) for c in range(3))
+            combo, qty, holder = (self.table.cellWidget(r, c) for c in range(3))
+            take = holder.findChild(QCheckBox)
             if combo.currentData():
                 out.append({'ingredientId': combo.currentData(), 'qty': qty.value(), 'takeawayOnly': take.isChecked()})
         return out
@@ -477,7 +491,8 @@ class RecipeEditor(QWidget):
     def update_summary(self, *_):
         total = 0
         for r in range(self.table.rowCount()):
-            combo, qty, take, label = (self.table.cellWidget(r, c) for c in range(4))
+            combo, qty, holder, label = (self.table.cellWidget(r, c) for c in range(4))
+            take = holder.findChild(QCheckBox)
             ing = self.ingredients.get(combo.currentData())
             if not ing:
                 continue
@@ -494,7 +509,8 @@ class RecipeEditor(QWidget):
         profit = net - total
         margin = round(profit * 100 / net) if net else 0
         self.summary.setText(f"Maliyet {format_tl(total)} · Satış {format_tl(price)} (KDV hariç {format_tl(net)}) · "
-                             f"Kâr {format_tl(profit)} · %{margin}  (masada; paket malzemeleri hariç)")
+                             f"Kâr {format_tl(profit)} · %{margin}\n"
+                             f"(masada satış; paket malzemeleri hariç)")
 
 
 def describe_effect(e, names):

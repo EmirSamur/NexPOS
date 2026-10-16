@@ -162,6 +162,19 @@ Yalnızca Yönetici açıp kapatır; ayar bulutta tutulur ve bütün cihazlara i
   Günlük özet ayrıca buluta (`dailyStats`) yazılır; ileride telefondan rapor bakmak için.
 - Garson **Vardiyam** düğmesiyle bugünkü kendi cirosunu, bahşişini ve işlemlerini görür.
 
+## Stok ve reçete
+
+1. **Ayarlar → Modüller → Stok ve reçete**'yi açın.
+2. **İşlemler → Stok / Malzemeler → Hazır şablon**: menüdeki ürün adlarına göre yaygın malzemeler, reçeteler ve
+   seçenek etkileri (yulaf sütü, büyük boy, ekstra shot) eklenir. Miktar ve fiyatları kafeye göre düzeltin.
+3. **Stok gir / ilk sayım** ile eldeki miktarları girin (koli, kg ya da L olarak da girilebilir).
+4. Bundan sonra her ürün **Gönder** denince reçetesi stoktan düşer. Gönderilmiş ürün iptal edilirken
+   "Hazırlandı mı?" sorulur; hazırlanmadıysa stoğa döner.
+5. Reçeteler ürün penceresindeki **Reçete** sekmesinden, seçenek etkileri **Seçenek Grupları**'ndan düzenlenir;
+   pencerede maliyet, kâr ve marj anında görünür.
+6. Raporlarda ürün maliyeti/kâr sütunları, **Menü Analizi** sekmesi ve Gelir–Gider'de ürün maliyeti çıkar.
+   Kritik seviyenin altındaki malzemeler Ana Sayfa'da uyarı olarak görünür.
+
 ## Mutfak / bar ekranı (tablet)
 
 1. **Ayarlar → Modüller**'de "Mutfak / Bar Ekranı"nı açın.
