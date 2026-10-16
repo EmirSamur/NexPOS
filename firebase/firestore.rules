@@ -160,6 +160,21 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Vardiya ve mesai (9. ekran)
+    match /shiftPlans/{id} {
+      allow read: if isStaff() || isActiveTerminal();
+      allow write: if false;
+    }
+    match /timeEntries/{id} {
+      allow read: if isManagerPlus() || isActiveTerminal();
+      allow write: if false;
+    }
+    // Saatlik ücret yalnızca işletme sahibine görünür (terminal ve müdür okuyamaz).
+    match /staffWages/{id} {
+      allow read: if role() == 'owner';
+      allow write: if false;
+    }
+
     match /auditLogs/{logId} {
       allow read: if isManagerPlus();
       allow write: if false;

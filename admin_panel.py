@@ -24,6 +24,7 @@ from cloud.permissions import PANEL_ROLES
 from cash_screen import CashPage
 from reports_screen import DashboardPage, ReportsPage
 from stock_pages import StockPage, WastePage
+from shifts_pages import ShiftDialog, StaffShiftsPage
 import cash
 from modules_page import ModulesPanel
 from pos import now_iso as pos_now
@@ -43,6 +44,7 @@ PAGE_PERMISSIONS = [
     'settings',      # 9 Terminaller
     'cash',          # 10 Kasa
     'stock',         # 11 Stok (modül açıkken)
+    'shifts',        # 12 Vardiya ve Mesai (modül açıkken)
 ]
 
 class AdminPanel(QWidget):
@@ -85,6 +87,8 @@ class AdminPanel(QWidget):
         self.pages.addWidget(self.cash_page)                    # 10
         self.stock_page = StockPage(self.user)
         self.pages.addWidget(self.stock_page)                   # 11
+        self.shifts_page = StaffShiftsPage(self.user)
+        self.pages.addWidget(self.shifts_page)                  # 12
         content_w.addWidget(self.pages, 1)
 
         cf = QFrame()
@@ -96,6 +100,8 @@ class AdminPanel(QWidget):
     def _can_see(self, idx):
         if idx == 11 and not database.modules()['stock']['enabled']:
             return False  # kapalı modül görünmez
+        if idx == 12 and not database.modules()['staff']['enabled']:
+            return False
         perm = PAGE_PERMISSIONS[idx] if idx < len(PAGE_PERMISSIONS) else None
         return perm is None or database.user_can(self.user, perm)
 
@@ -230,6 +236,8 @@ class AdminPanel(QWidget):
         btn_y = kul.add_sub_button("Yetkiler", ICONS['dot'])
         btn_y.clicked.connect(lambda: self._show_page(7))
         self.sidebar_buttons.append(btn_y)
+        btn_vardiya = kul.add_sub_button("Vardiya ve Mesai", ICONS['dot'])
+        btn_vardiya.clicked.connect(lambda: self._show_page(12))
         self.menu_layout.addWidget(kul)
 
         btn_ayar = SidebarButton("Ayarlar", ICONS['settings'])
@@ -243,6 +251,7 @@ class AdminPanel(QWidget):
         self.menu_layout.addWidget(btn_term)
         self.sidebar_buttons.append(btn_kasa)  # sayfa 10
         self.sidebar_buttons.append(btn_stok)  # sayfa 11
+        self.sidebar_buttons.append(btn_vardiya)  # sayfa 12
 
         self.menu_layout.addStretch()
 
@@ -325,6 +334,8 @@ class AdminPanel(QWidget):
                 padding: 8px 16px; color: {COLORS['primary']}; font-size: 13px; font-weight: bold; }}
             QPushButton:hover {{ background: {COLORS['primary']}; color: white; }}
         """)
+        user_btn.setToolTip("Vardiyam: mesaiye başla / bitir, mola")
+        user_btn.clicked.connect(lambda: ShiftDialog(self.user, self).exec())
         ly.addWidget(user_btn)
         return bar
 
@@ -348,7 +359,7 @@ class AdminPanel(QWidget):
                    "Kategori ve Ürün Tanımlama / Şube Ürünleri",
                    "Gider/Masraf İşlemleri", "Zayi İşlemleri",
                    "Raporlar", "Kullanıcılar", "Yetki / İzin Ekranı", "Sistem Ayarları",
-                   "Terminaller", "Kasa", "Stok"]
+                   "Terminaller", "Kasa", "Stok", "Vardiya ve Mesai"]
         if idx < len(titles):
             self.page_title.setText(titles[idx])
 
@@ -393,6 +404,8 @@ class AdminPanel(QWidget):
             self._apply_sidebar()
             self.modules_panel.refresh()
             self.cash_page.refresh()
+        if 'shiftPlans' in status.changed and self.pages.currentWidget() is self.shifts_page:
+            self.shifts_page.refresh()
         if 'general' in status.changed:
             self.shop_label.setText(f"  {ICONS['home']}  {database.general_settings()['cafeName'].upper()}")
 

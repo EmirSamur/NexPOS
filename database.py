@@ -136,6 +136,11 @@ def init_database():
     c.execute("""CREATE TABLE IF NOT EXISTS purchase_log (
         id TEXT PRIMARY KEY, kind TEXT NOT NULL, supplier_id TEXT, purchase_order_id TEXT, total INTEGER,
         payment_status TEXT, method TEXT, note TEXT, data TEXT, at TEXT, business_day TEXT, staff_id TEXT)""")
+    # Mesai kayıtları (9. ekran): bu bilgisayarda başlatılan/düzeltilen mesailer (kuyrukla buluta gider)
+    c.execute("""CREATE TABLE IF NOT EXISTS time_entries (
+        id TEXT PRIMARY KEY, staff_id TEXT NOT NULL, business_day TEXT NOT NULL, data TEXT NOT NULL,
+        open INTEGER DEFAULT 1)""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_time_entries ON time_entries(staff_id, business_day)")
     # Kasa oturumları (6. ekran): açılış, hareketler, kapanış ve Z raporu JSON olarak.
     c.execute("""CREATE TABLE IF NOT EXISTS cash_sessions (
         id TEXT PRIMARY KEY, data TEXT NOT NULL, status TEXT NOT NULL, business_day TEXT,
@@ -1375,6 +1380,7 @@ DEFAULT_MODULES = {
     'paymentMethods': {'cash': True, 'card': True, 'meal': True},
     'tips': True,
     'stock': {'enabled': False, 'askOnVoid': True},
+    'staff': {'enabled': False, 'lateToleranceMinutes': 5},
 }
 
 

@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QStackedWidget, QScrollArea, QGridLayout, QDialog, QFormLayout,
     QComboBox, QSpinBox, QMessageBox, QLineEdit
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QColor
 from styles import COLORS, FONTS, ICONS
 from widgets import TableCard, OrderCard, InfoDialog, add_shadow, ToastNotification, clear_layout
@@ -57,6 +57,11 @@ class UserPanel(QWidget):
             ctx.request_sync()
             self._refresh_bolgeler()
         main.addWidget(self.pages, 1)
+        # Mesai modülü: mesaiye başlamadan sipariş alınabilir, yalnızca hatırlatılır
+        import shifts
+        if self.user.get('cloud_id') and shifts.enabled() and shifts.status(self.user['cloud_id'])[0] == 'off':
+            QTimer.singleShot(700, lambda: ToastNotification(
+                self, "Mesaiye başlamadınız. Vardiyam'dan başlatabilirsiniz.", "info"))
 
     def _create_topbar(self):
         bar = QFrame()
@@ -142,6 +147,8 @@ class UserPanel(QWidget):
                 padding: 10px 16px; color: {COLORS['primary']}; font-size: 13px; font-weight: bold; }}
             QPushButton:hover {{ background: {COLORS['primary']}; color: white; }}
         """)
+        user_btn.setToolTip("Vardiyam: mesaiye başla / bitir, mola")
+        user_btn.clicked.connect(self._show_shift_summary)
         ly.addWidget(user_btn)
         ly.addSpacing(8)
 
@@ -390,15 +397,6 @@ class UserPanel(QWidget):
             record_waste(self, self.user, dlg, approver)
 
     def _show_shift_summary(self):
-        """Vardiyam: bugünkü kendi satırı (raporlarla aynı hesap)."""
-        import reports
-        r = reports.my_shift(self.user['cloud_id'])
-        InfoDialog(
-            "Vardiyam (bugün)",
-            f"✅  Adisyon: {r['orders']}\n"
-            f"💰  Ciro: {format_tl(r['revenue'])}\n"
-            f"📊  Ortalama adisyon: {format_tl(r['average'])}\n"
-            f"🎁  Bahşiş: {format_tl(r['tips'])}\n"
-            f"%  İskonto: {r['discount']} · İkram: {r['comps']} ürün · İptal: {r['voids']} ürün",
-            COLORS['success'], self
-        ).exec()
+        """Vardiyam: mesai (başla/bitir/mola), plan, haftalık saat ve bugünkü satış."""
+        from shifts_pages import ShiftDialog
+        ShiftDialog(self.user, self).exec()

@@ -15,6 +15,8 @@ from cloud.context import ctx
 from cloud.permissions import PANEL_ROLES, ROLE_LABELS
 from cloud.qt_sync import run_async
 import database
+import shifts
+from shifts_pages import clock_badge, maybe_prompt_clock_in
 
 GRID_COLUMNS = 4
 
@@ -181,7 +183,7 @@ class LoginScreen(QWidget):
 
     def set_sync_status(self, status):
         self.status_pill.update_status(status)
-        if status and ({'staff', 'staffPins'} & status.changed):
+        if status and ({'staff', 'staffPins', 'shiftPlans', 'modules'} & status.changed):
             self.refresh_staff()
 
     def refresh_staff(self):
@@ -189,9 +191,10 @@ class LoginScreen(QWidget):
             item = self.grid.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        shifts.auto_close_forgotten()  # iş günü bitmiş, çıkışı unutulmuş mesailer
         staff = database.get_login_staff()
         for i, s in enumerate(staff):
-            card = StaffCard(s, ROLE_LABELS.get(s['role'], s['role']))
+            card = StaffCard(s, ROLE_LABELS.get(s['role'], s['role']), badge=clock_badge(s['id']))
             card.clicked.connect(lambda _, st=s: self._pin_login(st))
             self.grid.addWidget(card, i // GRID_COLUMNS, i % GRID_COLUMNS)
         self.empty_label.setVisible(not staff)
@@ -199,6 +202,7 @@ class LoginScreen(QWidget):
     def _pin_login(self, staff):
         dlg = PinDialog(staff, lambda pin: database.login_with_pin(staff['id'], pin), parent=self)
         if dlg.exec() == QDialog.Accepted and dlg.result_value:
+            maybe_prompt_clock_in(self, dlg.result_value)
             ctx.request_sync()
             self.login_success.emit(dlg.result_value)
 

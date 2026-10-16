@@ -126,6 +126,22 @@ class AdminApi:
     def cancel_purchase_order(self, order_id):
         return self._call('cancelPurchaseOrder', {'id': order_id})
 
+    # --- Vardiya (9. ekran)
+    def save_shift_plans(self, cells):
+        return self._call('saveShiftPlans', {'cells': cells})
+
+    def publish_shift_week(self, week_start):
+        return self._call('publishShiftWeek', {'weekStart': week_start})
+
+    def save_wages(self, wages):
+        """wages: {staffId: kuruş/saat ya da None} — yalnızca yönetici."""
+        return self._call('saveWages', {'wages': wages})
+
+    def get_wages(self):
+        """{staffId: kuruş/saat} — yalnızca yönetici okuyabilir (terminal önbelleğine inmez)."""
+        self.session = self.client.ensure_fresh(self.session)
+        return {doc_id: d.get('hourlyRate') for doc_id, d in self.client.list_docs('staffWages', self.session)}
+
     def import_stock(self, ingredients, recipes, option_effects):
         return self._call('importStock', {'ingredients': ingredients, 'recipes': recipes,
                                           'optionEffects': option_effects})

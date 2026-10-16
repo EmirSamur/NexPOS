@@ -1,0 +1,221 @@
+{
+  "cases": [
+    {
+      "name": "normal vardiya: plan 8 sa − 30 dk mola",
+      "plan": {
+        "date": "2026-10-16",
+        "start": "09:00",
+        "end": "17:00",
+        "breakMinutes": 30
+      },
+      "entry": {
+        "clockIn": "2026-10-16T08:58:00+03:00",
+        "clockOut": "2026-10-16T17:05:00+03:00",
+        "breaks": []
+      },
+      "tolerance": 5,
+      "expect": {
+        "planned": 450,
+        "late": 0,
+        "break": 30,
+        "worked": 457
+      }
+    },
+    {
+      "name": "geç kalma toleransı aşınca tamamı sayılır",
+      "plan": {
+        "date": "2026-10-16",
+        "start": "09:00",
+        "end": "17:00",
+        "breakMinutes": 0
+      },
+      "entry": {
+        "clockIn": "2026-10-16T09:07:00+03:00",
+        "clockOut": "2026-10-16T17:00:00+03:00"
+      },
+      "tolerance": 5,
+      "expect": {
+        "planned": 480,
+        "late": 7,
+        "break": 0,
+        "worked": 473
+      }
+    },
+    {
+      "name": "tolerans içinde geç sayılmaz",
+      "plan": {
+        "date": "2026-10-16",
+        "start": "09:00",
+        "end": "17:00"
+      },
+      "entry": {
+        "clockIn": "2026-10-16T09:05:00+03:00",
+        "clockOut": "2026-10-16T17:00:00+03:00"
+      },
+      "tolerance": 5,
+      "expect": {
+        "late": 0,
+        "worked": 475
+      }
+    },
+    {
+      "name": "gece yarısını geçen vardiya (16:00–01:00)",
+      "plan": {
+        "date": "2026-10-16",
+        "start": "16:00",
+        "end": "01:00",
+        "breakMinutes": 60
+      },
+      "entry": {
+        "clockIn": "2026-10-16T16:20:00+03:00",
+        "clockOut": "2026-10-17T01:10:00+03:00",
+        "breaks": [
+          {
+            "start": "2026-10-16T20:00:00+03:00",
+            "end": "2026-10-16T20:45:00+03:00"
+          }
+        ]
+      },
+      "tolerance": 5,
+      "expect": {
+        "planned": 480,
+        "late": 20,
+        "break": 45,
+        "worked": 485,
+        "businessDay": "2026-10-16"
+      }
+    },
+    {
+      "name": "sabaha karşı başlayan vardiya iş gününün gecesine düşer (02:00–06:00)",
+      "plan": {
+        "date": "2026-10-16",
+        "start": "02:00",
+        "end": "06:00"
+      },
+      "entry": {
+        "clockIn": "2026-10-17T02:00:00+03:00",
+        "clockOut": "2026-10-17T06:00:00+03:00"
+      },
+      "tolerance": 5,
+      "expect": {
+        "planned": 240,
+        "late": 0,
+        "worked": 240,
+        "businessDay": "2026-10-16"
+      }
+    },
+    {
+      "name": "mola düğmesine basılmadıysa plandaki mola, en çok çalışmanın yarısı",
+      "plan": {
+        "date": "2026-10-16",
+        "start": "09:00",
+        "end": "17:00",
+        "breakMinutes": 60
+      },
+      "entry": {
+        "clockIn": "2026-10-16T09:00:00+03:00",
+        "clockOut": "2026-10-16T10:00:00+03:00"
+      },
+      "tolerance": 5,
+      "expect": {
+        "break": 30,
+        "worked": 30
+      }
+    },
+    {
+      "name": "kapanmamış mola çıkışta biter",
+      "plan": null,
+      "entry": {
+        "clockIn": "2026-10-16T09:00:00+03:00",
+        "clockOut": "2026-10-16T12:00:00+03:00",
+        "breaks": [
+          {
+            "start": "2026-10-16T11:30:00+03:00",
+            "end": null
+          }
+        ]
+      },
+      "tolerance": 5,
+      "expect": {
+        "planned": 0,
+        "late": 0,
+        "break": 30,
+        "worked": 150
+      }
+    },
+    {
+      "name": "izin günü plan süresi 0",
+      "plan": {
+        "date": "2026-10-16",
+        "leave": "annual"
+      },
+      "entry": null,
+      "tolerance": 5,
+      "expect": {
+        "planned": 0,
+        "late": 0,
+        "worked": 0
+      }
+    },
+    {
+      "name": "çıkış yapılmadıysa çalışılan 0",
+      "plan": {
+        "date": "2026-10-16",
+        "start": "09:00",
+        "end": "17:00"
+      },
+      "entry": {
+        "clockIn": "2026-10-16T09:00:00+03:00",
+        "clockOut": null
+      },
+      "tolerance": 5,
+      "expect": {
+        "worked": 0,
+        "break": 0
+      }
+    },
+    {
+      "name": "süren mesai ve süren mola: yalnızca biten mola sayılır, çalışılan henüz 0",
+      "plan": {
+        "date": "2026-10-16",
+        "start": "08:00",
+        "end": "16:00",
+        "breakMinutes": 30
+      },
+      "entry": {
+        "clockIn": "2026-10-16T08:00:00+03:00",
+        "clockOut": null,
+        "breaks": [
+          {
+            "start": "2026-10-16T10:00:00+03:00",
+            "end": "2026-10-16T10:20:00+03:00"
+          },
+          {
+            "start": "2026-10-16T13:00:00+03:00",
+            "end": null
+          }
+        ]
+      },
+      "tolerance": 5,
+      "expect": {
+        "late": 0,
+        "break": 20,
+        "worked": 0
+      }
+    }
+  ],
+  "overtime": [
+    [
+      2700,
+      0
+    ],
+    [
+      2760,
+      60
+    ],
+    [
+      1200,
+      0
+    ]
+  ]
+}

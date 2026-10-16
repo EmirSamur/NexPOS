@@ -55,7 +55,9 @@ const {
   validateSupplierPayment,
   weightedUnitCost,
   expectedCash,
+  validateShiftCell,
 } = require('./src/lib');
+const shiftCalc = require('./src/shifts');
 const { OrderError, applyOrderOp, mergeOrders, tableStatusFor, stampCount } = require('./src/orders');
 const { businessDayOf, contribution, refundContribution, merge } = require('./src/stats');
 
@@ -920,6 +922,96 @@ OP_HANDLERS.supplierPayment = async (tx, { op, terminalId, staff, matrix }) => {
   return { status: 'ok' };
 };
 
+// ---------------------------------------------------------------------------
+// Mesai (9. ekran): kişi kendi PIN'iyle başlar/biter/molaya çıkar (internetsiz, kuyruktan).
+// payload: { entryId, action: 'in'|'out'|'breakStart'|'breakEnd', at, auto? }
+// Geç kalma sunucuda plan ve toleransla hesaplanır (src/shifts.js; kasadaki shifts_logic.py ile aynı).
+// ---------------------------------------------------------------------------
+
+const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+
+OP_HANDLERS.timeClock = async (tx, { op, terminalId, staff }) => {
+  if (!staff || staff.active !== true) return { status: 'rejected', error: 'Personel bulunamadı.' };
+  const p = op.payload;
+  if (!['in', 'out', 'breakStart', 'breakEnd'].includes(p.action)) return { status: 'rejected', error: 'Mesai işlemi geçersiz.' };
+  if (typeof p.entryId !== 'string' || !/^[\w-]{1,64}$/.test(p.entryId)) return { status: 'rejected', error: 'Kayıt kimliği geçersiz.' };
+  if (typeof p.at !== 'string' || !ISO_RE.test(p.at)) return { status: 'rejected', error: 'Saat geçersiz.' };
+  const ref = db.doc(`timeEntries/${p.entryId}`);
+  const snap = await tx.get(ref);
+  const now = FieldValue.serverTimestamp();
+  if (p.action === 'in') {
+    if (snap.exists) return { status: 'rejected', error: 'Bu mesai zaten başlamış.' };
+    const day = shiftCalc.businessDayOf(p.at);
+    const [plan, mods] = await Promise.all([tx.get(db.doc(`shiftPlans/${op.staffId}_${day}`)), tx.get(db.doc('settings/modules'))]);
+    const tolerance = normalizeModules(mods.data()).staff.lateToleranceMinutes;
+    tx.set(ref, { staffId: op.staffId, businessDay: day, clockIn: p.at, clockOut: null, breaks: [],
+      late: shiftCalc.lateMinutes(plan.exists && !plan.data().deleted ? plan.data() : null, p.at, tolerance), flags: [],
+      terminalId, createdAt: now, updatedAt: now });
+    return { status: 'ok' };
+  }
+  if (!snap.exists) return { status: 'rejected', error: 'Mesai kaydı bulunamadı.' };
+  const e = snap.data();
+  if (e.staffId !== op.staffId) return { status: 'rejected', error: 'Başkasının mesaisi değiştirilemez.' };
+  if (e.clockOut) return { status: 'rejected', error: 'Mesai bitmiş.' };
+  const breaks = [...(e.breaks || [])];
+  const open = breaks.length > 0 && !breaks[breaks.length - 1].end;
+  if (p.action === 'breakStart') {
+    if (open) return { status: 'rejected', error: 'Zaten molada.' };
+    breaks.push({ start: p.at, end: null });
+    tx.update(ref, { breaks, updatedAt: now });
+  } else if (p.action === 'breakEnd') {
+    if (!open) return { status: 'rejected', error: 'Molada değil.' };
+    breaks[breaks.length - 1] = { ...breaks[breaks.length - 1], end: p.at };
+    tx.update(ref, { breaks, updatedAt: now });
+  } else {
+    if (open) breaks[breaks.length - 1] = { ...breaks[breaks.length - 1], end: p.at };
+    const flags = p.auto === true ? [...(e.flags || []), 'forgotClockOut'] : e.flags || [];
+    tx.update(ref, { clockOut: p.at, breaks, flags, updatedAt: now });
+  }
+  return { status: 'ok' };
+};
+
+// Mesai düzeltme (shifts yetkisi; gerekçe zorunlu). Eksik kaydı (gelmiş ama başlatmamış) da açabilir.
+// payload: { entryId, staffId, clockIn, clockOut, breaks, reason, approvedBy? }
+OP_HANDLERS.timeEdit = async (tx, { op, terminalId, staff, matrix }) => {
+  if (!staff) return { status: 'rejected', error: 'Personel bulunamadı.' };
+  const p = op.payload;
+  const approverId = typeof p.approvedBy === 'string' && p.approvedBy ? p.approvedBy : op.staffId;
+  let approver = staff;
+  if (approverId !== op.staffId) {
+    const a = await tx.get(db.doc(`staff/${approverId}`));
+    approver = a.exists && a.data().active === true ? a.data() : null;
+  }
+  const ref = typeof p.entryId === 'string' && /^[\w-]{1,64}$/.test(p.entryId) ? db.doc(`timeEntries/${p.entryId}`) : null;
+  const snap = ref ? await tx.get(ref) : null;
+  if (!approver || !hasPermission(matrix, approver.role, 'shifts', approver.permissions)) {
+    return { status: 'rejected', error: 'Bu işlem için yetki yok (shifts).' };
+  }
+  if (!ref || typeof p.staffId !== 'string') return { status: 'rejected', error: 'Kayıt geçersiz.' };
+  const reason = typeof p.reason === 'string' ? p.reason.trim().slice(0, 120) : '';
+  if (!reason) return { status: 'rejected', error: 'Gerekçe zorunludur.' };
+  if (!ISO_RE.test(p.clockIn || '') || (p.clockOut && !ISO_RE.test(p.clockOut))) return { status: 'rejected', error: 'Saat geçersiz.' };
+  if (p.clockOut && Date.parse(`${p.clockOut.slice(0, 19)}Z`) <= Date.parse(`${p.clockIn.slice(0, 19)}Z`)) {
+    return { status: 'rejected', error: 'Çıkış girişten sonra olmalıdır.' };
+  }
+  const breaks = (Array.isArray(p.breaks) ? p.breaks : []).filter((b) => ISO_RE.test(b?.start || '')).slice(0, 10)
+    .map((b) => ({ start: b.start, end: ISO_RE.test(b.end || '') ? b.end : null }));
+  const before = snap.exists ? snap.data() : null;
+  if (before && before.staffId !== p.staffId) return { status: 'rejected', error: 'Kayıt başka personelin.' };
+  const day = shiftCalc.businessDayOf(p.clockIn);
+  const [plan, mods] = await Promise.all([tx.get(db.doc(`shiftPlans/${p.staffId}_${day}`)), tx.get(db.doc('settings/modules'))]);
+  const tolerance = normalizeModules(mods.data()).staff.lateToleranceMinutes;
+  const flags = [...new Set([...(before?.flags || []), 'edited'])];
+  tx.set(ref, { staffId: p.staffId, businessDay: day, clockIn: p.clockIn, clockOut: p.clockOut || null, breaks,
+    late: shiftCalc.lateMinutes(plan.exists && !plan.data().deleted ? plan.data() : null, p.clockIn, tolerance),
+    flags, resolved: true, editedBy: approverId, reason, terminalId,
+    createdAt: before?.createdAt || FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
+  audit(tx, { action: 'time_edit', actor: op.staffId, approvedBy: approverId, target: ref.path, reason,
+    before: before ? { clockIn: before.clockIn, clockOut: before.clockOut } : null,
+    after: { clockIn: p.clockIn, clockOut: p.clockOut || null }, terminalId, clientAt: parseClientTime(op.createdAt) });
+  return { status: 'ok' };
+};
+
 // Boş masayı elle rezerve işaretleme
 OP_HANDLERS.setTableReserved = async (tx, { op, staff, matrix }) => {
   if (!staff) return { status: 'rejected', error: 'Personel bulunamadı.' };
@@ -1706,6 +1798,60 @@ exports.deleteIngredient = onCall(async (request) => {
     audit(tx, { action: 'ingredient_delete', actor: actor.uid, target: `ingredients/${id}` });
   });
   return { deleted: true };
+});
+
+// Vardiya planı (9. ekran): hücreler toplu kaydedilir; belge kimliği personel_tarih.
+exports.saveShiftPlans = onCall(async (request) => {
+  const actor = await requireStaff(request, 'shifts');
+  const cells = request.data?.cells;
+  if (!Array.isArray(cells) || cells.length < 1 || cells.length > 300) throw new HttpsError('invalid-argument', 'Hücre yok.');
+  const clean = cells.map((c) => validated(validateShiftCell, c));
+  const batch = db.batch();
+  for (const c of clean) {
+    const ref = db.doc(`shiftPlans/${c.staffId}_${c.date}`);
+    if (c.clear) batch.set(ref, { staffId: c.staffId, date: c.date, deleted: true, updatedAt: FieldValue.serverTimestamp() });
+    else batch.set(ref, { ...c, deleted: false, published: false, updatedBy: actor.uid, updatedAt: FieldValue.serverTimestamp() });
+  }
+  batch.set(db.collection('auditLogs').doc(), { action: 'shift_plan_save', actor: actor.uid, target: 'shiftPlans',
+    after: { cells: clean.length }, at: FieldValue.serverTimestamp() });
+  await batch.commit();
+  return { saved: clean.length };
+});
+
+// Haftayı yayınla: haftanın bütün hücreleri personele görünür olur
+exports.publishShiftWeek = onCall(async (request) => {
+  const actor = await requireStaff(request, 'shifts');
+  const start = request.data?.weekStart;
+  if (typeof start !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(start)) throw new HttpsError('invalid-argument', 'Hafta geçersiz.');
+  const end = new Date(Date.parse(`${start}T00:00:00Z`) + 6 * 86400_000).toISOString().slice(0, 10);
+  const snap = await db.collection('shiftPlans').where('date', '>=', start).where('date', '<=', end).get();
+  const batch = db.batch();
+  snap.docs.forEach((d) => batch.update(d.ref, { published: true, updatedAt: FieldValue.serverTimestamp() }));
+  batch.set(db.collection('auditLogs').doc(), { action: 'shift_publish', actor: actor.uid, target: `shiftPlans/${start}`,
+    at: FieldValue.serverTimestamp() });
+  await batch.commit();
+  return { published: snap.size };
+});
+
+// Saatlik ücret: yalnızca Yönetici yazar ve okur (terminal önbelleğine inmez).
+exports.saveWages = onCall(async (request) => {
+  const actor = await requireStaff(request);
+  if (actor.role !== 'owner') throw new HttpsError('permission-denied', 'Ücretleri yalnızca yönetici değiştirebilir.');
+  const wages = request.data?.wages;
+  if (!wages || typeof wages !== 'object' || Object.keys(wages).length > 200) {
+    throw new HttpsError('invalid-argument', 'Ücret listesi geçersiz.');
+  }
+  const batch = db.batch();
+  for (const [staffId, rate] of Object.entries(wages)) {
+    if (rate !== null && (!Number.isInteger(rate) || rate < 0 || rate > 10_000_000)) {
+      throw new HttpsError('invalid-argument', 'Saatlik ücret kuruş cinsinden olmalıdır.');
+    }
+    batch.set(db.doc(`staffWages/${staffId}`), { hourlyRate: rate, updatedBy: actor.uid, updatedAt: FieldValue.serverTimestamp() });
+  }
+  batch.set(db.collection('auditLogs').doc(), { action: 'wages_change', actor: actor.uid, target: 'staffWages',
+    after: { count: Object.keys(wages).length }, at: FieldValue.serverTimestamp() });
+  await batch.commit();
+  return { saved: Object.keys(wages).length };
 });
 
 // Tedarikçiler ve sipariş (8b). Teslim alma ve ödeme kuyruktan gelir (internetsiz).

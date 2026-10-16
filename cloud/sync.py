@@ -36,6 +36,7 @@ PULL_COLLECTIONS = {
     'ingredients': lambda docs: database.upsert_cache('ingredients', docs),   # stok (8. ekran)
     'suppliers': lambda docs: database.upsert_cache('suppliers', docs),
     'purchaseOrders': lambda docs: database.upsert_cache('purchaseOrders', docs),
+    'shiftPlans': lambda docs: database.upsert_cache('shiftPlans', docs),   # vardiya planı (9. ekran)
 }
 
 # Yalnızca yakın geçmişi gereken koleksiyonlar (ilk senkronda tümü indirilmez)

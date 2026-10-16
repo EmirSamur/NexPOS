@@ -160,7 +160,8 @@ Yalnızca Yönetici açıp kapatır; ayar bulutta tutulur ve bütün cihazlara i
   (Excel'de açılır) ve PDF olarak kaydedilir.
 - Raporlar bu bilgisayardaki kayıtlardan hesaplanır, internetsiz çalışır ve kasa Z raporuyla aynı hesabı kullanır.
   Günlük özet ayrıca buluta (`dailyStats`) yazılır; ileride telefondan rapor bakmak için.
-- Garson **Vardiyam** düğmesiyle bugünkü kendi cirosunu, bahşişini ve işlemlerini görür.
+- Garson **Vardiyam** düğmesiyle bugünkü kendi cirosunu, bahşişini ve işlemlerini, mesai modülü açıksa
+  vardiya planını ve mesaisini görür.
 
 ## Stok ve reçete
 
@@ -181,6 +182,21 @@ Yalnızca Yönetici açıp kapatır; ayar bulutta tutulur ve bütün cihazlara i
    gerekçeyle. Maliyet reçeteden hesaplanır.
 9. Raporlarda ürün maliyeti/kâr sütunları, **Menü Analizi** sekmesi ve Gelir–Gider'de ürün maliyeti çıkar.
    Kritik seviyenin altındaki malzemeler Ana Sayfa'da uyarı olarak görünür.
+
+## Personel vardiya ve mesai
+
+1. **Ayarlar → Modüller → Personel ve mesai**'yi açın (geç kalma toleransı varsayılan 5 dk).
+2. **Kullanıcılar → Vardiya ve Mesai → Vardiya Planı**: hücreye tıklayıp saat/mola/izin girin ya da bir şablon
+   (Sabah, Akşam, Ara, İzin) seçip hücrelere tıklayarak boyayın; **Geçen haftayı kopyala** boş günleri doldurur.
+   Haftalık 45 saati aşan kişi ⚠ ile işaretlenir. **Kaydet** (internet ister) → **Yayınla**: personel planı
+   **Vardiyam** penceresinde görür. **PDF** ve **WhatsApp metni** (panoya kopyalanır) ile de paylaşılır.
+3. Personel PIN'le girince "Mesaiye başla / Sadece giriş yap" sorulur. Mola ve çıkış **Vardiyam**'dan
+   (ya da üst bardaki isimden) yapılır; internetsiz çalışır. Giriş kartında 🟢 Mesaide / ☕ Molada görünür.
+4. Çıkışı unutulan mesai, iş günü bitince (05:00) planlanan bitişle kapanır ve **Mesai** sekmesindeki
+   **Düzeltilecekler** listesine düşer. Düzeltme gerekçeyle yapılır, eski ve yeni değer kayda geçer.
+5. **Mesai** sekmesi: plan / çalışılan / mola / fazla mesai / geç / gelmedi / unutulan çıkış / ciro-saat;
+   kişiye çift tıklayınca gün gün döküm. CSV ve PDF. **Saatlik ücretler** (yalnızca Yönetici, internet ister)
+   girilirse işçilik maliyeti ve cironun yüzdesi görünür; ücretler bu bilgisayara kaydedilmez.
 
 ## Mutfak / bar ekranı (tablet)
 

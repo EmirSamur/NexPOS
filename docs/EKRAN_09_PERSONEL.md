@@ -1,4 +1,14 @@
-# 9. Ekran: Personel Vardiya ve Mesai (tarif, onay bekliyor)
+# 9. Ekran: Personel Vardiya ve Mesai
+
+> Durum: **uygulandı**. Sorulara verilen cevaplar (hepsi öneri yönünde): mesaiye başlamadan sipariş alınır
+> (yalnızca hatırlatma çıkar); unutulan çıkış gün sonunda planlanan bitişle kapanıp düzeltme listesine düşer;
+> mola düğmeyle, basılmadıysa plandaki mola düşülür; saatlik ücret isteğe bağlı ve yalnızca Yönetici görür;
+> izin yalnızca işaretlenir (bakiye yok); geç kalma toleransı 5 dk (Modüller'den değişir); plan personele
+> Vardiyam + PDF + WhatsApp metniyle ulaşır.
+>
+> Uygulama notları: Plan ve mesai, panelde **Kullanıcılar → Vardiya ve Mesai** sayfasındadır (iki sekme).
+> Vardiyam, garson ekranında "Vardiyam" düğmesinden ve üst bardaki isimden açılır. Dünden açık kalan mesai,
+> ertesi gün giriş ekranı açılınca ya da kişi mesaiye başlarken kendiliğinden kapanır.
 
 ## Amaç
 
@@ -111,13 +121,13 @@ bugünkü giriş saati ve mola. Mesaiye başla / bitir / mola düğmeleri de bur
 
 ## "Bitti" sayılma ölçütü
 
-- [ ] Modül açılıp kapanıyor; kapalıyken mesai sorulmuyor
-- [ ] Mesaiye başla / bitir / mola internetsiz çalışıyor, buluta bir kez gidiyor; giriş kartında durum görünüyor
-- [ ] Geç kalma işaretleniyor; unutulan çıkış gün sonunda kapanıp düzeltme listesine düşüyor
-- [ ] Yetkili düzeltme gerekçeyle kayda geçiyor
-- [ ] Haftalık plan: hücre düzenleme, şablon, izin, geçen haftayı kopyalama, 45 saat uyarısı, günlük kişi sayısı,
+- [x] Modül açılıp kapanıyor; kapalıyken mesai sorulmuyor
+- [x] Mesaiye başla / bitir / mola internetsiz çalışıyor, buluta bir kez gidiyor; giriş kartında durum görünüyor
+- [x] Geç kalma işaretleniyor; unutulan çıkış gün sonunda kapanıp düzeltme listesine düşüyor
+- [x] Yetkili düzeltme gerekçeyle kayda geçiyor
+- [x] Haftalık plan: hücre düzenleme, şablon, izin, geçen haftayı kopyalama, 45 saat uyarısı, günlük kişi sayısı,
       yayınla, PDF ve WhatsApp metni
-- [ ] Mesai raporu: plan/çalışılan/mola/fazla mesai/geç/gelmedi/unutulan çıkış/ciro-saat; gün gün döküm; CSV/PDF
-- [ ] İşçilik maliyeti yalnızca Yönetici'ye görünüyor, terminale inmiyor
-- [ ] Vardiyam penceresi planı ve haftalık saati gösteriyor
-- [ ] Testler: saat hesapları (gece yarısını geçen vardiya, mola, geç kalma, 45 saat), yerel ve emülatör
+- [x] Mesai raporu: plan/çalışılan/mola/fazla mesai/geç/gelmedi/unutulan çıkış/ciro-saat; gün gün döküm; CSV/PDF
+- [x] İşçilik maliyeti yalnızca Yönetici'ye görünüyor, terminale inmiyor
+- [x] Vardiyam penceresi planı ve haftalık saati gösteriyor
+- [x] Testler: saat hesapları (gece yarısını geçen vardiya, mola, geç kalma, 45 saat), yerel ve emülatör

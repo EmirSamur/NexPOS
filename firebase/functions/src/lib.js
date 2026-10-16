@@ -22,6 +22,7 @@ const PERMISSIONS = [
   'markSoldOut', // Ürünü "tükendi" işaretleme (internetsiz de çalışır)
   'stock', // Malzeme, reçete, sayım, alış (8. ekran)
   'waste', // Zayi girme
+  'shifts', // Vardiya planı, mesai düzeltme ve raporu (9. ekran)
 ];
 
 function allPermissions(value) {
@@ -627,6 +628,7 @@ const DEFAULT_MODULES = {
   paymentMethods: { cash: true, card: true, meal: true },
   tips: true,
   stock: { enabled: false, askOnVoid: true },
+  staff: { enabled: false, lateToleranceMinutes: 5 },
 };
 
 function strictBool(v, fallback) {
@@ -652,6 +654,7 @@ function validateModules(input) {
   const pr = d.printing || {};
   const pm = d.paymentMethods || {};
   const st = d.stock || {};
+  const sf = d.staff || {};
   const methods = {
     cash: strictBool(pm.cash, true),
     card: strictBool(pm.card, true),
@@ -669,6 +672,9 @@ function validateModules(input) {
     paymentMethods: methods,
     tips: strictBool(d.tips, D.tips),
     stock: { enabled: strictBool(st.enabled, D.stock.enabled), askOnVoid: strictBool(st.askOnVoid, D.stock.askOnVoid) },
+    staff: { enabled: strictBool(sf.enabled, D.staff.enabled),
+      lateToleranceMinutes: intIn(sf.lateToleranceMinutes, D.staff.lateToleranceMinutes, 0, 60,
+        'Geç kalma toleransı 0-60 dakika olmalıdır.') },
   };
 }
 
@@ -689,7 +695,33 @@ function expectedCash(session, payments, refunds) {
   return session.openingCash + cashIn - cashOut + moves;
 }
 
+// ---------------------------------------------------------------------------
+// Vardiya planı ve mesai (9. ekran)
+// ---------------------------------------------------------------------------
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const PLAN_LEAVES = ['annual', 'sick', 'unpaid', 'holiday'];
+
+// Plan hücresi: { staffId, date, start, end, breakMinutes, leave, note } ya da { staffId, date, clear: true }
+function validateShiftCell(c) {
+  const d = c || {};
+  const staffId = text(d.staffId, 'Personel', { max: 128 });
+  if (typeof d.date !== 'string' || !DATE_RE.test(d.date)) throw new MenuError('Tarih geçersiz.');
+  if (d.clear === true) return { staffId, date: d.date, clear: true };
+  const note = text(d.note, 'Not', { max: 80, optional: true });
+  if (d.leave) {
+    if (!PLAN_LEAVES.includes(d.leave)) throw new MenuError('İzin türü geçersiz.');
+    return { staffId, date: d.date, leave: d.leave, start: null, end: null, breakMinutes: 0, note };
+  }
+  if (!TIME_RE.test(d.start || '') || !TIME_RE.test(d.end || '')) throw new MenuError('Saat SS:DD biçiminde olmalıdır.');
+  if (d.start === d.end) throw new MenuError('Başlangıç ve bitiş aynı olamaz.');
+  return { staffId, date: d.date, leave: null, start: d.start, end: d.end,
+    breakMinutes: intIn(d.breakMinutes, 0, 0, 240, 'Mola 0-240 dakika olmalıdır.'), note };
+}
+
 module.exports = {
+  validateShiftCell,
   PURCHASE_PAYMENT_METHODS,
   validateSupplier,
   validatePurchaseOrder,

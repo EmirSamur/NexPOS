@@ -36,6 +36,7 @@ PERMISSIONS = [
     ('markSoldOut', 'Tükendi İşaretleyebilir'),
     ('stock', 'Stok / Reçete / Sayım Yapabilir'),
     ('waste', 'Zayi Girebilir'),
+    ('shifts', 'Vardiya Planı / Mesai Yönetebilir'),
 ]
 PERMISSION_KEYS = [k for k, _ in PERMISSIONS]
 PERMISSION_LABELS = dict(PERMISSIONS)

@@ -596,3 +596,48 @@ def test_tedarik_siparis_internetsiz_teslim_odeme_bulutla_ayni(db, client):
     # Senkrondan sonra yerel görünüm aynı (çift sayım yok)
     assert stock.ingredient_map()[esp]['stock'] == 4000
     assert next(s for s in stock.suppliers() if s['id'] == sup)['balance'] == 155000
+
+
+def test_vardiya_plan_internetsiz_mesai_duzeltme_bulutla_ayni(db, client):
+    import requests
+    import shifts
+    from cloud.admin_api import AdminApi
+    from cloud.pairing import pair_terminal
+    from cloud.sync import SyncEngine
+
+    requests.delete('http://127.0.0.1:8080/emulator/v1/projects/demo-nexpos/databases/(default)/documents',
+                    timeout=10).raise_for_status()
+    email = f'vardiya-{uuid.uuid4().hex[:6]}@kafe.test'
+    owner_id = create_owner(email)
+    creds, _ = pair_terminal(client, email, 'sahip-sifre-1', 'Kasa 1')
+    api = AdminApi(client, client.sign_in_with_password(email, 'sahip-sifre-1'))
+    engine = SyncEngine(client, creds)
+    api.save_modules({'staff': {'enabled': True, 'lateToleranceMinutes': 5}})
+    waiter = api.create_staff('Elif Demir', 'waiter', '730591')['staffId']
+    api.save_shift_plans([{'staffId': waiter, 'date': '2026-10-12', 'start': '09:00', 'end': '17:00', 'breakMinutes': 30},
+                          {'staffId': waiter, 'date': '2026-10-13', 'leave': 'annual'}])
+    api.publish_shift_week('2026-10-12')
+    engine.run_once()
+    assert shifts.enabled() and shifts.plan_for(waiter, '2026-10-12')['published']
+    user = db.login_with_pin(waiter, '730591')
+    owner = db.login_with_pin(owner_id, '482913')
+
+    # ---- İnternetsiz: 09:08 giriş (geç), mola, çıkış unutuldu → gün sonunda plan bitişiyle kapanır, sonra düzeltilir
+    e = shifts.clock(user, 'in', '2026-10-12T09:08:00+03:00')
+    shifts.clock(user, 'breakStart', '2026-10-12T13:00:00+03:00')
+    shifts.clock(user, 'breakEnd', '2026-10-12T13:40:00+03:00')
+    assert shifts.auto_close_forgotten('2026-10-13T06:00:00+03:00') == 1
+    fixed = shifts.edit(owner, waiter, e['clockIn'], '2026-10-12T18:00:00+03:00', 'Kapanışta kaldı', entry_id=e['id'])
+    status = engine.run_once()
+    assert status.online and db.outbox_counts() == (0, 0), db.get_failed_ops()
+    cloud = client.get_doc(f"timeEntries/{e['id']}", api.session)[1]
+    assert (cloud['clockIn'], cloud['clockOut'], cloud['late'], cloud['resolved']) == \
+        (fixed['clockIn'], fixed['clockOut'], 8, True)
+    assert sorted(cloud['flags']) == ['edited', 'forgotClockOut'] and cloud['breaks'] == fixed['breaks']
+    row = next(r for r in shifts.report('2026-10-12', '2026-10-18', today_='2026-10-16') if r['staffId'] == waiter)
+    assert (row['worked'], row['breaks'], row['lateCount'], row['leave']) == (8 * 60 + 52 - 40, 40, 1, 1)
+    # Ücret yalnızca yönetici okur; terminal önbelleğine inmez
+    api.save_wages({waiter: 15000})
+    assert api.get_wages() == {waiter: 15000}
+    engine.run_once()
+    assert db.cache_rows('staffWages') == []

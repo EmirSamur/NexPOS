@@ -208,10 +208,10 @@ class Avatar(QLabel):
 class StaffCard(QPushButton):
     """Giriş ekranındaki personel kartı."""
 
-    def __init__(self, staff, role_label, parent=None):
+    def __init__(self, staff, role_label, parent=None, badge=''):
         super().__init__(parent)
         self.staff = staff
-        self.setFixedSize(150, 160)
+        self.setFixedSize(150, 180 if badge else 160)
         self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet(f"""
             QPushButton {{ background: white; border: 1.5px solid {COLORS['border_light']}; border-radius: 16px; }}
@@ -229,10 +229,16 @@ class StaffCard(QPushButton):
         role = QLabel(role_label)
         role.setAlignment(Qt.AlignCenter)
         role.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px; background: transparent; border: none;")
-        for w in (name, role):
+        labels = [name, role]
+        if badge:  # mesai durumu (9. ekran): 🟢 Mesaide 08:58 / ☕ Molada / İzinli
+            state = QLabel(badge)
+            state.setAlignment(Qt.AlignCenter)
+            state.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 11px; font-weight: bold; "
+                                f"background: {COLORS['bg_input']}; border: none; border-radius: 8px; padding: 2px 4px;")
+            labels.append(state)
+        for w in labels:
             w.setAttribute(Qt.WA_TransparentForMouseEvents)
-        ly.addWidget(name)
-        ly.addWidget(role)
+            ly.addWidget(w)
 
 
 class SyncStatusPill(QLabel):

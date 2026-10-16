@@ -117,16 +117,35 @@ Bu kurallar Genç Ofis'te işe yarayan yaklaşımın aynısı:
 }
 ```
 
-### `shifts/{id}`: vardiya planı ve mesai
+### `shiftPlans/{staffId}_{tarih}`: vardiya planı (9. ekran; panelden, `saveShiftPlans`)
 ```ts
 {
-  staffId, date: "2026-10-13",
-  plannedStart: Timestamp, plannedEnd: Timestamp,
-  clockIn?: Timestamp, clockOut?: Timestamp,
-  breakMinutes: number,
-  note?: string
+  staffId, date: "2026-10-13",          // iş günü; 16:00–01:00 gibi gece yarısını geçen vardiya bu güne aittir
+  start: "09:00" | null, end: "17:00" | null, breakMinutes: 30,
+  leave: null | "annual" | "sick" | "unpaid" | "holiday",
+  note, published: boolean,             // publishShiftWeek ile true; kaydedilen hücre taslağa döner
+  deleted: boolean, updatedBy, updatedAt
 }
 ```
+> Okuma: personel ve terminal. Yazma: yalnızca fonksiyon (`shifts` yetkisi).
+
+### `timeEntries/{entryId}`: mesai kaydı (kuyruktaki `timeClock` / `timeEdit`)
+```ts
+{
+  staffId, businessDay, clockIn: "2026-10-13T09:07:00+03:00", clockOut: string | null,
+  breaks: [ { start, end | null } ],
+  late: 7,                              // dakika; plan + tolerans (settings/modules.staff) ile sunucuda hesaplanır
+  flags: ["forgotClockOut", "edited"], resolved?, editedBy?, reason?, terminalId
+}
+```
+> `timeClock` payload `{ entryId, action: "in"|"out"|"breakStart"|"breakEnd", at, auto? }`: kişi kendi kaydını
+> değiştirir. `auto: true` gün sonunda unutulan çıkışın planlanan bitişle kapatıldığını gösterir.
+> `timeEdit` payload `{ entryId, staffId, clockIn, clockOut, breaks, reason, approvedBy }`: `shifts` yetkisi ve
+> gerekçe zorunlu; eski/yeni değer `auditLogs` (time_edit) kaydına geçer. Okuma: manager+ ve terminal.
+> Hesaplar (çalışılan, mola, geç, fazla mesai) `functions/src/shifts.js` ve `shifts_logic.py`'de, ortak senaryolarla.
+
+### `staffWages/{staffId}`: saatlik ücret (yalnızca owner okur/yazar; terminale inmez)
+`{ hourlyRate: 15000 | null }` — kuruş / saat, `saveWages` ile.
 
 ---
 
@@ -386,7 +405,9 @@ Siparişi değiştiren her işlem bir **callable function** üzerinden yapılır
   cashSession: { required, diffReasonThreshold: 2000 },   // kuruş
   printing: { enabled, kitchenTickets },
   paymentMethods: { cash, card, meal },
-  tips: boolean
+  tips: boolean,
+  stock: { enabled, askOnVoid },
+  staff: { enabled, lateToleranceMinutes: 5 }            // 9. ekran
 }
 ```
 > Yazıcı seçimi bulutta değil, her bilgisayarda yereldir.
@@ -537,7 +558,10 @@ Adisyon ödenip kapanınca ya da iptal edilince katkısı açıldığı iş gün
 |---|---|---|
 | `categories`, `products`, `optionGroups`, `campaigns` | herkes (app için) | manager+ |
 | `settings/*` | herkes (`loyalty`, `quiz`) / personel (`general`) | owner |
-| `staff`, `shifts` | personel (kendi), terminal, manager+ (tümü) | manager+ (yalnızca fonksiyon üzerinden; claim senkronu için) |
+| `staff` | personel (kendi), terminal, manager+ (tümü) | manager+ (yalnızca fonksiyon üzerinden; claim senkronu için) |
+| `shiftPlans` | personel, terminal | yalnızca fonksiyon (`shifts` yetkisi) |
+| `timeEntries` | manager+, terminal | yalnızca fonksiyon (kuyruktan) |
+| `staffWages` | owner | yalnızca fonksiyon (owner) |
 | `staffPins` | terminal | yalnızca fonksiyon |
 | `terminals` | manager+ | yalnızca fonksiyon |
 | `expenses`, `waste` | manager+ | manager+ / terminal (kuyruktan) |
