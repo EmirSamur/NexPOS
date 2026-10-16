@@ -1,6 +1,6 @@
 # 8. Ekran: Stok, Reçete ve Tedarik
 
-> Durum: **8a uygulandı**, 8b sırada. Sorulara verilen cevaplar (hepsi öneri yönünde): stok Gönder'de düşer;
+> Durum: **uygulandı** (8a ve 8b). Sorulara verilen cevaplar (hepsi öneri yönünde): stok Gönder'de düşer;
 > iptalde "Hazırlandı mı?" sorulur (Modüller'den kapatılabilir); maliyet ağırlıklı ortalama (alışlar 8b'de);
 > malzeme bitince ürün tükendi yapılmaz, yalnızca uyarı; tedarikçi borç bakiyesi 8b'de; hazır şablon var.
 >
@@ -12,6 +12,11 @@
 > - Reçetede kullanılan malzeme silinemez.
 > - Maliyet ve kâr güncel birim maliyetlerle hesaplanır; ürün penceresinde ve raporlarda yalnızca
 >   `viewReports` yetkisi olan görür.
+> - 8b: tedarikçi ve sipariş taslağı bulutta düzenlenir (internet ister); teslim alma, tedarikçi ödemesi,
+>   sayım ve zayi internetsiz yapılır ve kuyrukla gider. Teslimde birim maliyet kasada hemen, sunucuda aynı
+>   formülle güncellenir. Kasa açıkken nakit ödeme kasadan çıkış olarak düşer ve `cash` yetkisi ister.
+> - İlk sayım (hiç sayım yokken yapılan) kayıp sayılmaz; sonraki sayımların farkı tüketim raporunda görünür.
+> - Gönderilmiş ürün bölünüp ana parçası hazırlanmadan iptal edilirse güncel adedi kadar stoğa döner.
 
 ## Amaç
 
@@ -199,8 +204,8 @@ Ekran büyük olduğu için iki adımda yapılır, her adım kendi başına işe
 - [x] Testler: reçete hesabı (seçenekli), düşme/iade senaryoları (yerel + sunucu aynı sonuç), emülatör
 
 **8b**
-- [ ] Sayım (taslak, kısmi, onay), sayım farkı ve teorik/gerçek tüketim raporu
-- [ ] Yeni zayi (ürün ve malzeme), eski kayıtlarla birlikte raporlanıyor
-- [ ] Tedarikçi, sipariş önerisi, sipariş PDF/metni, kısmi teslim alma, ağırlıklı ortalama maliyet
-- [ ] Ödendi / ödenecek, Masraflar'a ve kasaya yansıma, tedarikçi bakiyesi
-- [ ] Raporlar → Stok sekmesi
+- [x] Sayım (taslak, kısmi, onay), sayım farkı ve teorik/gerçek tüketim raporu
+- [x] Yeni zayi (ürün ve malzeme), eski kayıtlarla birlikte raporlanıyor
+- [x] Tedarikçi, sipariş önerisi, sipariş PDF/metni, kısmi teslim alma, ağırlıklı ortalama maliyet
+- [x] Ödendi / ödenecek, Masraflar'a ve kasaya yansıma, tedarikçi bakiyesi
+- [x] Raporlar → Stok sekmesi

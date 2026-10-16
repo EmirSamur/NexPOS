@@ -228,18 +228,25 @@ Bu kurallar Genç Ofis'te işe yarayan yaklaşımın aynısı:
 > Yetki: sale/void_return `openTable`, count/adjust `stock`, waste `waste`.
 
 ### `suppliers/{id}`
-`{ name, contactName, phone, email, note }`
+`{ name, contactName, phone, email, note, balance (kuruş, borç), deleted }` — bakiye yalnızca fonksiyonlarla değişir.
 
 ### `purchaseOrders/{id}`
 ```ts
 {
-  supplierId,
-  status: "draft"|"sent"|"received"|"cancelled",
-  lines: [ { ingredientId, qty, unitCost } ],
-  total, createdBy, createdAt, receivedAt?
+  no: 12,                              // counters/purchaseOrders ile sırayla
+  supplierId, status: "draft"|"sent"|"partial"|"received"|"cancelled",
+  lines: [ { ingredientId, qty, amount, received? } ],   // qty temel birim, amount kuruş (satır toplamı)
+  total, note, createdBy, createdAt, receivedAt?
 }
 ```
-> "Teslim alındı" işaretlenince fonksiyon `purchase` hareketi yazar ve stoğu artırır.
+
+### `purchaseReceipts/{receiptId}` (kuyruktaki `receivePurchase`)
+`{ supplierId, purchaseOrderId?, lines, total, payment: { status: "paid"|"unpaid", method? }, note, by, at }`
+> Stok artar; birim maliyet = (eski stok × eski maliyet + gelen tutar) / (eski stok + gelen) — eksi stok 0 sayılır.
+> Ödenmediyse `suppliers.balance` artar. Ayrıca `stockMovements/{receiptId}` (type: purchase) yazılır.
+
+### `supplierPayments/{paymentId}` (kuyruktaki `supplierPayment`)
+`{ supplierId, amount, method: "cash"|"card"|"transfer", note, by, at }` — borç bakiyesi düşer.
 
 ---
 

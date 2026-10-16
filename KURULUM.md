@@ -172,7 +172,14 @@ Yalnızca Yönetici açıp kapatır; ayar bulutta tutulur ve bütün cihazlara i
    "Hazırlandı mı?" sorulur; hazırlanmadıysa stoğa döner.
 5. Reçeteler ürün penceresindeki **Reçete** sekmesinden, seçenek etkileri **Seçenek Grupları**'ndan düzenlenir;
    pencerede maliyet, kâr ve marj anında görünür.
-6. Raporlarda ürün maliyeti/kâr sütunları, **Menü Analizi** sekmesi ve Gelir–Gider'de ürün maliyeti çıkar.
+6. **Sayım** sekmesinde dönem sonu sayımı yapılır (gruba göre, kısmi, taslak kaydedilebilir); fark,
+   Raporlar → Stok'ta "olması gereken → kullanılan" olarak görünür.
+7. **Tedarikçiler** ve **Alışlar**: sipariş oluşturun ("Kritik malzemeleri ekle" önerir), metni WhatsApp'a
+   yapıştırın ya da PDF alın. Mal gelince **Teslim al**: gelen miktar ve fatura tutarı girilir, stok artar,
+   birim maliyet güncellenir; "Ödenecek" seçilirse tedarikçi borcuna eklenir, sonra **Ödeme yap** ile kapanır.
+8. **Zayi** (İşlemler → Zayi; barista/mutfak kendi panelindeki 🗑 Zayi düğmesiyle): ürün ya da malzeme,
+   gerekçeyle. Maliyet reçeteden hesaplanır.
+9. Raporlarda ürün maliyeti/kâr sütunları, **Menü Analizi** sekmesi ve Gelir–Gider'de ürün maliyeti çıkar.
    Kritik seviyenin altındaki malzemeler Ana Sayfa'da uyarı olarak görünür.
 
 ## Mutfak / bar ekranı (tablet)

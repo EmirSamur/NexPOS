@@ -606,8 +606,18 @@ class EffectDialog(QDialog):
 # 8b: Sayım, Alışlar, Tedarikçiler, Zayi
 # =====================================================================
 
+CELL_STYLE = "QDoubleSpinBox, QSpinBox, QComboBox, QLineEdit { padding: 2px 6px; min-height: 30px; max-height: 30px; }"
+
+
+def _cell(widget):
+    """Tablo hücresindeki giriş kutusu: satır yüksekliğine sığsın (genel stil daha yüksek)."""
+    widget.setStyleSheet(CELL_STYLE)
+    return widget
+
+
 def _table(headers, stretch=0):
     t = QTableWidget(0, len(headers))
+    t.verticalHeader().setDefaultSectionSize(44)
     t.setHorizontalHeaderLabels(headers)
     t.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
     t.horizontalHeader().setSectionResizeMode(stretch, QHeaderView.Stretch)
@@ -721,6 +731,9 @@ class CountPage(_Page):
         self.button("Taslak kaydet", self._draft)
         self.button("Sayımı onayla", self._approve, primary=True)
         self.table = _table(["Malzeme", "Sistemde", "Sayılan", "Birim", "Fark", "Fark tutarı"])
+        for c, w in ((2, 140), (3, 150)):
+            self.table.horizontalHeader().setSectionResizeMode(c, QHeaderView.Fixed)
+            self.table.setColumnWidth(c, w)
         self.ly.addWidget(self.table, 1)
         self.total = QLabel("")
         self.total.setStyleSheet("font-weight: bold; font-size: 14px;")
@@ -742,8 +755,9 @@ class CountPage(_Page):
         for r, h in enumerate(hist):
             counted = len(h['lines'])
             diff = sum(l['cost'] for l in h['lines'])
-            _set_row(self.history, r, [_time(h['at']), h['reason'] + (" (ilk sayım)" if h['initial'] else ""),
-                                       f"{counted} malzeme", format_tl(diff, sign=True)])
+            reason = h['reason'] if not h['initial'] or 'ilk' in h['reason'].lower() else f"{h['reason']} (ilk sayım)"
+            _set_row(self.history, r, [_time(h['at']), reason, f"{counted} malzeme",
+                                       "— (başlangıç)" if h['initial'] else format_tl(diff, sign=True)])
 
     def _collect(self):
         for ing_id, (spin, unit) in self.inputs.items():
@@ -757,6 +771,7 @@ class CountPage(_Page):
             self._collect()
         g = self.group.currentData()
         rows = [i for i in self.rows if g is None or i.get('group') == g]
+        self.table.setRowCount(0)  # eski giriş kutuları kalksın
         self.table.setRowCount(len(rows))
         self.inputs = {}
         for r, i in enumerate(rows):
@@ -776,8 +791,8 @@ class CountPage(_Page):
             spin.setValue(self.values[i['id']] if i['id'] in self.values else -1)
             spin.valueChanged.connect(self._update)
             unit.currentIndexChanged.connect(self._update)
-            self.table.setCellWidget(r, 2, spin)
-            self.table.setCellWidget(r, 3, unit)
+            self.table.setCellWidget(r, 2, _cell(spin))
+            self.table.setCellWidget(r, 3, _cell(unit))
             self.inputs[i['id']] = (spin, unit)
         self._update()
 
@@ -1068,6 +1083,9 @@ class _LinesEditor(QWidget):
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["Malzeme", "Miktar", "Birim", "Tutar (₺)"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        for c, w in ((1, 120), (2, 170), (3, 130)):
+            self.table.horizontalHeader().setSectionResizeMode(c, QHeaderView.Fixed)
+            self.table.setColumnWidth(c, w)
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(44)
         ly.addWidget(self.table, 1)
@@ -1128,7 +1146,7 @@ class _LinesEditor(QWidget):
             w.valueChanged.connect(self._total)
         amount.textChanged.connect(self._total)
         for c, w in enumerate((combo, qty, unit, amount)):
-            self.table.setCellWidget(r, c, w)
+            self.table.setCellWidget(r, c, _cell(w))
         self._total()
 
     def lines(self):
