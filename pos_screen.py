@@ -469,8 +469,9 @@ class POSScreen(QWidget):
                 result = self._do(pos.comp_line, self.user, oid, line['lineId'], reason, approver)
         elif dlg.action == 'void':
             approver, reason = authorize(self, self.user, 'voidItem', f"{line['name']} iptali")
-            if approver:
-                result = self._do(pos.void_line, self.user, oid, line['lineId'], reason, approver)
+            prepared = self._ask_prepared(f"{line['qty']}× {line['name']}") if approver else None
+            if approver and prepared is not None:
+                result = self._do(pos.void_line, self.user, oid, line['lineId'], reason, approver, prepared=prepared)
         if result:
             self.order = result
             self._refresh()
@@ -548,10 +549,33 @@ class POSScreen(QWidget):
                                     QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
                 return
             approver, reason = self.user['cloud_id'], "Gönderilmemiş adisyon"
+        prepared = True
+        if approver and pos.needs_approval_to_cancel(self.order):
+            prepared = self._ask_prepared("Adisyondaki gönderilmiş ürünler")
+            if prepared is None:
+                return
         if approver:
-            if self._do(pos.cancel_order, self.user, self.order['id'], reason, approver):
+            if self._do(pos.cancel_order, self.user, self.order['id'], reason, approver, prepared=prepared):
                 self.order = None
                 self.back_requested.emit()
+
+    def _ask_prepared(self, what):
+        """Stok modülü: iptal edilen ürün hazırlandı mı? True/False, vazgeçilirse None. Soru kapalıysa True."""
+        if not pos.ask_prepared():
+            return True
+        box = QMessageBox(self)
+        box.setWindowTitle("Ürün hazırlandı mı?")
+        box.setText(f"{what} hazırlanmış mıydı?")
+        box.setInformativeText("Hazırlandıysa zayi sayılır. Hazırlanmadıysa malzemeleri stoğa geri döner.")
+        made = box.addButton("Hazırlandı (zayi)", QMessageBox.AcceptRole)
+        not_made = box.addButton("Hazırlanmadı (stoğa dön)", QMessageBox.DestructiveRole)
+        box.addButton("Vazgeç", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() == made:
+            return True
+        if box.clickedButton() == not_made:
+            return False
+        return None
 
     def _pay(self):
         oid = self.order['id']

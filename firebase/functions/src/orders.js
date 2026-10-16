@@ -189,6 +189,8 @@ function applyOrderOp(order, op, payload, ctx) {
       line.by = ctx.staffId;
       line.approvedBy = p.approvedBy || ctx.staffId;
       line.actionAt = ctx.at;
+      // İptal edilen ürün hazırlanmış mıydı? (8. ekran: hazırlandıysa zayi, değilse stoğa döner)
+      if (op === 'voidItem') line.prepared = p.prepared !== false;
       break;
     }
     case 'setDiscount': {
@@ -276,6 +278,7 @@ function applyOrderOp(order, op, payload, ctx) {
       o.cancelReason = str(p.reason, 'Gerekçe', 120);
       o.closedAt = ctx.at;
       o.cancelledBy = ctx.staffId;
+      o.prepared = p.prepared !== false;
       o.approvedBy = p.approvedBy || ctx.staffId;
       break;
     }

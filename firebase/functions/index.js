@@ -43,6 +43,11 @@ const {
   validateGeneralSettings,
   validateModules,
   normalizeModules,
+  validateIngredient,
+  validateRecipe,
+  validateRecipeEffect,
+  validateStockMove,
+  STOCK_MOVE_TYPES,
   expectedCash,
 } = require('./src/lib');
 const { OrderError, applyOrderOp, mergeOrders, tableStatusFor, stampCount } = require('./src/orders');
@@ -783,6 +788,44 @@ OP_HANDLERS.updateTicket = async (tx, { op, staff }) => {
   const snap = await tx.get(ref);
   if (!snap.exists) return { status: 'rejected', error: 'Fiş bulunamadı.' };
   tx.update(ref, { status: p.status, [`${p.status}At`]: op.createdAt, updatedAt: FieldValue.serverTimestamp() });
+  return { status: 'ok' };
+};
+
+// Stok hareketi (8. ekran): satışta reçeteden düşme, iptalde iade, sayım, düzeltme, zayi.
+// Terminal reçeteyi kendisi hesaplar (internetsiz çalışır); sunucu yetkiyi denetler, malzemelerin
+// stoğunu artırır/azaltır ve hareketi kaydeder. Aynı hareket iki kez gelirse processedOps korur.
+OP_HANDLERS.stockMove = async (tx, { op, terminalId, staff, matrix }) => {
+  if (!staff) return { status: 'rejected', error: 'Personel bulunamadı.' };
+  let m;
+  try {
+    m = validateStockMove(op.payload);
+  } catch (e) {
+    if (e instanceof MenuError) return { status: 'rejected', error: e.message };
+    throw e;
+  }
+  const approverId = typeof op.payload.approvedBy === 'string' && op.payload.approvedBy ? op.payload.approvedBy : op.staffId;
+  let approver = staff;
+  if (approverId !== op.staffId) {
+    const a = await tx.get(db.doc(`staff/${approverId}`));
+    approver = a.exists && a.data().active === true ? a.data() : null;
+  }
+  const refs = m.lines.map((l) => db.doc(`ingredients/${l.ingredientId}`));
+  const snaps = refs.length ? await tx.getAll(...refs) : [];
+  const permission = STOCK_MOVE_TYPES[m.type];
+  if (!approver || !hasPermission(matrix, approver.role, permission, approver.permissions)) {
+    return { status: 'rejected', error: `Bu işlem için yetki yok (${permission}).` };
+  }
+  const now = FieldValue.serverTimestamp();
+  // Silinmiş ya da bilinmeyen malzeme satırı atlanır (reçete eski olabilir); hareket yine kaydedilir.
+  const applied = [];
+  snaps.forEach((snap, i) => {
+    if (!snap.exists) return;
+    tx.update(snap.ref, { stock: FieldValue.increment(m.lines[i].qty), updatedAt: now });
+    applied.push(m.lines[i]);
+  });
+  tx.set(db.doc(`stockMovements/${m.movementId}`), {
+    ...m, applied, by: op.staffId, approvedBy: approverId, terminalId, at: op.createdAt, createdAt: now,
+  });
   return { status: 'ok' };
 };
 
@@ -1531,6 +1574,94 @@ exports.importFloor = onCall(async (request) => {
     after: { areas: areas.length, tables: count }, at: FieldValue.serverTimestamp() });
   await batch.commit();
   return { areas: areaIds, tables: tableIds };
+});
+
+// ---------------------------------------------------------------------------
+// Stok: malzemeler (8. ekran). Stok miktarı burada değiştirilmez; yalnızca hareketlerle değişir.
+// ---------------------------------------------------------------------------
+
+exports.saveIngredient = onCall(async (request) => {
+  const actor = await requireStaff(request, 'stock');
+  const data = validated(validateIngredient, request.data);
+  const id = request.data?.id;
+  const ref = id ? db.doc(`ingredients/${requireString(id, 'Malzeme', { max: 128 })}`) : db.collection('ingredients').doc();
+  const before = id ? (await requireLive(ref, 'Malzeme')).data() : null;
+  await db.runTransaction(async (tx) => {
+    if (before) tx.update(ref, { ...data, updatedAt: FieldValue.serverTimestamp() });
+    else {
+      tx.set(ref, { ...data, stock: 0, deleted: false, createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp() });
+    }
+    audit(tx, { action: before ? 'ingredient_update' : 'ingredient_create', actor: actor.uid,
+      target: `ingredients/${ref.id}`, before: before ? { unitCost: before.unitCost } : null,
+      after: { name: data.name, unitCost: data.unitCost } });
+  });
+  return { id: ref.id };
+});
+
+exports.deleteIngredient = onCall(async (request) => {
+  const actor = await requireStaff(request, 'stock');
+  const id = requireString(request.data?.id, 'Malzeme', { max: 128 });
+  const ref = db.doc(`ingredients/${id}`);
+  await requireLive(ref, 'Malzeme');
+  const products = await db.collection('products').where('deleted', '==', false).get();
+  const using = products.docs.filter((d) => (d.data().recipe || []).some((r) => r.ingredientId === id))
+    .map((d) => d.data().name);
+  if (using.length) {
+    throw new HttpsError('failed-precondition', `Bu malzeme şu ürünlerin reçetesinde: ${using.slice(0, 5).join(', ')}.`);
+  }
+  await db.runTransaction(async (tx) => {
+    tx.update(ref, { deleted: true, updatedAt: FieldValue.serverTimestamp() });
+    audit(tx, { action: 'ingredient_delete', actor: actor.uid, target: `ingredients/${id}` });
+  });
+  return { deleted: true };
+});
+
+// Hazır şablon / toplu kurulum: malzemeler oluşturulur, ürün reçeteleri ve seçenek etkileri yazılır.
+// { ingredients: [{ key, ...malzeme }], recipes: [{ productId, recipe: [{ ingredient: key|id, qty, takeawayOnly }] }],
+//   optionEffects: [{ groupId, optionId, effect }] }  (effect içinde malzemeler key ya da id ile)
+exports.importStock = onCall(async (request) => {
+  const actor = await requireStaff(request, 'stock');
+  const matrix = await loadPermissionMatrix();
+  if (!hasPermission(matrix, actor.role, 'editMenu', actor.staff.permissions)) {
+    throw new HttpsError('permission-denied', 'Reçete yazmak için menü düzenleme yetkisi de gerekir.');
+  }
+  const d = request.data || {};
+  if (!Array.isArray(d.ingredients) || d.ingredients.length > 200) throw new HttpsError('invalid-argument', 'Malzeme listesi geçersiz.');
+  const keys = new Map();
+  const batch = db.batch();
+  for (const ing of d.ingredients) {
+    const key = requireString(ing?.key, 'Anahtar', { max: 60 });
+    const ref = db.collection('ingredients').doc();
+    keys.set(key, ref.id);
+    batch.set(ref, { ...validated(validateIngredient, ing), stock: 0, deleted: false,
+      createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
+  }
+  const resolve = (k) => keys.get(k) || k;
+  for (const r of d.recipes || []) {
+    const recipe = validated(validateRecipe, (r.recipe || []).map((x) => ({ ...x, ingredientId: resolve(x.ingredient || x.ingredientId) })));
+    const ref = db.doc(`products/${requireString(r.productId, 'Ürün', { max: 128 })}`);
+    await requireLive(ref, 'Ürün');
+    batch.update(ref, { recipe, updatedAt: FieldValue.serverTimestamp() });
+  }
+  const groups = new Map();
+  for (const o of d.optionEffects || []) {
+    const gid = requireString(o.groupId, 'Seçenek grubu', { max: 128 });
+    if (!groups.has(gid)) groups.set(gid, (await requireLive(db.doc(`optionGroups/${gid}`), 'Seçenek grubu')).data());
+    const e = o.effect || {};
+    const effect = validated(validateRecipeEffect, {
+      ...(e.replace ? { replace: e.replace.map((x) => ({ from: resolve(x.from), to: resolve(x.to) })) } : {}),
+      ...(e.add ? { add: e.add.map((x) => ({ ingredientId: resolve(x.ingredient || x.ingredientId), qty: x.qty })) } : {}),
+      ...(e.scale ? { scale: e.scale } : {}),
+    });
+    const g = groups.get(gid);
+    g.options = g.options.map((opt) => (opt.id === o.optionId ? { ...opt, recipeEffect: effect } : opt));
+  }
+  for (const [gid, g] of groups) batch.update(db.doc(`optionGroups/${gid}`), { options: g.options, updatedAt: FieldValue.serverTimestamp() });
+  batch.set(db.collection('auditLogs').doc(), { action: 'stock_import', actor: actor.uid, target: 'ingredients',
+    after: { ingredients: keys.size, recipes: (d.recipes || []).length }, at: FieldValue.serverTimestamp() });
+  await batch.commit();
+  return { ingredients: Object.fromEntries(keys) };
 });
 
 // Modüller (5. ve 6. ekran): yalnızca Yönetici (owner) değiştirir.

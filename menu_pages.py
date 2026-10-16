@@ -22,6 +22,8 @@ from cloud.images import fetch_pixmap, prepare_upload
 from cloud.qt_sync import run_async
 from money import format_tl, parse_tl
 import database
+import stock
+from stock_pages import EffectDialog, RecipeEditor, describe_effect
 
 CATEGORY_COLORS = [
     ('#8D6E63', 'Kahve'), ('#795548', 'Koyu kahve'), ('#FF7043', 'Turuncu'), ('#42A5F5', 'Mavi'),
@@ -401,7 +403,7 @@ class MenuPage(QWidget):
         if not self.categories:
             QMessageBox.information(self, "Önce kategori", "Ürün eklemeden önce bir kategori oluşturun.")
             return
-        dlg = ProductDialog(product, self.selected_category, self)
+        dlg = ProductDialog(product, self.selected_category, self, user=self.user)
         result = dlg.exec()
         if result == ProductDialog.DELETE and product:
             cloud_action(self, lambda api: api.delete_product(product['id']), f"{product['name']} silindi.",
@@ -538,9 +540,10 @@ class CategoryDialog(QDialog):
 class ProductDialog(QDialog):
     DELETE = 2
 
-    def __init__(self, product=None, default_category=None, parent=None):
+    def __init__(self, product=None, default_category=None, parent=None, user=None):
         super().__init__(parent)
         self.values = None
+        self.user = user
         self.image_path = None
         p = product or {}
         self.product = product
@@ -645,6 +648,20 @@ class ProductDialog(QDialog):
             ol.addWidget(QLabel("Henüz seçenek grubu yok."))
         ol.addStretch()
         tabs.addTab(opt, "Seçenekler")
+
+        # ---- Reçete (8. ekran, stok modülü açıkken)
+        self.recipe_editor = None
+        if stock.enabled():
+            def price_now():
+                try:
+                    return parse_tl(self.price.text())
+                except ValueError:
+                    return 0
+            show_cost = bool(user) and database.user_can(user, 'viewReports')
+            self.recipe_editor = RecipeEditor(product, price_now, lambda: self.tax.currentData(), show_cost)
+            self.price.textChanged.connect(self.recipe_editor.update_summary)
+            self.tax.currentIndexChanged.connect(self.recipe_editor.update_summary)
+            tabs.addTab(self.recipe_editor, "Reçete")
 
         # ---- Müşteri bilgisi
         cust = QWidget()
@@ -817,6 +834,8 @@ class ProductDialog(QDialog):
             'caffeineMg': None if self.caffeine.value() < 0 else self.caffeine.value(),
             'flavor': flavor,
         }
+        if self.recipe_editor:
+            self.values['recipe'] = self.recipe_editor.recipe()
         self.accept()
 
 
@@ -876,8 +895,9 @@ class OptionGroupsDialog(QDialog):
         form.addRow("Adet:", count_row)
         right.addLayout(form)
 
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Seçenek", "Fiyat farkı (₺)", "Satışta"])
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Seçenek", "Fiyat farkı (₺)", "Satışta", "Reçete etkisi"])
+        self.table.setColumnHidden(3, not stock.enabled())
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
@@ -966,7 +986,8 @@ class OptionGroupsDialog(QDialog):
         r = self.table.rowCount()
         self.table.insertRow(r)
         name = QTableWidgetItem(o.get('name', '') + ("  (tükendi)" if o.get('soldOut') else ""))
-        name.setData(Qt.UserRole, {'id': o.get('id', ''), 'soldOut': o.get('soldOut', False)})
+        name.setData(Qt.UserRole, {'id': o.get('id', ''), 'soldOut': o.get('soldOut', False),
+                                   'recipeEffect': o.get('recipeEffect')})
         self.table.setItem(r, 0, name)
         delta = QDoubleSpinBox()
         delta.setStyleSheet("QDoubleSpinBox { padding: 2px 8px; min-height: 32px; max-height: 32px; }")
@@ -984,6 +1005,35 @@ class OptionGroupsDialog(QDialog):
         l.setAlignment(Qt.AlignCenter)
         l.setContentsMargins(0, 0, 0, 0)
         self.table.setCellWidget(r, 2, w)
+        effect_btn = QPushButton()
+        effect_btn.setObjectName("ghostBtn")
+        effect_btn.clicked.connect(lambda _, b=effect_btn: self._edit_effect(b))
+        self.table.setCellWidget(r, 3, effect_btn)
+        self._paint_effect(r)
+
+    def _row_of(self, widget):
+        for r in range(self.table.rowCount()):
+            if self.table.cellWidget(r, 3) is widget:
+                return r
+        return -1
+
+    def _paint_effect(self, r):
+        meta = self.table.item(r, 0).data(Qt.UserRole) or {}
+        names = {i['id']: i['name'] for i in stock.ingredients(include_deleted=True)}
+        e = meta.get('recipeEffect')
+        self.table.cellWidget(r, 3).setText(describe_effect(e, names) if e else "+ Tanımla")
+
+    def _edit_effect(self, button):
+        r = self._row_of(button)
+        if r < 0:
+            return
+        item = self.table.item(r, 0)
+        meta = dict(item.data(Qt.UserRole) or {})
+        dlg = EffectDialog(item.text(), meta.get('recipeEffect'), self)
+        if dlg.exec() == QDialog.Accepted:
+            meta['recipeEffect'] = dlg.effect
+            item.setData(Qt.UserRole, meta)
+            self._paint_effect(r)
 
     def _row_values(self, r):
         meta = self.table.item(r, 0).data(Qt.UserRole) or {}
@@ -1004,6 +1054,7 @@ class OptionGroupsDialog(QDialog):
             self.table.setItem(row, 0, item)
             self.table.cellWidget(row, 1).setValue(delta / 100)
             self.table.cellWidget(row, 2).findChild(QCheckBox).setChecked(active)
+            self._paint_effect(row)
         self.table.setCurrentCell(t, 0)
 
     def _remove_row(self):
@@ -1023,7 +1074,7 @@ class OptionGroupsDialog(QDialog):
                     oid += "x"
             used.add(oid)
             options.append({'id': oid, 'name': name, 'priceDelta': delta, 'active': active,
-                            'soldOut': bool(meta.get('soldOut'))})
+                            'soldOut': bool(meta.get('soldOut')), 'recipeEffect': meta.get('recipeEffect')})
         single = self.single.isChecked()
         return {'name': self.name.text().strip(), 'selection': 'single' if single else 'multi',
                 'required': self.required.isChecked(), 'min': self.min.value(),

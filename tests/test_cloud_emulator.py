@@ -489,3 +489,62 @@ def test_gunluk_ozet_bulutta_yerel_raporla_ayni(db, client):
     # Terminal günlük özeti okuyamaz (yalnızca yönetici/müdür)
     with pytest.raises(Exception):
         client.get_doc(f'dailyStats/{day}', engine._ensure_session())
+
+
+def test_stok_sablon_internetsiz_satis_bulutla_ayni(db, client):
+    import requests
+    import pos
+    import stock
+    import stock_template
+    from cloud.admin_api import AdminApi
+    from cloud.pairing import pair_terminal
+    from cloud.sync import SyncEngine
+
+    requests.delete('http://127.0.0.1:8080/emulator/v1/projects/demo-nexpos/databases/(default)/documents',
+                    timeout=10).raise_for_status()
+    email = f'stok-{uuid.uuid4().hex[:6]}@kafe.test'
+    owner_id = create_owner(email)
+    creds, _ = pair_terminal(client, email, 'sahip-sifre-1', 'Kasa 1')
+    api = AdminApi(client, client.sign_in_with_password(email, 'sahip-sifre-1'))
+    engine = SyncEngine(client, creds)
+    cats, prods = db.legacy_import_payload()
+    res = api.import_menu(cats, prods)
+    db.apply_import_mapping(res['categories'], res['products'])
+    api.save_option_group({'name': 'Süt', 'options': [{'id': 'n', 'name': 'Normal', 'priceDelta': 0},
+                                                     {'id': 'oat', 'name': 'Yulaf sütü', 'priceDelta': 1500}]})
+    waiter = api.create_staff('Cem Akar', 'waiter', '730591')['staffId']
+    api.save_modules({'stock': {'enabled': True}})
+    engine.run_once()
+    # Hazır şablon menüye göre kurulur
+    data = stock_template.build(db.menu_products(), db.menu_categories(), db.menu_option_groups(), stock.ingredients())
+    assert any(p == 'Latte' for p, _ in data['preview'])
+    api.import_stock(data['ingredients'], data['recipes'], data['optionEffects'])
+    engine.run_once()
+    ings = {i['name']: i for i in stock.ingredients()}
+    assert 'Espresso çekirdeği' in ings and db.modules()['stock']['enabled']
+    latte = next(p for p in db.menu_products() if p['name'] == 'Latte')
+    assert latte['recipe']
+    # Uygulamaya bağlı seçenek: yulaf sütü
+    group = next(g for g in db.menu_option_groups() if g['name'] == 'Süt')
+    oat = next(o for o in group['options'] if o['id'] == 'oat')
+    assert oat['recipeEffect']['replace'][0]['to'] == ings['Yulaf sütü']['id']
+    user = db.login_with_pin(waiter, '730591')
+    stock.set_counts(user, {ings['Espresso çekirdeği']['id']: 2000, ings['Süt (tam yağlı)']['id']: 12000,
+                            ings['Yulaf sütü']['id']: 6000}, 'İlk sayım', owner_id)
+
+    # ---- İnternetsiz: paket latte (yulaf) ×2, masa latte ×1 hazırlanmadan iptal
+    o = pos.open_order(user)
+    pos.add_line(user, o['id'], pos.product_line(latte, [(group['id'], oat)], qty=2))
+    pos.add_line(user, o['id'], pos.product_line(latte))
+    o, _ = pos.send_pending(user, o['id'])
+    pos.void_line(user, o['id'], o['items'][1]['lineId'], 'Yanlış', owner_id, prepared=False)
+    local = {i['id']: i['stock'] for i in stock.ingredients()}
+    assert local[ings['Yulaf sütü']['id']] == 6000 - 400
+    assert local[ings['Espresso çekirdeği']['id']] == 2000 - 36
+    assert local[ings['Karton bardak 12oz']['id']] == -2   # sayılmadı, eksiye düşebilir
+
+    status = engine.run_once()
+    assert status.online and db.outbox_counts() == (0, 0), db.get_failed_ops()
+    cloud = {d[0]: d[1]['stock'] for d in client.list_docs('ingredients', api.session)}
+    assert {k: cloud[k] for k in local} == local
+    assert {i['id']: i['stock'] for i in stock.ingredients()} == local   # senkrondan sonra çift sayılmaz

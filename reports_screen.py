@@ -557,6 +557,9 @@ class DashboardPage(QWidget):
             elif a['target'] == 'cash':
                 text = (f"⚠ Son kasa farkı ({a['day']}): {format_tl(a['difference'], sign=True)}"
                         + (f" — {a['reason']}" if a['reason'] else "") + "  →  Kasa")
+            elif a['target'] == 'stock':
+                more = f" (+{len(a['items']) - 4})" if len(a['items']) > 4 else ""
+                text = f"⚠ {len(a['items'])} malzeme kritik seviyede: {', '.join(a['items'][:4])}{more}  →  Stok"
             else:
                 text = f"⚠ {a['failed']} işlem buluta gönderilemedi  →  Terminaller"
             self.alerts_ly.addWidget(self._link(text, a['target']))
@@ -583,7 +586,11 @@ class DashboardPage(QWidget):
 
 class ReportsPage(QWidget):
     open_cash_history = Signal()
-    TAB_SUMMARY, TAB_PRODUCTS, TAB_TIME, TAB_STAFF, TAB_LOSSES, TAB_INCOME, TAB_KITCHEN = range(7)
+    TAB_SUMMARY, TAB_PRODUCTS, TAB_MENU, TAB_TIME, TAB_STAFF, TAB_LOSSES, TAB_INCOME, TAB_KITCHEN = range(8)
+    MENU_CLASSES = {'star': ("★ Yıldız", "çok satıyor, kârlı — öne çıkarın"),
+                    'plowhorse': ("🐴 İş atı", "çok satıyor, az kârlı — maliyeti düşürün ya da fiyatı gözden geçirin"),
+                    'puzzle': ("🧩 Bulmaca", "kârlı ama az satıyor — menüde görünürlüğünü artırın"),
+                    'dog': ("🐶 Köpek", "az satıyor, az kârlı — menüden çıkarmayı düşünün")}
 
     def __init__(self, user, parent=None):
         super().__init__(parent)
@@ -637,6 +644,7 @@ class ReportsPage(QWidget):
         """)
         self.tabs.addTab(self._summary_tab(), "Satış Özeti")
         self.tabs.addTab(self._products_tab(), "Ürünler")
+        self.tabs.addTab(self._menu_tab(), "Menü Analizi")
         self.tabs.addTab(self._time_tab(), "Saatler ve Günler")
         self.tabs.addTab(self._staff_tab(), "Personel")
         self.tabs.addTab(self._losses_tab(), "Kayıp ve Denetim")
@@ -726,7 +734,8 @@ class ReportsPage(QWidget):
         ly.setContentsMargins(0, 10, 0, 0)
         ly.setSpacing(12)
         self.product_table = make_table([("Ürün", True), ("Adet", False), ("Ciro", False), ("Pay", False),
-                                         ("İkram", False), ("İptal", False)], sort=(2, Qt.DescendingOrder))
+                                         ("İkram", False), ("İptal", False), ("Maliyet", False), ("Kâr", False),
+                                         ("Marj", False)], sort=(2, Qt.DescendingOrder))
         ly.addWidget(self.product_table, 3)
         side = QVBoxLayout()
         c = _card()
@@ -745,6 +754,17 @@ class ReportsPage(QWidget):
         side.addWidget(self.unsold)
         ly.addLayout(side, 2)
         return self._scroll(w)
+
+    def _menu_tab(self):
+        w = QWidget()
+        ly = QVBoxLayout(w)
+        ly.setContentsMargins(0, 10, 0, 0)
+        self.menu_note = _muted("")
+        ly.addWidget(self.menu_note)
+        self.menu_table = make_table([("Grup", False), ("Ürün", True), ("Adet", False), ("Birim kâr", False),
+                                      ("Toplam kâr", False), ("Marj", False), ("Öneri", True)])
+        ly.addWidget(self.menu_table, 1)
+        return w
 
     def _time_tab(self):
         w = QWidget()
@@ -807,7 +827,7 @@ class ReportsPage(QWidget):
         self.income_grid.setContentsMargins(20, 16, 20, 16)
         self.income_grid.setHorizontalSpacing(30)
         ly.addWidget(c)
-        ly.addWidget(_muted("Ürün maliyeti (reçeteler) 8. ekranda eklenecek; şimdilik giderler ve zayi düşülür."))
+        ly.addWidget(_muted("Ürün maliyeti, reçetelerden güncel birim maliyetlerle hesaplanır (Stok modülü)."))
         ly.addStretch()
         return w
 
@@ -840,6 +860,7 @@ class ReportsPage(QWidget):
         self.tabs.setTabVisible(self.TAB_LOSSES, self.user.get('role') in PANEL_ROLES)
         self._fill_summary()
         self._fill_products()
+        self._fill_menu()
         self._fill_time()
         self._fill_staff()
         self._fill_loss_staff()
@@ -902,15 +923,40 @@ class ReportsPage(QWidget):
 
     def _fill_products(self):
         rows = self.report.products()
+        costed = self.report.costing()['hasRecipes']
+        for c in (6, 7, 8):
+            self.product_table.setColumnHidden(c, not costed)
+
+        def opt_money(v):
+            return (tl(v), v, True) if v is not None else ("—", -10 ** 12, True)
+
         fill_table(self.product_table, [[text_cell(r['name']), num_cell(r['qty']), money_cell(r['revenue']),
                                          (f"%{r['share']:.1f}" if r['share'] is not None else "—", r['share'] or 0, True),
-                                         num_cell(r['comps']), num_cell(r['voids'])] for r in rows])
+                                         num_cell(r['comps']), num_cell(r['voids']),
+                                         opt_money(r['cost'] if r['cost'] else None), opt_money(r['profit']),
+                                         (f"%{r['margin']}" if r['margin'] is not None else "—",
+                                          r['margin'] if r['margin'] is not None else -999, True)] for r in rows])
         self.cat_bars.set_rows([(c['name'], c['revenue']) for c in self.report.categories()])
         fill_table(self.option_table, [[text_cell(o['name']), num_cell(o['count']), money_cell(o['extra'])]
                                        for o in self.report.options()])
         unsold = self.report.unsold()
         self.unsold.setText(("Bu dönemde hiç satılmayan ürünler: " + ", ".join(unsold)) if unsold
                             else "Menüdeki her ürün bu dönemde en az bir kez satıldı.")
+
+    def _fill_menu(self):
+        rows = self.report.menu_analysis()
+        if not self.report.costing()['hasRecipes']:
+            self.menu_note.setText("Menü analizi için ürün reçeteleri gerekir: Stok modülünü açın ve reçeteleri girin "
+                                   "(Stok → Malzemeler → Hazır şablon).")
+        else:
+            self.menu_note.setText("Adet, ürün başına ortalamanın %70'i ve üstündeyse \"çok satıyor\"; birim kâr "
+                                   "(KDV hariç fiyat − reçete maliyeti) ağırlıklı ortalamanın üstündeyse \"kârlı\" sayılır. "
+                                   "Maliyetler güncel birim maliyetlerle hesaplanır.")
+        order = {'star': 0, 'plowhorse': 1, 'puzzle': 2, 'dog': 3}
+        fill_table(self.menu_table, [[(self.MENU_CLASSES[r['class']][0], order[r['class']], False), text_cell(r['name']),
+                                      num_cell(r['qty']), money_cell(r['unitProfit']), money_cell(r['profit']),
+                                      (f"%{r['margin']}", r['margin'] or 0, True),
+                                      text_cell(self.MENU_CLASSES[r['class']][1])] for r in rows])
 
     def _fill_time(self):
         self.heatmap.set_data(self.report.heatmap())
@@ -953,7 +999,10 @@ class ReportsPage(QWidget):
         rows = [("Net satış (eski kayıtlar dahil)", tl(ie['net']))]
         for kind, v in sorted(ie['expensesByType'].items()):
             rows.append((f" − Gider ({kind})", tl(-v)))
-        rows.append((" − Zayi", tl(-ie['waste'])))
+        rows.append((" − Zayi (Zayi sayfası)", tl(-ie['waste'])))
+        if ie['hasRecipes']:
+            rows.append((f" − Ürün maliyeti (reçeteden, ikram {tl(ie['compCost'])} dahil)", tl(-ie['cogs'])))
+            rows.append((" − Hazırlanıp iptal edilen ürünler", tl(-ie['voidWaste'])))
         rows.append(("= Kalan", tl(ie['remaining'])))
         return rows
 
@@ -988,7 +1037,8 @@ class ReportsPage(QWidget):
         """(başlık, sütunlar, satırlar) — açık sekmenin tablosu."""
         tab = self.tabs.currentIndex() if tab is None else tab
         a, b = self.period()
-        names = {self.TAB_SUMMARY: "Satış özeti", self.TAB_PRODUCTS: "Ürünler", self.TAB_TIME: "Saatler",
+        names = {self.TAB_SUMMARY: "Satış özeti", self.TAB_PRODUCTS: "Ürünler", self.TAB_MENU: "Menü analizi",
+                 self.TAB_TIME: "Saatler",
                  self.TAB_STAFF: "Personel", self.TAB_LOSSES: "Kayıp ve denetim", self.TAB_INCOME: "Gelir-gider",
                  self.TAB_KITCHEN: "Mutfak"}
         title = f"{names[tab]} {a} – {b}"
@@ -1006,11 +1056,11 @@ class ReportsPage(QWidget):
                 [reports.WEEKDAYS[d]] + [tl(grid.get((d, h), 0)) for h in hours] for d in range(7)]
         if tab == self.TAB_INCOME:
             return title, ["Kalem", "Tutar"], [list(r) for r in self.income_rows()]
-        table = {self.TAB_PRODUCTS: self.product_table, self.TAB_STAFF: self.staff_table,
+        table = {self.TAB_PRODUCTS: self.product_table, self.TAB_MENU: self.menu_table, self.TAB_STAFF: self.staff_table,
                  self.TAB_LOSSES: self.loss_table, self.TAB_KITCHEN: self.kitchen_product_table}[tab]
-        headers = [table.horizontalHeaderItem(i).text() for i in range(table.columnCount())]
-        rows = [[table.item(r, c).text() if table.item(r, c) else '' for c in range(table.columnCount())]
-                for r in range(table.rowCount())]
+        cols = [c for c in range(table.columnCount()) if not table.isColumnHidden(c)]
+        headers = [table.horizontalHeaderItem(c).text() for c in cols]
+        rows = [[table.item(r, c).text() if table.item(r, c) else '' for c in cols] for r in range(table.rowCount())]
         return title, headers, rows
 
     def export_csv(self, path=None):

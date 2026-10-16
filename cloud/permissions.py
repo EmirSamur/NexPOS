@@ -34,6 +34,8 @@ PERMISSIONS = [
     ('viewReports', 'Raporları Görüntüleyebilir'),
     ('manageUsers', 'Kullanıcı Tanımlayabilir'),
     ('markSoldOut', 'Tükendi İşaretleyebilir'),
+    ('stock', 'Stok / Reçete / Sayım Yapabilir'),
+    ('waste', 'Zayi Girebilir'),
 ]
 PERMISSION_KEYS = [k for k, _ in PERMISSIONS]
 PERMISSION_LABELS = dict(PERMISSIONS)
@@ -47,11 +49,11 @@ DEFAULT_PERMISSIONS = {
     'owner': _all(True),
     'manager': {**_all(True), 'settings': False},
     'cashier': {**_all(False), 'openTable': True, 'discount': True, 'cash': True, 'expense': True,
-                'markSoldOut': True},
+                'markSoldOut': True, 'waste': True},
     'waiter': {**_all(False), 'openTable': True},
     'courier': {**_all(False), 'openTable': True},
-    'barista': {**_all(False), 'markSoldOut': True},
-    'kitchen': {**_all(False), 'markSoldOut': True},
+    'barista': {**_all(False), 'markSoldOut': True, 'waste': True},
+    'kitchen': {**_all(False), 'markSoldOut': True, 'waste': True},
 }
 
 

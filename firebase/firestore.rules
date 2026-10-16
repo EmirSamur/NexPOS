@@ -131,6 +131,17 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Stok (8. ekran): malzemeler personel ve terminal okur (birim maliyet dahil — kafede gizli değildir;
+    // kâr raporu yetkiyle sınırlıdır). Hareketler yönetici/müdür ve terminal.
+    match /ingredients/{id} {
+      allow read: if isStaff() || isActiveTerminal();
+      allow write: if false;
+    }
+    match /stockMovements/{id} {
+      allow read: if isManagerPlus() || isActiveTerminal();
+      allow write: if false;
+    }
+
     match /auditLogs/{logId} {
       allow read: if isManagerPlus();
       allow write: if false;

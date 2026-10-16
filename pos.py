@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timedelta
 
 import database
+import stock
 from cloud.orders import (  # noqa: F401 (line_total ekranlar için dışa açık)
     OrderError, apply_order_op, compute_totals, line_total, lines_share, merge_orders, table_status_for
 )
@@ -280,13 +281,28 @@ def send_pending(user, order_id):
                       'type': after['type'], 'station': station, 'lines': lines, 'status': 'new', 'createdAt': at}
             conn.execute("INSERT INTO pos_tickets (id,order_id,data,status,station,created_at) VALUES (?,?,?,?,?,?)",
                          (tid, order_id, json.dumps(ticket, ensure_ascii=False), 'new', station, at))
+        # Stok (8. ekran): gönderilen ürünlerin reçetesi düşer
+        sent_ids = {l['lineId'] for l in pending}
+        stock.record_sale(conn, after, [l for l in after['items'] if l['lineId'] in sent_ids], user['cloud_id'])
 
     return _run('sendItems', payload, user, extra=write_tickets), len(pending)
 
 
-def void_line(user, order_id, line_id, reason, approver_id=None):
-    return _run('voidItem', {'orderId': order_id, 'lineId': line_id, 'reason': reason,
-                             'approvedBy': approver_id or user['cloud_id']}, user)
+def void_line(user, order_id, line_id, reason, approver_id=None, prepared=True):
+    """prepared=False: ürün hazırlanmadı, reçetesi stoğa döner (stok modülü açıksa)."""
+    def give_back(conn, before, after):
+        if not prepared and stock.enabled():
+            line = next(l for l in before['items'] if l['lineId'] == line_id)
+            stock.record_void_return(conn, before, line, user['cloud_id'])
+
+    return _run('voidItem', {'orderId': order_id, 'lineId': line_id, 'reason': reason, 'prepared': bool(prepared),
+                             'approvedBy': approver_id or user['cloud_id']}, user, extra=give_back)
+
+
+def ask_prepared(order=None):
+    """Gönderilmiş ürün iptalinde "hazırlandı mı?" sorulmalı mı? (stok modülü ve ayarı)"""
+    m = database.modules()['stock']
+    return m['enabled'] and m['askOnVoid']
 
 
 def comp_line(user, order_id, line_id, reason, approver_id=None):
@@ -398,9 +414,15 @@ def closed_orders(day=None):
     return [json.loads(r['data']) for r in rows]
 
 
-def cancel_order(user, order_id, reason, approver_id=None):
-    return _run('cancelOrder', {'orderId': order_id, 'reason': reason,
-                                'approvedBy': approver_id or user['cloud_id']}, user)
+def cancel_order(user, order_id, reason, approver_id=None, prepared=True):
+    def give_back(conn, before, after):
+        if not prepared and stock.enabled():
+            for line in before['items']:
+                if line['status'] == 'active' and line['state'] == 'sent':
+                    stock.record_void_return(conn, before, line, user['cloud_id'])
+
+    return _run('cancelOrder', {'orderId': order_id, 'reason': reason, 'prepared': bool(prepared),
+                                'approvedBy': approver_id or user['cloud_id']}, user, extra=give_back)
 
 
 def set_ticket_status(user, ticket_id, status):

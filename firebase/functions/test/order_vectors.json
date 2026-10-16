@@ -2590,5 +2590,168 @@
    }
   ],
   "expectError": "Gerekçe"
+ },
+ {
+  "name": "iptal: hazırlandı mı bilgisi satıra yazılır (varsayılan: hazırlandı)",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p",
+       "name": "Tost",
+       "unitPrice": 100,
+       "qty": 1,
+       "station": "kitchen"
+      },
+      {
+       "lineId": "l2",
+       "productId": "p",
+       "name": "Tost",
+       "unitPrice": 100,
+       "qty": 1,
+       "station": "kitchen"
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2"
+     ],
+     "ticketIds": {
+      "kitchen": "k"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "voidItem",
+    "payload": {
+     "orderId": "o1",
+     "lineId": "l1",
+     "reason": "x",
+     "prepared": false
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "voidItem",
+    "payload": {
+     "orderId": "o1",
+     "lineId": "l2",
+     "reason": "x"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectLines": {
+   "o1": [
+    {
+     "status": "void",
+     "prepared": false
+    },
+    {
+     "status": "void",
+     "prepared": true
+    }
+   ]
+  }
+ },
+ {
+  "name": "adisyon iptali: hazırlanmamış",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p",
+       "name": "Tost",
+       "unitPrice": 100,
+       "qty": 1,
+       "station": "kitchen"
+      },
+      {
+       "lineId": "l2",
+       "productId": "p",
+       "name": "Tost",
+       "unitPrice": 100,
+       "qty": 1,
+       "station": "kitchen"
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2"
+     ],
+     "ticketIds": {
+      "kitchen": "k"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "cancelOrder",
+    "payload": {
+     "orderId": "o1",
+     "reason": "x",
+     "prepared": false
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "status": "cancelled",
+    "prepared": false
+   }
+  }
  }
 ]

@@ -107,6 +107,17 @@ class AdminApi:
         """Mutfak ekranı için 10 dakika geçerli 6 haneli eşleme kodu: {'code', 'expiresInMinutes'}"""
         return self._call('createKdsPairingCode', {'name': name} if name else {})
 
+    # --- Stok (8. ekran)
+    def save_ingredient(self, data, ingredient_id=None):
+        return self._call('saveIngredient', {**data, **({'id': ingredient_id} if ingredient_id else {})})
+
+    def delete_ingredient(self, ingredient_id):
+        return self._call('deleteIngredient', {'id': ingredient_id})
+
+    def import_stock(self, ingredients, recipes, option_effects):
+        return self._call('importStock', {'ingredients': ingredients, 'recipes': recipes,
+                                          'optionEffects': option_effects})
+
     def save_modules(self, data):
         """settings/modules (yalnızca yönetici). Kaydedilen (doğrulanmış) ayarı döndürür."""
         return self._call('saveModules', data)

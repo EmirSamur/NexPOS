@@ -20,6 +20,8 @@ const PERMISSIONS = [
   'viewReports', // Raporlar
   'manageUsers', // Kullanıcı tanımlama
   'markSoldOut', // Ürünü "tükendi" işaretleme (internetsiz de çalışır)
+  'stock', // Malzeme, reçete, sayım, alış (8. ekran)
+  'waste', // Zayi girme
 ];
 
 function allPermissions(value) {
@@ -39,11 +41,12 @@ const DEFAULT_PERMISSIONS = {
     cash: true,
     expense: true,
     markSoldOut: true,
+    waste: true,
   },
   waiter: { ...allPermissions(false), openTable: true },
   courier: { ...allPermissions(false), openTable: true },
-  barista: { ...allPermissions(false), markSoldOut: true },
-  kitchen: { ...allPermissions(false), markSoldOut: true },
+  barista: { ...allPermissions(false), markSoldOut: true, waste: true },
+  kitchen: { ...allPermissions(false), markSoldOut: true, waste: true },
 };
 
 // İstemciden gelen matrisi temizler: bilinmeyen rol/yetki atılır, eksikler varsayılandan
@@ -277,6 +280,103 @@ function validateProduct(input) {
     calories: optionalInt(d.calories, 'Kalori', 5000),
     caffeineMg: optionalInt(d.caffeineMg, 'Kafein', 1000),
     flavor: validateFlavor(d.flavor),
+    // Reçete (8. ekran). Gönderilmezse undefined döner ve kayıtlı reçete korunur.
+    ...(d.recipe !== undefined ? { recipe: validateRecipe(d.recipe) } : {}),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Stok ve reçete (8. ekran)
+//
+// Miktarlar malzemenin temel biriminde tam sayıdır (g, ml, adet). Birim maliyet kuruş cinsinden
+// gösterim birimi başınadır: kg, L ya da adet (UNITS.factor temel birimdir).
+// ---------------------------------------------------------------------------
+
+const UNITS = { g: { display: 'kg', factor: 1000 }, ml: { display: 'L', factor: 1000 }, adet: { display: 'adet', factor: 1 } };
+const INGREDIENT_GROUPS = ['bar', 'kitchen', 'packaging', 'other'];
+const MAX_QTY = 10_000_000;
+
+function qtyInt(v, field, { min = 1, max = MAX_QTY } = {}) {
+  if (!Number.isInteger(v) || v < min || v > max) throw new MenuError(`${field} geçersiz.`);
+  return v;
+}
+
+function validateIngredient(input) {
+  const d = input || {};
+  if (!UNITS[d.unit]) throw new MenuError('Birim g, ml ya da adet olmalıdır.');
+  let purchaseUnit = null;
+  if (d.purchaseUnit) {
+    purchaseUnit = { name: text(d.purchaseUnit.name, 'Alış birimi', { max: 20 }),
+      size: qtyInt(d.purchaseUnit.size, 'Alış birimi miktarı') };
+  }
+  const group = d.group ?? 'other';
+  if (!INGREDIENT_GROUPS.includes(group)) throw new MenuError('Malzeme grubu geçersiz.');
+  return {
+    name: text(d.name, 'Malzeme adı', { max: 60 }),
+    unit: d.unit,
+    group,
+    purchaseUnit,
+    critical: qtyInt(d.critical ?? 0, 'Kritik seviye', { min: 0 }),
+    target: d.target == null ? null : qtyInt(d.target, 'Hedef seviye', { min: 0 }),
+    unitCost: kurus(d.unitCost ?? 0, 'Birim maliyet'),
+    supplierName: text(d.supplierName, 'Tedarikçi', { max: 60, optional: true }),
+  };
+}
+
+function validateRecipe(list) {
+  if (!Array.isArray(list) || list.length > 30) throw new MenuError('Reçete en çok 30 malzeme olabilir.');
+  const seen = new Set();
+  return list.map((r) => {
+    const ingredientId = text(r?.ingredientId, 'Malzeme', { max: 128 });
+    const takeawayOnly = r.takeawayOnly === true;
+    const key = `${ingredientId}:${takeawayOnly}`;
+    if (seen.has(key)) throw new MenuError('Bir malzeme reçetede bir kez yer alabilir.');
+    seen.add(key);
+    return { ingredientId, qty: qtyInt(r.qty, 'Reçete miktarı', { max: 100_000 }), takeawayOnly };
+  });
+}
+
+// Seçeneğin reçeteye etkisi: { replace: [{from, to}], add: [{ingredientId, qty}], scale: 1.5 } ya da null.
+function validateRecipeEffect(e) {
+  if (e === undefined || e === null) return null;
+  if (typeof e !== 'object') throw new MenuError('Reçete etkisi geçersiz.');
+  const out = {};
+  if (e.replace?.length) {
+    if (!Array.isArray(e.replace) || e.replace.length > 5) throw new MenuError('Değiştirme listesi geçersiz.');
+    out.replace = e.replace.map((r) => ({ from: text(r?.from, 'Malzeme', { max: 128 }), to: text(r?.to, 'Malzeme', { max: 128 }) }));
+  }
+  if (e.add?.length) {
+    if (!Array.isArray(e.add) || e.add.length > 5) throw new MenuError('Ekleme listesi geçersiz.');
+    out.add = e.add.map((r) => ({ ingredientId: text(r?.ingredientId, 'Malzeme', { max: 128 }),
+      qty: qtyInt(r.qty, 'Ek miktar', { max: 100_000 }) }));
+  }
+  if (e.scale !== undefined && e.scale !== null && e.scale !== 1) {
+    if (typeof e.scale !== 'number' || e.scale < 0.25 || e.scale > 5) throw new MenuError('Çarpan 0,25 ile 5 arasında olmalıdır.');
+    out.scale = Math.round(e.scale * 100) / 100;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+const STOCK_MOVE_TYPES = { sale: 'openTable', void_return: 'openTable', count: 'stock', adjust: 'stock', waste: 'waste' };
+
+// Stok hareketi (kuyruktan): { movementId, type, orderId?, lineId?, reason?, lines: [{ ingredientId, qty (+/−) }] }
+function validateStockMove(p) {
+  const d = p || {};
+  if (!STOCK_MOVE_TYPES[d.type]) throw new MenuError('Stok hareketi türü geçersiz.');
+  if (!Array.isArray(d.lines) || d.lines.length < 1 || d.lines.length > 60) throw new MenuError('Hareket satırı yok.');
+  const totals = new Map();
+  for (const l of d.lines) {
+    const id = text(l?.ingredientId, 'Malzeme', { max: 128 });
+    if (!Number.isInteger(l.qty) || l.qty === 0 || Math.abs(l.qty) > MAX_QTY) throw new MenuError('Miktar geçersiz.');
+    totals.set(id, (totals.get(id) || 0) + l.qty);
+  }
+  return {
+    movementId: text(d.movementId, 'Hareket', { max: 64 }),
+    type: d.type,
+    orderId: d.orderId ? text(d.orderId, 'Adisyon', { max: 64 }) : null,
+    lineId: d.lineId ? text(d.lineId, 'Satır', { max: 64 }) : null,
+    reason: text(d.reason, 'Gerekçe', { max: 120, optional: true }),
+    lines: [...totals].filter(([, q]) => q !== 0).map(([ingredientId, qty]) => ({ ingredientId, qty })),
   };
 }
 
@@ -301,6 +401,7 @@ function validateOptionGroup(input) {
       priceDelta: o.priceDelta,
       active: bool(o.active, true),
       soldOut: bool(o.soldOut, false),
+      recipeEffect: validateRecipeEffect(o.recipeEffect),
     };
   });
   const required = bool(d.required, false);
@@ -445,9 +546,10 @@ const DEFAULT_MODULES = {
   printing: { enabled: false, kitchenTickets: false },
   paymentMethods: { cash: true, card: true, meal: true },
   tips: true,
+  stock: { enabled: false, askOnVoid: true },
 };
 
-function bool(v, fallback) {
+function strictBool(v, fallback) {
   if (v === undefined || v === null) return fallback;
   if (typeof v !== 'boolean') throw new MenuError('Açık/kapalı değeri geçersiz.');
   return v;
@@ -469,22 +571,24 @@ function validateModules(input) {
   const cs = d.cashSession || {};
   const pr = d.printing || {};
   const pm = d.paymentMethods || {};
+  const st = d.stock || {};
   const methods = {
-    cash: bool(pm.cash, true),
-    card: bool(pm.card, true),
-    meal: bool(pm.meal, true),
+    cash: strictBool(pm.cash, true),
+    card: strictBool(pm.card, true),
+    meal: strictBool(pm.meal, true),
   };
   if (!Object.values(methods).some(Boolean)) throw new MenuError('En az bir ödeme yöntemi açık olmalıdır.');
   return {
-    kds: { enabled: bool(kds.enabled, D.kds.enabled), warnMinutes, lateMinutes, sound: bool(kds.sound, D.kds.sound) },
+    kds: { enabled: strictBool(kds.enabled, D.kds.enabled), warnMinutes, lateMinutes, sound: strictBool(kds.sound, D.kds.sound) },
     cashSession: {
-      required: bool(cs.required, D.cashSession.required),
+      required: strictBool(cs.required, D.cashSession.required),
       diffReasonThreshold: intIn(cs.diffReasonThreshold, D.cashSession.diffReasonThreshold, 0, 10_000_000,
         'Fark eşiği geçersiz.'),
     },
-    printing: { enabled: bool(pr.enabled, D.printing.enabled), kitchenTickets: bool(pr.kitchenTickets, false) },
+    printing: { enabled: strictBool(pr.enabled, D.printing.enabled), kitchenTickets: strictBool(pr.kitchenTickets, false) },
     paymentMethods: methods,
-    tips: bool(d.tips, D.tips),
+    tips: strictBool(d.tips, D.tips),
+    stock: { enabled: strictBool(st.enabled, D.stock.enabled), askOnVoid: strictBool(st.askOnVoid, D.stock.askOnVoid) },
   };
 }
 
@@ -506,6 +610,12 @@ function expectedCash(session, payments, refunds) {
 }
 
 module.exports = {
+  UNITS,
+  STOCK_MOVE_TYPES,
+  validateIngredient,
+  validateRecipe,
+  validateRecipeEffect,
+  validateStockMove,
   DEFAULT_MODULES,
   validateModules,
   normalizeModules,

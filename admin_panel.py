@@ -23,6 +23,7 @@ from qr_print import default_base_url
 from cloud.permissions import PANEL_ROLES
 from cash_screen import CashPage
 from reports_screen import DashboardPage, ReportsPage
+from stock_pages import IngredientsPage
 import cash
 from modules_page import ModulesPanel
 from pos import now_iso as pos_now
@@ -41,6 +42,7 @@ PAGE_PERMISSIONS = [
     'settings',      # 8 Ayarlar
     'settings',      # 9 Terminaller
     'cash',          # 10 Kasa
+    'stock',         # 11 Stok (modül açıkken)
 ]
 
 class AdminPanel(QWidget):
@@ -81,6 +83,8 @@ class AdminPanel(QWidget):
         self.pages.addWidget(self.terminals_page)               # 9
         self.cash_page = CashPage(self.user)
         self.pages.addWidget(self.cash_page)                    # 10
+        self.stock_page = IngredientsPage(self.user)
+        self.pages.addWidget(self.stock_page)                   # 11
         content_w.addWidget(self.pages, 1)
 
         cf = QFrame()
@@ -90,8 +94,14 @@ class AdminPanel(QWidget):
         self._apply_permissions()
 
     def _can_see(self, idx):
+        if idx == 11 and not database.modules()['stock']['enabled']:
+            return False  # kapalı modül görünmez
         perm = PAGE_PERMISSIONS[idx] if idx < len(PAGE_PERMISSIONS) else None
         return perm is None or database.user_can(self.user, perm)
+
+    def _apply_sidebar(self):
+        for idx, btn in enumerate(self.sidebar_buttons):
+            btn.setVisible(self._can_see(idx))
 
     def _apply_permissions(self):
         """Yetkisi olmayan sayfaların menü düğmelerini gizler, ilk görünür sayfayı açar."""
@@ -197,6 +207,8 @@ class AdminPanel(QWidget):
         isl = ExpandableSection("İşlemler", ICONS['money'])
         btn_kasa = isl.add_sub_button("Kasa", ICONS['dot'])
         btn_kasa.clicked.connect(lambda: self._show_page(10))
+        btn_stok = isl.add_sub_button("Stok / Malzemeler", ICONS['dot'])
+        btn_stok.clicked.connect(lambda: self._show_page(11))
         btn_gd = isl.add_sub_button("Gider / Masraf", ICONS['dot'])
         btn_gd.clicked.connect(lambda: self._show_page(3))
         self.sidebar_buttons.append(btn_gd)
@@ -230,6 +242,7 @@ class AdminPanel(QWidget):
         self.sidebar_buttons.append(btn_term)
         self.menu_layout.addWidget(btn_term)
         self.sidebar_buttons.append(btn_kasa)  # sayfa 10
+        self.sidebar_buttons.append(btn_stok)  # sayfa 11
 
         self.menu_layout.addStretch()
 
@@ -335,7 +348,7 @@ class AdminPanel(QWidget):
                    "Kategori ve Ürün Tanımlama / Şube Ürünleri",
                    "Gider/Masraf İşlemleri", "Zayi İşlemleri",
                    "Raporlar", "Kullanıcılar", "Yetki / İzin Ekranı", "Sistem Ayarları",
-                   "Terminaller", "Kasa"]
+                   "Terminaller", "Kasa", "Stok"]
         if idx < len(titles):
             self.page_title.setText(titles[idx])
 
@@ -356,6 +369,8 @@ class AdminPanel(QWidget):
             self.cash_page.tabs.setCurrentIndex(0 if cash.current_session() else 2)
         elif target == 'terminals':
             self._show_page(9)
+        elif target == 'stock':
+            self._show_page(11)
 
     def _create_masa_bolge_page(self):
         self.floor_page = FloorPlanPage(self.user)
@@ -372,6 +387,7 @@ class AdminPanel(QWidget):
         if self.pages.currentWidget() is self.dashboard_page:
             self.dashboard_page.refresh()  # rakamlar yerelden; her senkronda tazelenir
         if 'modules' in status.changed:
+            self._apply_sidebar()
             self.modules_panel.refresh()
             self.cash_page.refresh()
         if 'general' in status.changed:

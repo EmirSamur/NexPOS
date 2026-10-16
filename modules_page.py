@@ -81,6 +81,13 @@ class ModulesPanel(QWidget):
         bl.addLayout(_row(self.kitchen_print))
         ly.addWidget(box)
 
+        box, bl, self.stock = _section("Stok ve reçete",
+                                       "Ürün bar/mutfağa gönderilince reçetesindeki malzemeler stoktan düşer; "
+                                       "maliyet ve kâr raporlanır. Menü: Stok → Malzemeler.")
+        self.ask_void = QCheckBox("Gönderilmiş ürün iptalinde \"Hazırlandı mı?\" diye sor (hayır: stoğa döner)")
+        bl.addLayout(_row(self.ask_void))
+        ly.addWidget(box)
+
         box, bl, self.tips = _section("Bahşiş", "Kartla ödemede bahşiş alanı gösterilir.")
         self.methods = {k: QCheckBox(v) for k, v in (('cash', 'Nakit'), ('card', 'Kredi Kartı'), ('meal', 'Yemek Kartı'))}
         lbl = QLabel("Ödeme yöntemleri:")
@@ -107,6 +114,7 @@ class ModulesPanel(QWidget):
         self.kds.toggled.connect(self._enable)
         self.cash_required.toggled.connect(self._enable)
         self.printing.toggled.connect(self._enable)
+        self.stock.toggled.connect(self._enable)
         self.refresh()
 
     def _enable(self, *_):
@@ -114,6 +122,7 @@ class ModulesPanel(QWidget):
         for w in (self.warn, self.late, self.sound):
             w.setEnabled(owner and self.kds.isChecked())
         self.kitchen_print.setEnabled(owner and self.printing.isChecked())
+        self.ask_void.setEnabled(owner and self.stock.isChecked())
 
     def refresh(self):
         m = database.modules()
@@ -126,10 +135,12 @@ class ModulesPanel(QWidget):
         self.printing.setChecked(m['printing']['enabled'])
         self.kitchen_print.setChecked(m['printing']['kitchenTickets'])
         self.tips.setChecked(m['tips'])
+        self.stock.setChecked(m['stock']['enabled'])
+        self.ask_void.setChecked(m['stock']['askOnVoid'])
         for k, c in self.methods.items():
             c.setChecked(m['paymentMethods'][k])
         owner = self.user.get('role') == 'owner'
-        for w in (self.kds, self.cash_required, self.threshold, self.printing, self.tips, self.save_btn,
+        for w in (self.kds, self.cash_required, self.threshold, self.printing, self.tips, self.stock, self.save_btn,
                   *self.methods.values()):
             w.setEnabled(owner)
         self._enable()
@@ -146,6 +157,7 @@ class ModulesPanel(QWidget):
             'printing': {'enabled': self.printing.isChecked(), 'kitchenTickets': self.kitchen_print.isChecked()},
             'paymentMethods': {k: c.isChecked() for k, c in self.methods.items()},
             'tips': self.tips.isChecked(),
+            'stock': {'enabled': self.stock.isChecked(), 'askOnVoid': self.ask_void.isChecked()},
         }
 
     def validate(self):

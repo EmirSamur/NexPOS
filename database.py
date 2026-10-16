@@ -120,6 +120,12 @@ def init_database():
         id TEXT PRIMARY KEY, data TEXT NOT NULL, status TEXT NOT NULL, table_id TEXT,
         business_day TEXT, legacy_order_id INTEGER, updated_at TEXT)""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_pos_orders_status ON pos_orders(status, table_id)")
+    # Stok hareket defteri (8. ekran): bu bilgisayarda yapılan her stok hareketinin satırları. Buluta
+    # gidene kadar (op_id kuyrukta) yerel stoğa eklenir; gittikten sonra bulut stoğunda zaten vardır.
+    c.execute("""CREATE TABLE IF NOT EXISTS stock_ledger (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, movement_id TEXT NOT NULL, op_id TEXT, type TEXT NOT NULL,
+        ingredient_id TEXT NOT NULL, qty INTEGER NOT NULL, order_id TEXT, line_id TEXT, at TEXT)""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_stock_ledger_line ON stock_ledger(order_id, line_id)")
     # Kasa oturumları (6. ekran): açılış, hareketler, kapanış ve Z raporu JSON olarak.
     c.execute("""CREATE TABLE IF NOT EXISTS cash_sessions (
         id TEXT PRIMARY KEY, data TEXT NOT NULL, status TEXT NOT NULL, business_day TEXT,
@@ -1358,6 +1364,7 @@ DEFAULT_MODULES = {
     'printing': {'enabled': False, 'kitchenTickets': False},
     'paymentMethods': {'cash': True, 'card': True, 'meal': True},
     'tips': True,
+    'stock': {'enabled': False, 'askOnVoid': True},
 }
 
 
@@ -1430,3 +1437,20 @@ def orders_with_ready_tickets():
     rows = conn.execute("SELECT DISTINCT order_id FROM pos_tickets WHERE status='ready'").fetchall()
     conn.close()
     return {r['order_id'] for r in rows}
+
+
+def upsert_cache(collection, docs):
+    """Eski tablolara yansıması olmayan bulut koleksiyonları (ör. malzemeler) için önbellek."""
+    if not docs:
+        return
+    conn = get_connection()
+    for doc_id, d in docs:
+        conn.execute("""INSERT INTO cloud_cache (collection,id,data) VALUES (?,?,?)
+            ON CONFLICT(collection,id) DO UPDATE SET data=excluded.data""",
+            (collection, doc_id, json.dumps(d, ensure_ascii=False)))
+    conn.commit()
+    conn.close()
+
+
+def cache_rows(collection, include_deleted=False):
+    return _menu_rows(collection, include_deleted)

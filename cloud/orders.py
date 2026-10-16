@@ -214,6 +214,9 @@ def apply_order_op(order, op, payload, staff_id, at):
         line['by'] = staff_id
         line['approvedBy'] = p.get('approvedBy') or staff_id
         line['actionAt'] = at
+        # İptal edilen ürün hazırlanmış mıydı? (8. ekran: hazırlandıysa zayi, değilse stoğa döner)
+        if op == 'voidItem':
+            line['prepared'] = p.get('prepared') is not False
     elif op == 'setDiscount':
         if any(x.get('lineIds') for x in o['payments']):
             raise OrderError("Ürün seçerek ödeme alınmış adisyonda iskonto değiştirilemez.")
@@ -310,6 +313,7 @@ def apply_order_op(order, op, payload, staff_id, at):
         o['cancelReason'] = _str(p.get('reason'), 'Gerekçe', 120)
         o['closedAt'] = at
         o['cancelledBy'] = staff_id
+        o['prepared'] = p.get('prepared') is not False
         o['approvedBy'] = p.get('approvedBy') or staff_id
     else:
         raise OrderError(f"Bilinmeyen adisyon işlemi: {op}")

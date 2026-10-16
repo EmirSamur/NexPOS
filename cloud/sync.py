@@ -33,6 +33,7 @@ PULL_COLLECTIONS = {
     'areas': lambda docs: database.upsert_floor('areas', docs),
     'tables': lambda docs: database.upsert_floor('tables', docs),
     'kitchenTickets': database.upsert_cloud_tickets,   # mutfak ekranındaki Başla / Hazır
+    'ingredients': lambda docs: database.upsert_cache('ingredients', docs),   # stok (8. ekran)
 }
 
 # Yalnızca yakın geçmişi gereken koleksiyonlar (ilk senkronda tümü indirilmez)

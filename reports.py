@@ -295,14 +295,65 @@ class Report:
         """Ürün tablosu (ciroya göre); eski kayıtlar ayrı satır olarak eklenir."""
         rows = []
         total = self.stats.get('revenue', 0) or 1
+        costs = self.costing()['products']
         for key, p in self.stats.get('byProduct', {}).items():
+            c = costs.get(key, {'cost': 0, 'exVat': 0})
+            profit = c['exVat'] - c['cost']
             rows.append({'key': key, 'name': p['name'], 'qty': p.get('qty', 0), 'revenue': p.get('revenue', 0),
                          'share': p.get('revenue', 0) * 100 / total, 'comps': p.get('comps', 0),
-                         'voids': p.get('voids', 0), 'legacy': False})
+                         'voids': p.get('voids', 0), 'legacy': False, 'cost': c['cost'], 'exVat': c['exVat'],
+                         'profit': profit if c['cost'] else None,
+                         'margin': round(profit * 100 / c['exVat']) if c['cost'] and c['exVat'] else None})
         for name, p in self.legacy['products'].items():
             rows.append({'key': f'legacy:{name}', 'name': f"{name} (eski kayıt)", 'qty': p['qty'],
-                         'revenue': p['revenue'], 'share': None, 'comps': 0, 'voids': 0, 'legacy': True})
+                         'revenue': p['revenue'], 'share': None, 'comps': 0, 'voids': 0, 'legacy': True,
+                         'cost': 0, 'exVat': 0, 'profit': None, 'margin': None})
         return sorted(rows, key=lambda r: (-r['revenue'], r['name']))
+
+    # ---------------------------------------------------------------- maliyet ve kâr (8. ekran)
+    def costing(self):
+        """Ürün başına maliyet ve KDV hariç ciro; ikram ve hazırlanmış iptal maliyeti (güncel birim maliyetle)."""
+        if hasattr(self, '_costing'):
+            return self._costing
+        import stock
+        rec = stock.Recipes()
+        per, comps, waste = {}, 0, 0
+        for o in self.orders:
+            if o['status'] == 'paid':
+                for l, net in line_nets(o):
+                    r = per.setdefault(product_key(l), {'cost': 0, 'exVat': 0})
+                    r['cost'] += rec.line_cost(l, o['type'])
+                    r['exVat'] += net - vat_amount(net, l.get('taxRate', 10))
+            for l in o['items']:
+                if o['status'] == 'paid' and l['status'] == 'comp':
+                    comps += rec.line_cost(l, o['type'])
+                prepared_void = l['status'] == 'void' and l.get('prepared', True)
+                cancelled_sent = (o['status'] == 'cancelled' and o.get('prepared', True)
+                                  and l['status'] == 'active' and l.get('state') == 'sent')
+                if prepared_void or cancelled_sent:
+                    waste += rec.line_cost(l, o['type'])
+        has_recipes = any(p.get('recipe') for p in rec.products.values())
+        self._costing = {'products': per, 'comps': comps, 'waste': waste, 'hasRecipes': has_recipes,
+                         'sold': sum(v['cost'] for v in per.values())}
+        return self._costing
+
+    def menu_analysis(self):
+        """Menü analizi: adet (popülerlik) ve birim kâr (KDV hariç fiyat − maliyet) ortalamalarına göre dört grup."""
+        rows = [p for p in self.products() if not p['legacy'] and p['qty'] and p.get('cost')]
+        if not rows:
+            return []
+        total_qty = sum(r['qty'] for r in rows)
+        avg_qty = total_qty / len(rows)
+        avg_profit = sum(r['profit'] for r in rows) / total_qty
+        out = []
+        for r in rows:
+            popular = r['qty'] >= 0.7 * avg_qty
+            profitable = r['profit'] / r['qty'] >= avg_profit
+            kind = {(True, True): 'star', (True, False): 'plowhorse', (False, True): 'puzzle',
+                    (False, False): 'dog'}[(popular, profitable)]
+            out.append({**r, 'unitProfit': r['profit'] // r['qty'], 'class': kind})
+        order = {'star': 0, 'plowhorse': 1, 'puzzle': 2, 'dog': 3}
+        return sorted(out, key=lambda r: (order[r['class']], -r['profit']))
 
     def categories(self):
         cats = {}
@@ -449,8 +500,11 @@ class Report:
         net = self.summary()['net'] + self.legacy['revenue']
         total_exp = sum(expenses.values())
         waste = int(round((waste or 0) * 100))
+        c = self.costing()
+        cogs = c['sold'] + c['comps']
         return {'net': net, 'expenses': total_exp, 'expensesByType': expenses, 'waste': waste,
-                'remaining': net - total_exp - waste}
+                'cogs': cogs, 'compCost': c['comps'], 'voidWaste': c['waste'], 'hasRecipes': c['hasRecipes'],
+                'remaining': net - total_exp - waste - cogs - c['waste']}
 
     # ---------------------------------------------------------------- mutfak
     def kitchen(self):
@@ -548,6 +602,11 @@ def dashboard(now=None):
                            'reason': last_session.get('differenceReason') or '', 'day': last_session['businessDay']})
     if failed:
         alerts.append({'target': 'terminals', 'failed': failed})
+    if database.modules()['stock']['enabled']:
+        import stock
+        low = stock.critical()
+        if low:
+            alerts.append({'target': 'stock', 'items': [i['name'] for i in low]})
     kitchen = None
     if database.modules()['kds']['enabled']:
         kitchen = Report(day, day, include_legacy=False).kitchen()
