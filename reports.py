@@ -20,7 +20,7 @@ import json
 from datetime import date, datetime, timedelta
 
 import database
-from cloud.orders import compute_totals, line_total
+from cloud.orders import compute_totals, line_deduction, line_total
 
 DAY_START_HOUR = 5
 METHODS = ('cash', 'card', 'meal')
@@ -53,16 +53,17 @@ def product_key(line):
 
 
 def line_nets(order):
-    """Aktif satırlar ve iskonto düşülmüş payları: [(satır, net)]. Toplam = adisyon toplamı."""
+    """Aktif satırlar ve kampanya/ödül/iskonto düşülmüş payları: [(satır, net)]. Toplam = adisyon toplamı."""
     lines = [l for l in order['items'] if l['status'] == 'active' and line_total(l) > 0]
     t = compute_totals(order)
+    nets = [line_total(l) - line_deduction(order, l['lineId']) for l in lines]
+    base = sum(nets)
     left = t['discountAmount']
     out = []
-    for i, l in enumerate(lines):
-        lt = line_total(l)
-        share = left if i == len(lines) - 1 else (t['discountAmount'] * lt) // t['subtotal']
+    for i, (l, n) in enumerate(zip(lines, nets)):
+        share = left if i == len(lines) - 1 else ((t['discountAmount'] * n) // base if base else 0)
         left -= share
-        out.append((l, lt - share))
+        out.append((l, n - share))
     return out
 
 
@@ -135,6 +136,17 @@ def contribution(order):
             c[kind]['count'] += l['qty']
             c[kind]['amount'] += _list_value(l)
             merge(c['byProduct'], {product_key(l): {'name': l['name'], kind: l['qty']}})
+    # 10. ekran: kampanya, ödül ve üye adisyonları (yalnızca varsa)
+    if t['campaignAmount']:
+        c['campaign'] = t['campaignAmount']
+        c['byCampaign'] = {}
+        for x in order['campaigns']:
+            if x['amount']:
+                merge(c['byCampaign'], {x['campaignId']: {'name': x['name'], 'count': 1, 'amount': x['amount']}})
+    if t['rewardAmount']:
+        c['rewards'] = {'count': len(order['rewards']), 'amount': t['rewardAmount']}
+    if order.get('customer'):
+        c['members'] = {'orders': 1, 'revenue': t['total']}
     return c
 
 

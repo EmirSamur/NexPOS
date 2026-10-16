@@ -37,13 +37,15 @@ PULL_COLLECTIONS = {
     'suppliers': lambda docs: database.upsert_cache('suppliers', docs),
     'purchaseOrders': lambda docs: database.upsert_cache('purchaseOrders', docs),
     'shiftPlans': lambda docs: database.upsert_cache('shiftPlans', docs),   # vardiya planı (9. ekran)
+    'customers': lambda docs: database.upsert_cache('customers', docs),     # sadakat (10. ekran)
+    'rewards': lambda docs: database.upsert_cache('rewards', docs),
 }
 
 # Yalnızca yakın geçmişi gereken koleksiyonlar (ilk senkronda tümü indirilmez)
 RECENT_ONLY = {'kitchenTickets'}
 
 # Tek doküman olarak çekilen ayarlar: settings/<ad> → settings_cache[<ad>]
-PULL_SETTINGS = ('permissions', 'general', 'modules')
+PULL_SETTINGS = ('permissions', 'general', 'modules', 'loyalty')
 
 MENU_CHANGES = {'categories', 'optionGroups', 'products'}
 

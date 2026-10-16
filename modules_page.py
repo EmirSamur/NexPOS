@@ -1,5 +1,5 @@
 """
-NexPOS - Ayarlar → Modüller (5., 6., 8. ve 9. ekran)
+NexPOS - Ayarlar → Modüller (5., 6., 8., 9. ve 10. ekran)
 
 Mutfak ekranı (KDS), zorunlu kasa açılışı, bilgi fişi yazdırma, ödeme yöntemleri ve bahşiş
 modül olarak açılıp kapanır. Ayar bulutta (settings/modules) tutulur ve bütün cihazlara iner;
@@ -97,6 +97,15 @@ class ModulesPanel(QWidget):
         bl.addLayout(_row("Geç kalma toleransı:", self.tolerance))
         ly.addWidget(box)
 
+        box, bl, self.loyalty = _section("Sadakat (damga kartı)",
+                                         "Kasada üye telefonla ya da uygulama QR'ı ile tanınır; içeceklerde damga, kart "
+                                         "dolunca bedava içecek. Ayarlar: Pazarlama → Sadakat Ayarları.")
+        ly.addWidget(box)
+        box, bl, self.campaigns = _section("Kampanyalar",
+                                           "Happy Hour, 2. ürün indirimi, menü fiyatı, çift damga; kasada kendiliğinden "
+                                           "uygulanır. Pazarlama → Kampanyalar.")
+        ly.addWidget(box)
+
         box, bl, self.tips = _section("Bahşiş", "Kartla ödemede bahşiş alanı gösterilir.")
         self.methods = {k: QCheckBox(v) for k, v in (('cash', 'Nakit'), ('card', 'Kredi Kartı'), ('meal', 'Yemek Kartı'))}
         lbl = QLabel("Ödeme yöntemleri:")
@@ -150,10 +159,12 @@ class ModulesPanel(QWidget):
         self.ask_void.setChecked(m['stock']['askOnVoid'])
         self.staff.setChecked(m['staff']['enabled'])
         self.tolerance.setValue(m['staff']['lateToleranceMinutes'])
+        self.loyalty.setChecked(m['loyalty']['enabled'])
+        self.campaigns.setChecked(m['campaigns']['enabled'])
         for k, c in self.methods.items():
             c.setChecked(m['paymentMethods'][k])
         owner = self.user.get('role') == 'owner'
-        for w in (self.kds, self.cash_required, self.threshold, self.printing, self.tips, self.stock, self.staff, self.save_btn,
+        for w in (self.kds, self.cash_required, self.threshold, self.printing, self.tips, self.stock, self.staff, self.loyalty, self.campaigns, self.save_btn,
                   *self.methods.values()):
             w.setEnabled(owner)
         self._enable()
@@ -172,6 +183,8 @@ class ModulesPanel(QWidget):
             'tips': self.tips.isChecked(),
             'stock': {'enabled': self.stock.isChecked(), 'askOnVoid': self.ask_void.isChecked()},
             'staff': {'enabled': self.staff.isChecked(), 'lateToleranceMinutes': self.tolerance.value()},
+            'loyalty': {'enabled': self.loyalty.isChecked()},
+            'campaigns': {'enabled': self.campaigns.isChecked()},
         }
 
     def validate(self):

@@ -136,6 +136,12 @@ def init_database():
     c.execute("""CREATE TABLE IF NOT EXISTS purchase_log (
         id TEXT PRIMARY KEY, kind TEXT NOT NULL, supplier_id TEXT, purchase_order_id TEXT, total INTEGER,
         payment_status TEXT, method TEXT, note TEXT, data TEXT, at TEXT, business_day TEXT, staff_id TEXT)""")
+    # Sadakat defteri (10. ekran): bu bilgisayarda kapanan üye adisyonlarının damga/ödül etkisi. İşlem
+    # kuyruktayken (op_id bekliyor) müşterinin kartına eklenir; gidince bulut kaydında zaten vardır.
+    c.execute("""CREATE TABLE IF NOT EXISTS loyalty_ledger (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, op_id TEXT NOT NULL, customer_id TEXT NOT NULL, order_id TEXT,
+        kind TEXT NOT NULL, stamps INTEGER NOT NULL DEFAULT 0, rewards INTEGER NOT NULL DEFAULT 0,
+        used TEXT, at TEXT)""")
     # Mesai kayıtları (9. ekran): bu bilgisayarda başlatılan/düzeltilen mesailer (kuyrukla buluta gider)
     c.execute("""CREATE TABLE IF NOT EXISTS time_entries (
         id TEXT PRIMARY KEY, staff_id TEXT NOT NULL, business_day TEXT NOT NULL, data TEXT NOT NULL,
@@ -1381,6 +1387,8 @@ DEFAULT_MODULES = {
     'tips': True,
     'stock': {'enabled': False, 'askOnVoid': True},
     'staff': {'enabled': False, 'lateToleranceMinutes': 5},
+    'loyalty': {'enabled': False},
+    'campaigns': {'enabled': False},
 }
 
 

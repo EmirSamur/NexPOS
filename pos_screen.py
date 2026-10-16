@@ -235,6 +235,11 @@ class POSScreen(QWidget):
         pt = QLabel("ADİSYON")
         pt.setStyleSheet(f"color: {COLORS['text_secondary']}; font-weight: bold; font-size: 11px; background: transparent;")
         pl.addWidget(pt)
+        # Müşteri ve sadakat (10. ekran)
+        from loyalty_pages import CustomerBar
+        self.customer_bar = CustomerBar(self.user)
+        self.customer_bar.changed.connect(self._order_changed)
+        pl.addWidget(self.customer_bar)
         self.lines_holder = QWidget()
         self.lines_layout = QVBoxLayout(self.lines_holder)
         self.lines_layout.setContentsMargins(0, 0, 0, 0)
@@ -264,6 +269,12 @@ class POSScreen(QWidget):
         sub_label = QLabel("Ara toplam")
         sub_label.setStyleSheet(f"background: transparent; color: {COLORS['text_secondary']};")
         totals.addRow(sub_label, self.lbl_sub)
+        self.lbl_deduct = QLabel()
+        self.lbl_deduct.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.row_deduct_label = QLabel("Kampanya / ödül")
+        for w in (self.lbl_deduct, self.row_deduct_label):
+            w.setStyleSheet(f"background: transparent; color: {COLORS['success_dark']};")
+        totals.addRow(self.row_deduct_label, self.lbl_deduct)
         totals.addRow(self.row_disc_label, self.lbl_disc)
         totals.addRow(self.row_paid_label, self.lbl_paid)
         tl = QLabel("TOPLAM")
@@ -401,6 +412,11 @@ class POSScreen(QWidget):
             self.lines_layout.addWidget(hint)
         t = o or {'subtotal': 0, 'discountAmount': 0, 'total': 0, 'paid': 0}
         self.lbl_sub.setText(format_tl(t['subtotal']))
+        deduct = (t.get('campaignAmount') or 0) + (t.get('rewardAmount') or 0)
+        self.lbl_deduct.setText(format_tl(-deduct))
+        for w in (self.lbl_deduct, self.row_deduct_label):
+            w.setVisible(bool(deduct))
+        self.customer_bar.set_order(o)
         disc = (o or {}).get('discount')
         self.row_disc_label.setText(f"İskonto %{disc['value']}" if disc and disc['type'] == 'percent' else "İskonto")
         self.lbl_disc.setText(format_tl(-t['discountAmount']) if t['discountAmount'] else "—")
@@ -421,6 +437,10 @@ class POSScreen(QWidget):
         self.btn_print.setEnabled(bool(o) and has_items)
         self.btn_pay.setEnabled(bool(o) and bool(items) and pending == 0)
         self.btn_pay.setToolTip("Önce bekleyen ürünleri gönderin." if pending else "")
+
+    def _order_changed(self, order):
+        self.order = order
+        self._refresh()
 
     def _do(self, fn, *args, **kwargs):
         try:

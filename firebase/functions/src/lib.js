@@ -23,6 +23,8 @@ const PERMISSIONS = [
   'stock', // Malzeme, reçete, sayım, alış (8. ekran)
   'waste', // Zayi girme
   'shifts', // Vardiya planı, mesai düzeltme ve raporu (9. ekran)
+  'loyalty', // Müşteri listesi, elle damga/ödül düzeltme (10. ekran)
+  'campaigns', // Kampanya ve bildirim (10. ekran)
 ];
 
 function allPermissions(value) {
@@ -629,6 +631,8 @@ const DEFAULT_MODULES = {
   tips: true,
   stock: { enabled: false, askOnVoid: true },
   staff: { enabled: false, lateToleranceMinutes: 5 },
+  loyalty: { enabled: false },
+  campaigns: { enabled: false },
 };
 
 function strictBool(v, fallback) {
@@ -675,6 +679,8 @@ function validateModules(input) {
     staff: { enabled: strictBool(sf.enabled, D.staff.enabled),
       lateToleranceMinutes: intIn(sf.lateToleranceMinutes, D.staff.lateToleranceMinutes, 0, 60,
         'Geç kalma toleransı 0-60 dakika olmalıdır.') },
+    loyalty: { enabled: strictBool((d.loyalty || {}).enabled, D.loyalty.enabled) },
+    campaigns: { enabled: strictBool((d.campaigns || {}).enabled, D.campaigns.enabled) },
   };
 }
 
@@ -720,7 +726,25 @@ function validateShiftCell(c) {
     breakMinutes: intIn(d.breakMinutes, 0, 0, 240, 'Mola 0-240 dakika olmalıdır.'), note };
 }
 
+// Müşteri (10. ekran): { name, phone, birthDate?: 'MM-DD', marketingConsent }
+const BIRTH_RE = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+function validateCustomer(input) {
+  const { normalizePhone } = require('./loyalty');
+  const d = input || {};
+  const name = text(d.name, 'Ad', { max: 60 });
+  const phone = normalizePhone(d.phone);
+  if (!phone) throw new MenuError('Telefon numarası geçersiz.');
+  let birthDate = null;
+  if (d.birthDate !== undefined && d.birthDate !== null && d.birthDate !== '') {
+    if (typeof d.birthDate !== 'string' || !BIRTH_RE.test(d.birthDate)) throw new MenuError('Doğum günü AA-GG biçiminde olmalıdır.');
+    birthDate = d.birthDate;
+  }
+  if (typeof d.marketingConsent !== 'boolean') throw new MenuError('Bildirim izni belirtilmelidir.');
+  return { name, phone, birthDate, marketingConsent: d.marketingConsent };
+}
+
 module.exports = {
+  validateCustomer,
   validateShiftCell,
   PURCHASE_PAYMENT_METHODS,
   validateSupplier,

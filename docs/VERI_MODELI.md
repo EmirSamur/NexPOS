@@ -46,21 +46,21 @@ Bu kurallar Genç Ofis'te işe yarayan yaklaşımın aynısı:
 }
 ```
 
-### `settings/loyalty`
+### `settings/loyalty` (10. ekran; yalnızca owner yazar, `saveLoyaltySettings`)
 ```ts
 {
-  stampsForReward: 10,                // 10 damga = 1 bedava içecek
+  stampsForReward: 10,                // 10 damga = 1 bedava içecek (2–50)
   rewardMaxValue: 9000,               // bedava ürün en fazla 90 ₺ değerinde olabilir
   rewardValidDays: 60,
-  birthdayReward: true,
-  tiers: [                            // ömür boyu damgaya göre seviye
-    { id: "bronze", name: "Bronz", minStamps: 0,   perks: [] },
-    { id: "silver", name: "Gümüş", minStamps: 50,  perks: ["Ayda 1 ücretsiz boy büyütme"] },
-    { id: "gold",   name: "Altın", minStamps: 150, perks: ["Her 8 damgada ödül"] }
-  ],
-  referralBonusStamps: 2
+  birthdayReward: true,               // doğum günü haftasında (±3 gün) yılda bir ödül
+  tiers: [                            // ömür boyu damgaya göre seviye; ayrıcalık yalnızca yazıdır
+    { id: "bronze", name: "Bronz", minStamps: 0,   perks: "" },
+    { id: "silver", name: "Gümüş", minStamps: 50,  perks: "Ayda 1 ücretsiz boy büyütme" },
+    { id: "gold",   name: "Altın", minStamps: 150, perks: "" }
+  ]
 }
 ```
+> Damga kazandıran ürünler `categories.stampEligible` / `products.stampEligible` ile seçilir.
 
 ### `settings/quiz`: kahve önerisi testi (bkz. §8)
 
@@ -419,31 +419,34 @@ Siparişi değiştiren her işlem bir **callable function** üzerinden yapılır
 
 ## 7. Müşteri ve sadakat
 
-### `customers/{uid}`: müşteri uygulamasından kayıt
+### `customers/{id}`: üye (kasada telefonla ya da 11. ekranda uygulamadan)
 ```ts
 {
-  name, phone, email?,
-  birthDate?: "MM-DD",             // yıl tutulmaz (KVKK: gereken kadar veri)
+  name, phone: "5321234567",          // 10 hane, tekil (customerPhones/{phone} → { customerId })
+  birthDate?: "MM-DD",                // yıl tutulmaz (KVKK: gereken kadar veri)
   marketingConsent: boolean, consentAt?,
+  source: "pos"|"panel"|"app",
 
-  // yalnızca fonksiyonlar yazar
-  stamps: number,                  // mevcut karttaki damga (0–9)
-  lifetimeStamps: number,
-  tier: "bronze"|"silver"|"gold",
-  totalSpent: number, visitCount: number, lastVisitAt,
-
-  favoriteOrder?: { items: [...] },   // "her zamankinden"
-  referralCode: string, referredBy?: uid,
-  createdAt
+  // yalnızca fonksiyonlar yazar (ödeme kapanışı, iade, loyaltyAdjust)
+  stamps: number,                     // mevcut karttaki damga (0 – stampsForReward−1)
+  lifetimeStamps: number, tier: "bronze"|"silver"|"gold",
+  totalSpent: number, visitCount: number, lastVisitAt, lastBirthdayYear?,
+  aliasOf?: id,                       // kasada aynı telefonla açılan ikinci kayıt asıl kayda yönlenir
+  deleted: boolean                    // KVKK silme: ad/telefon/doğum günü silinir, sayılar kalır
 }
 ```
+> Okuma: manager+ ve terminal (kasada internetsiz tanıma). Yazma: kuyruk (`customerCreate`) ya da panel
+> (`saveCustomer`, `deleteCustomer` — silme yalnızca owner). `exportCustomer` bütün kaydı döndürür (KVKK).
 
-- `customers/{uid}/loyaltyEvents/{id}` **(yalnızca fonksiyonlar yazar)**  
-  `{ type: "stamp"|"reward_earned"|"reward_used"|"bonus"|"expire", amount, orderId?, at }`
-- `customers/{uid}/rewards/{id}` **(yalnızca fonksiyonlar yazar)**  
-  `{ type: "free_drink"|"birthday"|"referral"|"campaign", status: "active"|"used"|"expired", expiresAt, usedOrderId? }`
-- `customers/{uid}/devices/{token}`  
-  `{ platform, updatedAt }` (FCM bildirim token'ları)
+- `rewards/{id}` **(yalnızca fonksiyonlar yazar)**: `{ customerId, type: "free_drink"|"birthday"|"manual"|"campaign",
+  status: "active"|"used"|"cancelled", expiresAt: "YYYY-MM-DD", sourceOrderId?, usedOrderId?, usedAt? }` —
+  kimlik `{adisyon}-r1`, `{adisyon}-bday`, `{düzeltme}-r1` (tekrar işlemede aynı kayıt).
+- `loyaltyEvents/{id}` **(yalnızca fonksiyonlar yazar; manager+ okur)**:
+  `{ customerId, type: "stamp"|"revoke"|"adjust", amount, rewards?, orderId?, reason?, by, approvedBy?, at }`
+- Adisyon: `orders.customer: { id, name, tier }`, `orders.rewards: [{ rewardId, lineId, amount, customerId }]`,
+  `orders.stamps` (kapanışta kazanılan), `orders.stampsRevoked` (iadede geri alınan). Ödüllü ürün damga vermez.
+  Damga ödeme kapanınca sunucuda işlenir; kullanılmış/geçersiz ödül adisyonu bozmaz, `reward_conflict` kaydı düşer.
+- İade: geri alınan damga = ⌊kazanılan × iade / ödenen⌋ (daha önce alınanlar düşülür).
 
 ### `loyaltyTokens/{token}`: kasada okutulan QR
 ```ts

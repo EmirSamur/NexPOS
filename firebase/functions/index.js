@@ -56,9 +56,11 @@ const {
   weightedUnitCost,
   expectedCash,
   validateShiftCell,
+  validateCustomer,
 } = require('./src/lib');
 const shiftCalc = require('./src/shifts');
-const { OrderError, applyOrderOp, mergeOrders, tableStatusFor, stampCount } = require('./src/orders');
+const { OrderError, applyOrderOp, mergeOrders, tableStatusFor, stampCount, computeTotals } = require('./src/orders');
+const loyaltyCalc = require('./src/loyalty');
 const { businessDayOf, contribution, refundContribution, merge } = require('./src/stats');
 
 initializeApp();
@@ -573,12 +575,77 @@ function requiredPermission(op, payload, order) {
     const sent = (order?.items || []).some((l) => l.status === 'active' && l.state === 'sent');
     return sent ? 'voidItem' : 'openTable';
   }
+  // Kampanyalar kendiliğinden uygulanır; adisyondan kampanya kaldırmak iskonto yetkisi ister
+  if (op === 'applyCampaigns') {
+    const before = new Set(order?.campaignsExcluded || []);
+    return (Array.isArray(payload.excluded) ? payload.excluded : []).some((x) => !before.has(x)) ? 'discount' : 'openTable';
+  }
   return 'openTable';
+}
+
+// Müşteri kaydı; telefonla çift kayıt birleştirildiyse (aliasOf) asıl kayıt döner. Silinmişse null.
+async function readCustomer(tx, id) {
+  if (typeof id !== 'string' || !id) return null;
+  let snap = await tx.get(db.doc(`customers/${id}`));
+  if (snap.exists && snap.data().aliasOf) snap = await tx.get(db.doc(`customers/${snap.data().aliasOf}`));
+  if (!snap.exists || snap.data().deleted === true) return null;
+  return { ref: snap.ref, data: snap.data() };
 }
 
 const TABLE_STATUS_FIELDS = (order, status) => (status === 'empty'
   ? { status: 'empty', currentOrderId: null, openedAt: null, waiterId: null }
   : { status, currentOrderId: order.id, openedAt: order.openedAt, waiterId: order.waiterId });
+
+// Adisyon kapanınca damga, kart dolunca ödül, doğum günü ödülü, kullanılan ödüller; iadede damga geri alınır.
+function applyLoyalty(tx, { op, p, order, next, loyalty, at, terminalId, staffId, now }) {
+  const { ref, data: c, settings: S } = loyalty;
+  const L = loyaltyCalc;
+  if (op === 'takePayment' && next.status === 'paid') {
+    const day = next.businessDay;
+    const earned = stampCount(next);
+    const st = L.applyStamps(c, earned, S);
+    const update = { stamps: st.stamps, lifetimeStamps: st.lifetimeStamps, tier: st.tier,
+      totalSpent: (c.totalSpent || 0) + next.total, visitCount: (c.visitCount || 0) + 1, lastVisitAt: at, updatedAt: now };
+    const rewards = [];
+    for (let i = 1; i <= st.newRewards; i += 1) rewards.push([`${next.id}-r${i}`, 'free_drink']);
+    const year = day.slice(0, 4);
+    if (S.birthdayReward && L.isBirthdayWeek(c.birthDate, day) && c.lastBirthdayYear !== year) {
+      rewards.push([`${next.id}-bday`, 'birthday']);
+      update.lastBirthdayYear = year;
+    }
+    tx.update(ref, update);
+    for (const [id, type] of rewards) {
+      tx.set(db.doc(`rewards/${id}`), { customerId: ref.id, type, status: 'active', sourceOrderId: next.id,
+        createdAt: at, expiresAt: L.addDays(day, S.rewardValidDays), updatedAt: now });
+    }
+    tx.set(db.doc(`loyaltyEvents/${next.id}-stamp`), { customerId: ref.id, type: 'stamp', amount: earned,
+      rewards: rewards.length, orderId: next.id, orderNo: next.no, total: next.total, at, terminalId, by: staffId, createdAt: now });
+    (next.rewards || []).forEach((r, i) => {
+      const snap = loyalty.rewardSnaps[i];
+      if (snap && snap.exists && L.rewardUsable(snap.data(), ref.id, day)) {
+        tx.update(snap.ref, { status: 'used', usedOrderId: next.id, usedAt: at, updatedAt: now });
+      } else {
+        // Para alınmış; ödül geçersizse adisyon değişmez, kayda düşer
+        audit(tx, { action: 'reward_conflict', actor: staffId, target: `rewards/${r.rewardId}`, detail: next.id, terminalId,
+          clientAt: parseClientTime(at) });
+      }
+    });
+  }
+  if (op === 'refundPayment') {
+    const t = computeTotals(next);
+    const n = L.refundRevoke(order.stamps || 0, t.paid, t.refunded, order.stampsRevoked || 0);
+    const refundAmount = p.amount || 0;
+    const update = { totalSpent: Math.max((c.totalSpent || 0) - refundAmount, 0), updatedAt: now };
+    if (n) {
+      const st = L.revokeStamps(c, n, S);
+      Object.assign(update, { stamps: st.stamps, lifetimeStamps: st.lifetimeStamps, tier: st.tier });
+      next.stampsRevoked = (order.stampsRevoked || 0) + n;
+      tx.set(db.doc(`loyaltyEvents/${p.refundId}-revoke`), { customerId: ref.id, type: 'revoke', amount: -n,
+        orderId: next.id, orderNo: next.no, at, terminalId, by: staffId, createdAt: now });
+    }
+    tx.update(ref, update);
+  }
+}
 
 function orderHandler(op) {
   return async (tx, { op: envelope, terminalId, staff, matrix }) => {
@@ -651,6 +718,19 @@ function orderHandler(op) {
       products = ids.length ? await tx.getAll(...ids.map((x) => db.doc(`products/${x}`))) : [];
     }
 
+    // Sadakat (10. ekran): kapanışta damga ve ödül, iadede damga geri alma
+    let loyalty = null;
+    if (order?.customer && ((op === 'takePayment' && order.status === 'open') || op === 'refundPayment')) {
+      loyalty = await readCustomer(tx, order.customer.id);
+      if (loyalty) {
+        loyalty.settings = loyaltyCalc.normalizeLoyalty((await tx.get(db.doc('settings/loyalty'))).data());
+        loyalty.rewardSnaps = [];
+        if (op === 'takePayment') {
+          for (const r of order.rewards || []) loyalty.rewardSnaps.push(await tx.get(db.doc(`rewards/${r.rewardId}`)));
+        }
+      }
+    }
+
     // ---- Yetki
     const permission = requiredPermission(op, p, order);
     if (!approver || !hasPermission(matrix, approver.role, permission, approver.permissions)) {
@@ -686,6 +766,7 @@ function orderHandler(op) {
 
     // ---- Yazmalar
     const now = FieldValue.serverTimestamp();
+    if (loyalty) applyLoyalty(tx, { op, p, order, next, loyalty, at, terminalId, staffId: envelope.staffId, now });
     const stamp = { terminalId, updatedAt: now };
     const finalize = (o) => ({ ...o, ...stamp, stamps: o.status === 'paid' ? stampCount(o) : null });
     tx.set(orderRef, finalize(next));
@@ -784,7 +865,7 @@ function orderHandler(op) {
 
 const ORDER_OPS = ['openOrder', 'addItems', 'updateItem', 'removeItem', 'sendItems', 'voidItem', 'compItem',
   'setDiscount', 'requestBill', 'moveOrder', 'takePayment', 'cancelOrder', 'mergeOrders', 'splitLine',
-  'refundPayment'];
+  'refundPayment', 'setCustomer', 'useReward', 'removeReward', 'applyCampaigns'];
 for (const name of ORDER_OPS) OP_HANDLERS[name] = orderHandler(name);
 
 // Mutfak/bar fişinin durumu: new → preparing → ready → served
@@ -1009,6 +1090,76 @@ OP_HANDLERS.timeEdit = async (tx, { op, terminalId, staff, matrix }) => {
   audit(tx, { action: 'time_edit', actor: op.staffId, approvedBy: approverId, target: ref.path, reason,
     before: before ? { clockIn: before.clockIn, clockOut: before.clockOut } : null,
     after: { clockIn: p.clockIn, clockOut: p.clockOut || null }, terminalId, clientAt: parseClientTime(op.createdAt) });
+  return { status: 'ok' };
+};
+
+// Kasada yeni üye (10. ekran, internetsiz). Telefon başka üyedeyse bu kayıt ona yönlendirilir (aliasOf);
+// adisyondaki müşteri kimliği bozulmaz, damgalar asıl kayda işlenir.
+// payload: { customerId, name, phone, birthDate?, marketingConsent }
+OP_HANDLERS.customerCreate = async (tx, { op, terminalId, staff }) => {
+  if (!staff || staff.active !== true) return { status: 'rejected', error: 'Personel bulunamadı.' };
+  const p = op.payload;
+  if (typeof p.customerId !== 'string' || !/^[\w-]{1,64}$/.test(p.customerId)) return { status: 'rejected', error: 'Müşteri kimliği geçersiz.' };
+  let data;
+  try {
+    data = validateCustomer(p);
+  } catch (e) {
+    if (e instanceof MenuError) return { status: 'rejected', error: e.message };
+    throw e;
+  }
+  const ref = db.doc(`customers/${p.customerId}`);
+  const phoneRef = db.doc(`customerPhones/${data.phone}`);
+  const [snap, phone] = [await tx.get(ref), await tx.get(phoneRef)];
+  if (snap.exists) return { status: 'rejected', error: 'Bu müşteri zaten kayıtlı.' };
+  const now = FieldValue.serverTimestamp();
+  if (phone.exists && phone.data().customerId !== p.customerId) {
+    tx.set(ref, { aliasOf: phone.data().customerId, deleted: true, createdAt: now, updatedAt: now });
+    return { status: 'ok' };
+  }
+  tx.set(ref, { ...data, consentAt: data.marketingConsent ? op.createdAt : null, stamps: 0, lifetimeStamps: 0,
+    tier: 'bronze', totalSpent: 0, visitCount: 0, lastVisitAt: null, source: 'pos', createdBy: op.staffId, terminalId,
+    deleted: false, createdAt: now, updatedAt: now });
+  tx.set(phoneRef, { customerId: p.customerId });
+  return { status: 'ok' };
+};
+
+// Elle damga düzeltme / ödül verme (loyalty yetkisi, gerekçe zorunlu).
+// payload: { adjustId, customerId, stamps (−100..100), grantReward?, reason, approvedBy? }
+OP_HANDLERS.loyaltyAdjust = async (tx, { op, terminalId, staff, matrix }) => {
+  if (!staff) return { status: 'rejected', error: 'Personel bulunamadı.' };
+  const p = op.payload;
+  const approverId = typeof p.approvedBy === 'string' && p.approvedBy ? p.approvedBy : op.staffId;
+  let approver = staff;
+  if (approverId !== op.staffId) {
+    const a = await tx.get(db.doc(`staff/${approverId}`));
+    approver = a.exists && a.data().active === true ? a.data() : null;
+  }
+  const customer = await readCustomer(tx, p.customerId);
+  const settings = loyaltyCalc.normalizeLoyalty((await tx.get(db.doc('settings/loyalty'))).data());
+  if (!approver || !hasPermission(matrix, approver.role, 'loyalty', approver.permissions)) {
+    return { status: 'rejected', error: 'Bu işlem için yetki yok (loyalty).' };
+  }
+  if (!customer) return { status: 'rejected', error: 'Müşteri bulunamadı.' };
+  if (typeof p.adjustId !== 'string' || !/^[\w-]{1,64}$/.test(p.adjustId)) return { status: 'rejected', error: 'Kayıt kimliği geçersiz.' };
+  const stamps = p.stamps ?? 0;
+  if (!Number.isInteger(stamps) || stamps < -100 || stamps > 100) return { status: 'rejected', error: 'Damga −100 ile 100 arası olmalıdır.' };
+  if (!stamps && p.grantReward !== true) return { status: 'rejected', error: 'Değişiklik yok.' };
+  const reason = typeof p.reason === 'string' ? p.reason.trim().slice(0, 120) : '';
+  if (!reason) return { status: 'rejected', error: 'Gerekçe zorunludur.' };
+  const c = customer.data;
+  const st = stamps >= 0 ? loyaltyCalc.applyStamps(c, stamps, settings) : loyaltyCalc.revokeStamps(c, -stamps, settings);
+  const now = FieldValue.serverTimestamp();
+  const day = businessDayOf(op.createdAt);
+  const n = st.newRewards + (p.grantReward === true ? 1 : 0);
+  tx.update(customer.ref, { stamps: st.stamps, lifetimeStamps: st.lifetimeStamps, tier: st.tier, updatedAt: now });
+  for (let i = 1; i <= n; i += 1) {
+    tx.set(db.doc(`rewards/${p.adjustId}-r${i}`), { customerId: customer.ref.id, type: 'manual', status: 'active',
+      createdAt: op.createdAt, expiresAt: loyaltyCalc.addDays(day, settings.rewardValidDays), updatedAt: now });
+  }
+  tx.set(db.doc(`loyaltyEvents/${p.adjustId}`), { customerId: customer.ref.id, type: 'adjust', amount: stamps,
+    rewards: n, reason, by: op.staffId, approvedBy: approverId, at: op.createdAt, terminalId, createdAt: now });
+  audit(tx, { action: 'loyalty_adjust', actor: op.staffId, approvedBy: approverId, target: customer.ref.path, reason,
+    after: { stamps, grantReward: p.grantReward === true }, terminalId, clientAt: parseClientTime(op.createdAt) });
   return { status: 'ok' };
 };
 
@@ -1852,6 +2003,128 @@ exports.saveWages = onCall(async (request) => {
     after: { count: Object.keys(wages).length }, at: FieldValue.serverTimestamp() });
   await batch.commit();
   return { saved: Object.keys(wages).length };
+});
+
+// ---------------------------------------------------------------------------
+// Müşteri ve sadakat (10. ekran)
+// ---------------------------------------------------------------------------
+
+// Firestore zaman damgalarını ISO metne çevirir (callable yanıtları için)
+function plain(value) {
+  if (value instanceof Timestamp) return value.toDate().toISOString();
+  if (Array.isArray(value)) return value.map(plain);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, plain(v)]));
+  return value;
+}
+
+// Sadakat ayarları: yalnızca Yönetici
+exports.saveLoyaltySettings = onCall(async (request) => {
+  const actor = await requireStaff(request);
+  if (actor.role !== 'owner') throw new HttpsError('permission-denied', 'Sadakat ayarlarını yalnızca yönetici değiştirebilir.');
+  let data;
+  try {
+    data = loyaltyCalc.validateLoyaltySettings(request.data);
+  } catch (e) {
+    if (e instanceof loyaltyCalc.LoyaltyError) throw new HttpsError('invalid-argument', e.message);
+    throw e;
+  }
+  await db.runTransaction(async (tx) => {
+    tx.set(db.doc('settings/loyalty'), { ...data, updatedAt: FieldValue.serverTimestamp(), updatedBy: actor.uid });
+    audit(tx, { action: 'loyalty_settings', actor: actor.uid, target: 'settings/loyalty', after: data });
+  });
+  return data;
+});
+
+// Müşteri ekle / düzenle (panel, internet). Telefon tekil tutulur.
+exports.saveCustomer = onCall(async (request) => {
+  const actor = await requireStaff(request, 'loyalty');
+  const data = validated(validateCustomer, request.data);
+  const id = request.data?.id;
+  const ref = id ? db.doc(`customers/${requireString(id, 'Müşteri', { max: 64 })}`) : db.collection('customers').doc();
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const phoneSnap = await tx.get(db.doc(`customerPhones/${data.phone}`));
+    if (id && (!snap.exists || snap.data().deleted === true)) throw new HttpsError('not-found', 'Müşteri bulunamadı.');
+    if (phoneSnap.exists && phoneSnap.data().customerId !== ref.id) {
+      throw new HttpsError('already-exists', 'Bu telefon numarası başka bir üyede kayıtlı.');
+    }
+    const before = snap.exists ? snap.data() : null;
+    const now = FieldValue.serverTimestamp();
+    if (before && before.phone !== data.phone) tx.delete(db.doc(`customerPhones/${before.phone}`));
+    const consentAt = data.marketingConsent ? (before?.marketingConsent ? before.consentAt : new Date().toISOString()) : null;
+    if (before) tx.update(ref, { ...data, consentAt, updatedAt: now });
+    else {
+      tx.set(ref, { ...data, consentAt, stamps: 0, lifetimeStamps: 0, tier: 'bronze', totalSpent: 0, visitCount: 0,
+        lastVisitAt: null, source: 'panel', createdBy: actor.uid, deleted: false, createdAt: now, updatedAt: now });
+    }
+    tx.set(db.doc(`customerPhones/${data.phone}`), { customerId: ref.id });
+    audit(tx, { action: before ? 'customer_update' : 'customer_create', actor: actor.uid, target: ref.path,
+      before: before ? { name: before.name, phone: before.phone } : null, after: { name: data.name, phone: data.phone } });
+  });
+  return { id: ref.id };
+});
+
+// KVKK: kişisel bilgiler silinir (ad, telefon, doğum günü); geçmiş satışlar anonim kalır. Yalnızca Yönetici.
+exports.deleteCustomer = onCall(async (request) => {
+  const actor = await requireStaff(request);
+  if (actor.role !== 'owner') throw new HttpsError('permission-denied', 'Müşteri kaydını yalnızca yönetici silebilir.');
+  const ref = db.doc(`customers/${requireString(request.data?.id, 'Müşteri', { max: 64 })}`);
+  const active = await db.collection('rewards').where('customerId', '==', ref.id).where('status', '==', 'active').get();
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists || snap.data().deleted === true) throw new HttpsError('not-found', 'Müşteri bulunamadı.');
+    const now = FieldValue.serverTimestamp();
+    if (snap.data().phone) tx.delete(db.doc(`customerPhones/${snap.data().phone}`));
+    tx.set(ref, { name: 'Silinmiş müşteri', phone: null, birthDate: null, marketingConsent: false, consentAt: null,
+      stamps: 0, lifetimeStamps: snap.data().lifetimeStamps || 0, tier: snap.data().tier || 'bronze',
+      totalSpent: snap.data().totalSpent || 0, visitCount: snap.data().visitCount || 0,
+      deleted: true, deletedAt: now, createdAt: snap.data().createdAt || now, updatedAt: now });
+    for (const r of active.docs) tx.update(r.ref, { status: 'cancelled', updatedAt: now });
+    audit(tx, { action: 'customer_delete', actor: actor.uid, target: ref.path });
+  });
+  return { deleted: true };
+});
+
+// Müşterinin bütün kaydı (detay ekranı ve KVKK "verimi istiyorum" talebi)
+exports.exportCustomer = onCall(async (request) => {
+  await requireStaff(request, 'loyalty');
+  const id = requireString(request.data?.id, 'Müşteri', { max: 64 });
+  const snap = await db.doc(`customers/${id}`).get();
+  if (!snap.exists) throw new HttpsError('not-found', 'Müşteri bulunamadı.');
+  const [events, rewards, orders] = await Promise.all([
+    db.collection('loyaltyEvents').where('customerId', '==', id).get(),
+    db.collection('rewards').where('customerId', '==', id).get(),
+    db.collection('orders').where('customer.id', '==', id).get(),
+  ]);
+  const byAt = (a, b) => String(b.at || b.createdAt || '').localeCompare(String(a.at || a.createdAt || ''));
+  return plain({
+    customer: { id, ...snap.data() },
+    events: events.docs.map((d) => ({ id: d.id, ...d.data() })).sort(byAt),
+    rewards: rewards.docs.map((d) => ({ id: d.id, ...d.data() })).sort(byAt),
+    orders: orders.docs.map((d) => d.data()).filter((o) => o.status === 'paid')
+      .map((o) => ({ id: o.id, no: o.no, businessDay: o.businessDay, closedAt: o.closedAt, total: o.total,
+        items: o.items.filter((l) => l.status === 'active').map((l) => ({ name: l.name, qty: l.qty })) }))
+      .sort((a, b) => String(b.closedAt).localeCompare(String(a.closedAt))),
+  });
+});
+
+// Kasada uygulama QR'ı: tek kullanımlık, 60 sn geçerli token → müşteri. İnternet ister.
+exports.resolveLoyaltyToken = onCall(async (request) => {
+  await requireTerminal(request);
+  const token = requireString(request.data?.token, 'QR', { max: 128 });
+  const ref = db.doc(`loyaltyTokens/${token.replace(/[^\w-]/g, '')}`);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const t = snap.exists ? snap.data() : null;
+    const expires = t?.expiresAt instanceof Timestamp ? t.expiresAt.toMillis() : 0;
+    if (!t || t.used === true || expires < Date.now()) throw new HttpsError('not-found', 'QR geçersiz ya da süresi dolmuş.');
+    const customer = await readCustomer(tx, t.uid);
+    if (!customer) throw new HttpsError('not-found', 'Müşteri bulunamadı.');
+    tx.update(ref, { used: true, usedAt: FieldValue.serverTimestamp() });
+    const c = customer.data;
+    return { customerId: customer.ref.id, name: c.name, stamps: c.stamps || 0, tier: c.tier || 'bronze',
+      phone: loyaltyCalc.maskPhone(c.phone) };
+  });
 });
 
 // Tedarikçiler ve sipariş (8b). Teslim alma ve ödeme kuyruktan gelir (internetsiz).

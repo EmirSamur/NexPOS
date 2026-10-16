@@ -12,6 +12,7 @@ const STATIONS = ['bar', 'kitchen'];
 const TAX_RATES = [0, 1, 10, 20];
 const PAYMENT_METHODS = ['cash', 'card', 'meal'];
 const ORDER_TYPES = ['dine_in', 'takeaway'];
+const CAMPAIGN_TYPES = ['percent', 'amount', 'nth', 'bundle', 'double_stamps'];
 
 function fail(message) {
   throw new OrderError(message);
@@ -37,27 +38,41 @@ function lineTotal(line) {
   return unit * line.qty;
 }
 
-// Toplamları hesaplar. İskonto ara toplama BİR KEZ uygulanır (eski NexPOS'ta yeni ürün
-// eklendikçe tekrar uygulanıyordu).
-function computeTotals(order) {
-  const subtotal = order.items.reduce((s, l) => s + lineTotal(l), 0);
-  let discountAmount = 0;
-  const d = order.discount;
-  if (d && d.type === 'percent') discountAmount = Math.floor((subtotal * d.value + 50) / 100); // yarım yukarı
-  if (d && d.type === 'amount') discountAmount = Math.min(d.value, subtotal);
-  const total = subtotal - discountAmount;
-  const paid = order.payments.reduce((s, p) => s + p.amount, 0);
-  const refunded = (order.refunds || []).reduce((s, r) => s + r.amount, 0);
-  return { subtotal, discountAmount, total, paid, refunded, remaining: Math.max(total - paid, 0) };
+// Satırdan düşülen kampanya ve ödül tutarı (10. ekran)
+function lineDeduction(order, lineId) {
+  let sum = 0;
+  for (const c of order.campaigns || []) sum += (c.lines || {})[lineId] || 0;
+  for (const r of order.rewards || []) if (r.lineId === lineId) sum += r.amount;
+  return sum;
 }
 
-// Seçilen satırların ödenecek payı: satır toplamı − iskontonun orantılı payı (aşağı yuvarlanır;
-// kuruş farkı son ödemede kapanır).
+// Toplamları hesaplar. Önce satırlardan kampanya ve ödül düşülür; elle iskonto kalan tutara
+// BİR KEZ uygulanır (eski NexPOS'ta yeni ürün eklendikçe tekrar uygulanıyordu).
+function computeTotals(order) {
+  const subtotal = order.items.reduce((s, l) => s + lineTotal(l), 0);
+  const campaignAmount = (order.campaigns || []).reduce((s, c) => s + c.amount, 0);
+  const rewardAmount = (order.rewards || []).reduce((s, r) => s + r.amount, 0);
+  const base = subtotal - campaignAmount - rewardAmount;
+  let discountAmount = 0;
+  const d = order.discount;
+  if (d && d.type === 'percent') discountAmount = Math.floor((base * d.value + 50) / 100); // yarım yukarı
+  if (d && d.type === 'amount') discountAmount = Math.min(d.value, base);
+  const total = base - discountAmount;
+  const paid = order.payments.reduce((s, p) => s + p.amount, 0);
+  const refunded = (order.refunds || []).reduce((s, r) => s + r.amount, 0);
+  return { subtotal, campaignAmount, rewardAmount, discountAmount, total, paid, refunded,
+    remaining: Math.max(total - paid, 0) };
+}
+
+// Seçilen satırların ödenecek payı: satır toplamı − kampanya/ödül − iskontonun orantılı payı
+// (aşağı yuvarlanır; kuruş farkı son ödemede kapanır).
 function linesShare(order, lineIds) {
   const t = computeTotals(order);
-  const gross = order.items.filter((l) => lineIds.includes(l.lineId)).reduce((s, l) => s + lineTotal(l), 0);
-  if (!t.discountAmount || !t.subtotal) return gross;
-  return gross - Math.floor((t.discountAmount * gross) / t.subtotal);
+  const gross = order.items.filter((l) => lineIds.includes(l.lineId))
+    .reduce((s, l) => s + lineTotal(l) - (l.status === 'active' ? lineDeduction(order, l.lineId) : 0), 0);
+  const base = t.subtotal - t.campaignAmount - t.rewardAmount;
+  if (!t.discountAmount || !base) return gross;
+  return gross - Math.floor((t.discountAmount * gross) / base);
 }
 
 function withTotals(order) {
@@ -132,6 +147,10 @@ function applyOrderOp(order, op, payload, ctx) {
       payments: [],
       mergedInto: null,
       cancelReason: null,
+      customer: null,
+      campaigns: [],
+      campaignsExcluded: [],
+      rewards: [],
     });
   }
 
@@ -282,10 +301,98 @@ function applyOrderOp(order, op, payload, ctx) {
       o.approvedBy = p.approvedBy || ctx.staffId;
       break;
     }
+    case 'setCustomer': {
+      const c = p.customer;
+      if (c !== null && (typeof c !== 'object' || Array.isArray(c))) fail('Müşteri geçersiz.');
+      const next = c === null ? null : { id: str(c.id, 'Müşteri', 64), name: str(c.name, 'Müşteri adı', 60),
+        tier: str(c.tier, 'Seviye', 20, { optional: true }) || null };
+      if ((o.customer?.id || null) !== (next?.id || null)) {
+        o.rewards = [];
+        o.campaigns = [];
+      }
+      o.customer = next;
+      break;
+    }
+    case 'useReward': {
+      if (!o.customer) fail('Önce müşteri seçilmelidir.');
+      if (o.payments.some((x) => x.lineIds)) fail('Ürün seçerek ödeme alınmış adisyonda ödül kullanılamaz.');
+      const rewardId = str(p.rewardId, 'Ödül', 64);
+      if ((o.rewards || []).some((r) => r.rewardId === rewardId)) fail('Bu ödül zaten kullanılmış.');
+      const line = findLine(o, p.lineId);
+      if (line.status !== 'active' || line.paidBy || !line.stampEligible) fail('Ödül bu ürüne uygulanamaz.');
+      if ((o.rewards || []).filter((r) => r.lineId === line.lineId).length >= line.qty) fail('Bu satırdaki bütün ürünlere ödül uygulanmış.');
+      const unit = lineTotal(line) / line.qty;
+      if (!isInt(p.amount, 1, unit)) fail('Ödül tutarı ürün fiyatını aşamaz.');
+      if (lineDeduction(o, line.lineId) + p.amount > lineTotal(line)) fail('Ödül tutarı ürün fiyatını aşamaz.');
+      o.rewards = [...(o.rewards || []), { rewardId, lineId: line.lineId, amount: p.amount, customerId: o.customer.id }];
+      checkNotBelowPaid(o);
+      break;
+    }
+    case 'removeReward': {
+      if (!(o.rewards || []).some((r) => r.rewardId === p.rewardId)) fail('Ödül bulunamadı.');
+      o.rewards = o.rewards.filter((r) => r.rewardId !== p.rewardId);
+      break;
+    }
+    case 'applyCampaigns': {
+      if (o.payments.some((x) => x.lineIds)) fail('Ürün seçerek ödeme alınmış adisyonda kampanya değiştirilemez.');
+      if (!Array.isArray(p.campaigns) || p.campaigns.length > 20) fail('Kampanyalar geçersiz.');
+      const excluded = p.excluded ?? [];
+      if (!Array.isArray(excluded) || excluded.length > 50 || excluded.some((x) => typeof x !== 'string' || x.length > 128)) {
+        fail('Kaldırılan kampanyalar geçersiz.');
+      }
+      const open = new Map(o.items.filter((l) => l.status === 'active' && !l.paidBy).map((l) => [l.lineId, l]));
+      const seen = new Set();
+      const campaigns = p.campaigns.map((c) => {
+        const campaignId = str(c?.campaignId, 'Kampanya', 128);
+        if (seen.has(campaignId) || excluded.includes(campaignId)) fail('Kampanya tekrar ediyor.');
+        seen.add(campaignId);
+        if (!CAMPAIGN_TYPES.includes(c.type)) fail('Kampanya türü geçersiz.');
+        const lines = {};
+        const entries = Object.entries(c.lines || {});
+        if (entries.length > 50) fail('Kampanya satırları geçersiz.');
+        for (const [lineId, amount] of entries) {
+          if (!open.has(lineId)) fail('Kampanya satırı bulunamadı.');
+          if (!isInt(amount, 1, 10_000_000)) fail('Kampanya tutarı geçersiz.');
+          lines[lineId] = amount;
+        }
+        const stampMultiplier = c.type === 'double_stamps' ? (isInt(c.stampMultiplier, 2, 5) ? c.stampMultiplier : 2) : 1;
+        if (c.type !== 'double_stamps' && !entries.length) fail('Kampanya satırı yok.');
+        return { campaignId, name: str(c.name, 'Kampanya adı', 60), type: c.type, lines,
+          amount: Object.values(lines).reduce((s, x) => s + x, 0), stampMultiplier };
+      });
+      o.campaigns = campaigns;
+      o.campaignsExcluded = [...excluded];
+      for (const l of open.values()) if (lineDeduction(o, l.lineId) > lineTotal(l)) fail('Kampanya ürün fiyatını aşamaz.');
+      if (o.discount && campaigns.some((c) => c.amount > 0)) fail('Elle iskonto yapılmış adisyonda kampanya uygulanmaz.');
+      checkNotBelowPaid(o);
+      break;
+    }
     default:
       fail(`Bilinmeyen adisyon işlemi: ${op}`);
   }
+  if (ITEM_OPS.includes(op)) resetDeductions(o);
+  if (op === 'setDiscount' && o.discount) o.campaigns = [];
   return withTotals(o);
+}
+
+// Ürünler değişince kampanyalar yeniden hesaplanmak üzere silinir (terminal ödemeden önce tekrar
+// uygular); ödüller, satırı hâlâ duruyorsa kalır.
+const ITEM_OPS = ['addItems', 'updateItem', 'removeItem', 'voidItem', 'compItem', 'splitLine'];
+function resetDeductions(o) {
+  o.campaigns = [];
+  const used = new Map();
+  o.rewards = (o.rewards || []).filter((r) => {
+    const line = o.items.find((l) => l.lineId === r.lineId);
+    if (!line || line.status !== 'active') return false;
+    const n = (used.get(r.lineId) || 0) + 1;
+    used.set(r.lineId, n);
+    return n <= line.qty;
+  });
+}
+
+function checkNotBelowPaid(o) {
+  const t = computeTotals(o);
+  if (t.total < t.paid) fail('Toplam alınmış ödemenin altına inemez.');
 }
 
 // Kapanmış (ödenmiş) adisyonda iade. Adisyon "paid" kalır; iadeler ayrı listede tutulur.
@@ -318,6 +425,7 @@ function mergeOrders(target, source, ctx) {
     if (ids.has(l.lineId)) fail('Satır kimlikleri çakışıyor.');
     t.items.push({ ...l, mergedFrom: s.id });
   }
+  resetDeductions(t);
   s.items = [];
   s.status = 'merged';
   s.mergedInto = t.id;
@@ -325,9 +433,13 @@ function mergeOrders(target, source, ctx) {
   return [withTotals(t), withTotals(s)];
 }
 
-// Hangi ürünlerin sadakat damgası kazandırdığı (10. ekran için şimdiden kaydedilir).
+// Sadakat damgası: damga kazandıran aktif ürünler − ödülle bedava alınanlar; çift damga kampanyasıyla katlanır.
 function stampCount(order) {
-  return order.items.filter((l) => l.status === 'active' && l.stampEligible).reduce((s, l) => s + l.qty, 0);
+  const active = new Map(order.items.filter((l) => l.status === 'active' && l.stampEligible).map((l) => [l.lineId, l]));
+  const units = [...active.values()].reduce((s, l) => s + l.qty, 0)
+    - (order.rewards || []).filter((r) => active.has(r.lineId)).length;
+  const mult = Math.max(1, ...(order.campaigns || []).map((c) => c.stampMultiplier || 1));
+  return Math.max(units, 0) * mult;
 }
 
 module.exports = {
@@ -341,4 +453,6 @@ module.exports = {
   tableStatusFor,
   stampCount,
   lineTotal,
+  lineDeduction,
+  CAMPAIGN_TYPES,
 };

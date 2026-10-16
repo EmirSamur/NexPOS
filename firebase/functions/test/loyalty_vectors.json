@@ -1,0 +1,472 @@
+[
+ {
+  "name": "telefon: boşluk ve 0 ile",
+  "fn": "normalizePhone",
+  "args": [
+   "0532 123 45 67"
+  ],
+  "expect": "5321234567"
+ },
+ {
+  "name": "telefon: +90",
+  "fn": "normalizePhone",
+  "args": [
+   "+90 (532) 123-45-67"
+  ],
+  "expect": "5321234567"
+ },
+ {
+  "name": "telefon: eksik hane",
+  "fn": "normalizePhone",
+  "args": [
+   "532 123 45"
+  ],
+  "expect": null
+ },
+ {
+  "name": "telefon: 1 ile başlayamaz",
+  "fn": "normalizePhone",
+  "args": [
+   "1321234567"
+  ],
+  "expect": null
+ },
+ {
+  "name": "telefon: maske",
+  "fn": "maskPhone",
+  "args": [
+   "5321234567"
+  ],
+  "expect": "0532 *** ** 67"
+ },
+ {
+  "name": "damga: kart dolmadan",
+  "fn": "applyStamps",
+  "args": [
+   {
+    "stamps": 3,
+    "lifetimeStamps": 3
+   },
+   2,
+   {
+    "stampsForReward": 10,
+    "rewardMaxValue": 9000,
+    "rewardValidDays": 60,
+    "birthdayReward": true,
+    "tiers": [
+     {
+      "id": "bronze",
+      "name": "Bronz",
+      "minStamps": 0,
+      "perks": ""
+     },
+     {
+      "id": "silver",
+      "name": "Gümüş",
+      "minStamps": 50,
+      "perks": ""
+     },
+     {
+      "id": "gold",
+      "name": "Altın",
+      "minStamps": 150,
+      "perks": ""
+     }
+    ]
+   }
+  ],
+  "expect": {
+   "stamps": 5,
+   "lifetimeStamps": 5,
+   "newRewards": 0,
+   "tier": "bronze"
+  }
+ },
+ {
+  "name": "damga: kart dolunca ödül, artan yeni karta",
+  "fn": "applyStamps",
+  "args": [
+   {
+    "stamps": 9,
+    "lifetimeStamps": 49
+   },
+   3,
+   {
+    "stampsForReward": 10,
+    "rewardMaxValue": 9000,
+    "rewardValidDays": 60,
+    "birthdayReward": true,
+    "tiers": [
+     {
+      "id": "bronze",
+      "name": "Bronz",
+      "minStamps": 0,
+      "perks": ""
+     },
+     {
+      "id": "silver",
+      "name": "Gümüş",
+      "minStamps": 50,
+      "perks": ""
+     },
+     {
+      "id": "gold",
+      "name": "Altın",
+      "minStamps": 150,
+      "perks": ""
+     }
+    ]
+   }
+  ],
+  "expect": {
+   "stamps": 2,
+   "lifetimeStamps": 52,
+   "newRewards": 1,
+   "tier": "silver"
+  }
+ },
+ {
+  "name": "damga: bir seferde iki ödül",
+  "fn": "applyStamps",
+  "args": [
+   {
+    "stamps": 8,
+    "lifetimeStamps": 148
+   },
+   14,
+   {
+    "stampsForReward": 10,
+    "rewardMaxValue": 9000,
+    "rewardValidDays": 60,
+    "birthdayReward": true,
+    "tiers": [
+     {
+      "id": "bronze",
+      "name": "Bronz",
+      "minStamps": 0,
+      "perks": ""
+     },
+     {
+      "id": "silver",
+      "name": "Gümüş",
+      "minStamps": 50,
+      "perks": ""
+     },
+     {
+      "id": "gold",
+      "name": "Altın",
+      "minStamps": 150,
+      "perks": ""
+     }
+    ]
+   }
+  ],
+  "expect": {
+   "stamps": 2,
+   "lifetimeStamps": 162,
+   "newRewards": 2,
+   "tier": "gold"
+  }
+ },
+ {
+  "name": "damga geri alma: sıfırın altına inmez, seviye düşer",
+  "fn": "revokeStamps",
+  "args": [
+   {
+    "stamps": 1,
+    "lifetimeStamps": 51
+   },
+   3,
+   {
+    "stampsForReward": 10,
+    "rewardMaxValue": 9000,
+    "rewardValidDays": 60,
+    "birthdayReward": true,
+    "tiers": [
+     {
+      "id": "bronze",
+      "name": "Bronz",
+      "minStamps": 0,
+      "perks": ""
+     },
+     {
+      "id": "silver",
+      "name": "Gümüş",
+      "minStamps": 50,
+      "perks": ""
+     },
+     {
+      "id": "gold",
+      "name": "Altın",
+      "minStamps": 150,
+      "perks": ""
+     }
+    ]
+   }
+  ],
+  "expect": {
+   "stamps": 0,
+   "lifetimeStamps": 48,
+   "newRewards": 0,
+   "tier": "bronze"
+  }
+ },
+ {
+  "name": "iade: yarısı iade → damganın yarısı (aşağı)",
+  "fn": "refundRevoke",
+  "args": [
+   3,
+   20000,
+   10000,
+   0
+  ],
+  "expect": 1
+ },
+ {
+  "name": "iade: tamamı, önceden 1 alınmış",
+  "fn": "refundRevoke",
+  "args": [
+   3,
+   20000,
+   20000,
+   1
+  ],
+  "expect": 2
+ },
+ {
+  "name": "iade: damgasız adisyon",
+  "fn": "refundRevoke",
+  "args": [
+   0,
+   20000,
+   20000,
+   0
+  ],
+  "expect": 0
+ },
+ {
+  "name": "doğum günü: 3 gün önce",
+  "fn": "isBirthdayWeek",
+  "args": [
+   "10-19",
+   "2026-10-16"
+  ],
+  "expect": true
+ },
+ {
+  "name": "doğum günü: 4 gün sonra değil",
+  "fn": "isBirthdayWeek",
+  "args": [
+   "10-12",
+   "2026-10-16"
+  ],
+  "expect": false
+ },
+ {
+  "name": "doğum günü: yıl dönümü",
+  "fn": "isBirthdayWeek",
+  "args": [
+   "12-30",
+   "2027-01-02"
+  ],
+  "expect": true
+ },
+ {
+  "name": "doğum günü: 29 Şubat artık olmayan yılda 28'i",
+  "fn": "isBirthdayWeek",
+  "args": [
+   "02-29",
+   "2027-03-03"
+  ],
+  "expect": true
+ },
+ {
+  "name": "doğum günü: yok",
+  "fn": "isBirthdayWeek",
+  "args": [
+   null,
+   "2026-10-16"
+  ],
+  "expect": false
+ },
+ {
+  "name": "gün ekle",
+  "fn": "addDays",
+  "args": [
+   "2026-12-20",
+   60
+  ],
+  "expect": "2027-02-18"
+ },
+ {
+  "name": "ödül kullanılabilir",
+  "fn": "rewardUsable",
+  "args": [
+   {
+    "status": "active",
+    "customerId": "c1",
+    "expiresAt": "2026-10-16"
+   },
+   "c1",
+   "2026-10-16"
+  ],
+  "expect": true
+ },
+ {
+  "name": "ödül süresi geçmiş",
+  "fn": "rewardUsable",
+  "args": [
+   {
+    "status": "active",
+    "customerId": "c1",
+    "expiresAt": "2026-10-15"
+   },
+   "c1",
+   "2026-10-16"
+  ],
+  "expect": false
+ },
+ {
+  "name": "ödül başkasının",
+  "fn": "rewardUsable",
+  "args": [
+   {
+    "status": "active",
+    "customerId": "c2",
+    "expiresAt": "2027-01-01"
+   },
+   "c1",
+   "2026-10-16"
+  ],
+  "expect": false
+ },
+ {
+  "name": "ödül kullanılmış",
+  "fn": "rewardUsable",
+  "args": [
+   {
+    "status": "used",
+    "customerId": "c1",
+    "expiresAt": "2027-01-01"
+   },
+   "c1",
+   "2026-10-16"
+  ],
+  "expect": false
+ },
+ {
+  "name": "ayar: varsayılan",
+  "fn": "validateLoyaltySettings",
+  "args": [
+   {}
+  ],
+  "expect": {
+   "stampsForReward": 10,
+   "rewardMaxValue": 9000,
+   "rewardValidDays": 60,
+   "birthdayReward": true,
+   "tiers": [
+    {
+     "id": "bronze",
+     "name": "Bronz",
+     "minStamps": 0,
+     "perks": ""
+    },
+    {
+     "id": "silver",
+     "name": "Gümüş",
+     "minStamps": 50,
+     "perks": ""
+    },
+    {
+     "id": "gold",
+     "name": "Altın",
+     "minStamps": 150,
+     "perks": ""
+    }
+   ]
+  }
+ },
+ {
+  "name": "ayar: seviye eşikleri artan olmalı",
+  "fn": "validateLoyaltySettings",
+  "args": [
+   {
+    "tiers": [
+     {
+      "name": "A"
+     },
+     {
+      "name": "B",
+      "minStamps": 100
+     },
+     {
+      "name": "C",
+      "minStamps": 100
+     }
+    ]
+   }
+  ],
+  "error": "artan"
+ },
+ {
+  "name": "ayar: damga sayısı sınırı",
+  "fn": "validateLoyaltySettings",
+  "args": [
+   {
+    "stampsForReward": 1
+   }
+  ],
+  "error": "2-50"
+ },
+ {
+  "name": "ayar: seviye adları ve ayrıcalık",
+  "fn": "validateLoyaltySettings",
+  "args": [
+   {
+    "stampsForReward": 8,
+    "tiers": [
+     {
+      "name": " Yeni ",
+      "minStamps": 99
+     },
+     {
+      "name": "Müdavim",
+      "minStamps": 40,
+      "perks": "Ayda 1 boy büyütme"
+     },
+     {
+      "name": "Efsane",
+      "minStamps": 120
+     }
+    ]
+   }
+  ],
+  "expect": {
+   "stampsForReward": 8,
+   "rewardMaxValue": 9000,
+   "rewardValidDays": 60,
+   "birthdayReward": true,
+   "tiers": [
+    {
+     "id": "bronze",
+     "name": "Yeni",
+     "minStamps": 0,
+     "perks": ""
+    },
+    {
+     "id": "silver",
+     "name": "Müdavim",
+     "minStamps": 40,
+     "perks": "Ayda 1 boy büyütme"
+    },
+    {
+     "id": "gold",
+     "name": "Efsane",
+     "minStamps": 120,
+     "perks": ""
+    }
+   ]
+  }
+ }
+]

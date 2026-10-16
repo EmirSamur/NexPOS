@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from cloud.orders import OrderError, apply_order_op, merge_orders, table_status_for
+from cloud.orders import OrderError, apply_order_op, merge_orders, stamp_count, table_status_for
 
 VECTORS = os.path.join(os.path.dirname(__file__), '..', 'firebase', 'functions', 'test', 'order_vectors.json')
 CASES = json.load(open(VECTORS, encoding='utf-8'))
@@ -43,6 +43,8 @@ def test_ortak_senaryo(case):
                 assert pay[k] == v
     for oid, st in case.get('expectTableStatus', {}).items():
         assert table_status_for(orders[oid]) == st
+    for oid, n in case.get('expectStamps', {}).items():
+        assert stamp_count(orders[oid]) == n
 
 
 def test_bool_tutar_olarak_kabul_edilmez():

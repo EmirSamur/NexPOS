@@ -433,7 +433,7 @@ def pay_supplier(user, supplier_id, amount, method, note='', approver_id=None):
 def supplier_statement(supplier_id):
     """Bu bilgisayarda girilen teslim ve ödemeler (en yeni üstte)."""
     conn = database.get_connection()
-    rows = conn.execute("SELECT * FROM purchase_log WHERE supplier_id=? ORDER BY at DESC", (supplier_id,)).fetchall()
+    rows = conn.execute("SELECT * FROM purchase_log WHERE supplier_id=? ORDER BY at DESC, rowid DESC", (supplier_id,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -441,7 +441,7 @@ def supplier_statement(supplier_id):
 def purchases(day_from, day_to):
     conn = database.get_connection()
     rows = conn.execute("""SELECT * FROM purchase_log WHERE kind='receipt' AND business_day BETWEEN ? AND ?
-        ORDER BY at DESC""", (day_from, day_to)).fetchall()
+        ORDER BY at DESC, rowid DESC""", (day_from, day_to)).fetchall()
     conn.close()
     return [{**dict(r), 'lines': json.loads(r['data'] or '[]')} for r in rows]
 
@@ -520,7 +520,7 @@ def waste_entries(day_from, day_to):
     """Yeni zayi kayıtları + eski NexPOS zayi sayfası kayıtları (eski kayıt)."""
     conn = database.get_connection()
     rows = [dict(r) for r in conn.execute("""SELECT * FROM waste_log WHERE business_day BETWEEN ? AND ?
-        ORDER BY at DESC""", (day_from, day_to))]
+        ORDER BY at DESC, rowid DESC""", (day_from, day_to))]
     legacy = conn.execute("""SELECT w.*, p.ad AS product_name FROM waste w LEFT JOIN products p ON p.id = w.product_id
         WHERE substr(w.zayi_tarihi,1,10) BETWEEN ? AND ?""", (day_from, day_to)).fetchall()
     conn.close()

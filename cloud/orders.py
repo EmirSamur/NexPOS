@@ -13,6 +13,8 @@ STATIONS = ('bar', 'kitchen')
 TAX_RATES = (0, 1, 10, 20)
 PAYMENT_METHODS = ('cash', 'card', 'meal')
 ORDER_TYPES = ('dine_in', 'takeaway')
+CAMPAIGN_TYPES = ('percent', 'amount', 'nth', 'bundle', 'double_stamps')
+ITEM_OPS = ('addItems', 'updateItem', 'removeItem', 'voidItem', 'compItem', 'splitLine')
 MAX_MONEY = 10_000_000
 
 
@@ -39,30 +41,43 @@ def line_total(line):
     return unit * line['qty']
 
 
+def line_deduction(order, line_id):
+    """Satırdan düşülen kampanya ve ödül tutarı (10. ekran)."""
+    total = sum((c.get('lines') or {}).get(line_id, 0) for c in order.get('campaigns') or [])
+    return total + sum(r['amount'] for r in order.get('rewards') or [] if r['lineId'] == line_id)
+
+
 def compute_totals(order):
-    """İskonto ara toplama BİR KEZ uygulanır (eski NexPOS'ta tekrar uygulanıyordu)."""
+    """Önce satırlardan kampanya ve ödül düşülür; elle iskonto kalan tutara BİR KEZ uygulanır
+    (eski NexPOS'ta tekrar uygulanıyordu)."""
     subtotal = sum(line_total(l) for l in order['items'])
+    campaign_amount = sum(c['amount'] for c in order.get('campaigns') or [])
+    reward_amount = sum(r['amount'] for r in order.get('rewards') or [])
+    base = subtotal - campaign_amount - reward_amount
     discount_amount = 0
     d = order.get('discount')
     if d and d['type'] == 'percent':
-        discount_amount = (subtotal * d['value'] + 50) // 100  # yarım yukarı
+        discount_amount = (base * d['value'] + 50) // 100  # yarım yukarı
     if d and d['type'] == 'amount':
-        discount_amount = min(d['value'], subtotal)
-    total = subtotal - discount_amount
+        discount_amount = min(d['value'], base)
+    total = base - discount_amount
     paid = sum(p['amount'] for p in order['payments'])
     refunded = sum(r['amount'] for r in order.get('refunds') or [])
-    return {'subtotal': subtotal, 'discountAmount': discount_amount, 'total': total, 'paid': paid,
+    return {'subtotal': subtotal, 'campaignAmount': campaign_amount, 'rewardAmount': reward_amount,
+            'discountAmount': discount_amount, 'total': total, 'paid': paid,
             'refunded': refunded, 'remaining': max(total - paid, 0)}
 
 
 def lines_share(order, line_ids):
-    """Seçilen satırların ödenecek payı: satır toplamı − iskontonun orantılı payı (aşağı
-    yuvarlanır; kuruş farkı son ödemede kapanır)."""
+    """Seçilen satırların ödenecek payı: satır toplamı − kampanya/ödül − iskontonun orantılı payı
+    (aşağı yuvarlanır; kuruş farkı son ödemede kapanır)."""
     t = compute_totals(order)
-    gross = sum(line_total(l) for l in order['items'] if l['lineId'] in line_ids)
-    if not t['discountAmount'] or not t['subtotal']:
+    gross = sum(line_total(l) - (line_deduction(order, l['lineId']) if l['status'] == 'active' else 0)
+                for l in order['items'] if l['lineId'] in line_ids)
+    base = t['subtotal'] - t['campaignAmount'] - t['rewardAmount']
+    if not t['discountAmount'] or not base:
         return gross
-    return gross - (t['discountAmount'] * gross) // t['subtotal']
+    return gross - (t['discountAmount'] * gross) // base
 
 
 def with_totals(order):
@@ -76,7 +91,32 @@ def table_status_for(order):
 
 
 def stamp_count(order):
-    return sum(l['qty'] for l in order['items'] if l['status'] == 'active' and l.get('stampEligible'))
+    """Sadakat damgası: damga kazandıran aktif ürünler − ödülle bedava alınanlar; çift damga ile katlanır."""
+    active = {l['lineId']: l for l in order['items'] if l['status'] == 'active' and l.get('stampEligible')}
+    units = sum(l['qty'] for l in active.values()) - sum(1 for r in order.get('rewards') or [] if r['lineId'] in active)
+    mult = max([1] + [c.get('stampMultiplier') or 1 for c in order.get('campaigns') or []])
+    return max(units, 0) * mult
+
+
+def _reset_deductions(o):
+    """Ürünler değişince kampanyalar silinir (terminal ödemeden önce tekrar uygular); ödüller,
+    satırı hâlâ duruyorsa kalır."""
+    o['campaigns'] = []
+    used, keep = {}, []
+    for r in o.get('rewards') or []:
+        line = next((l for l in o['items'] if l['lineId'] == r['lineId']), None)
+        if not line or line['status'] != 'active':
+            continue
+        used[r['lineId']] = used.get(r['lineId'], 0) + 1
+        if used[r['lineId']] <= line['qty']:
+            keep.append(r)
+    o['rewards'] = keep
+
+
+def _check_not_below_paid(o):
+    t = compute_totals(o)
+    if t['total'] < t['paid']:
+        raise OrderError("Toplam alınmış ödemenin altına inemez.")
 
 
 def _find_line(order, line_id):
@@ -155,6 +195,10 @@ def apply_order_op(order, op, payload, staff_id, at):
             'payments': [],
             'mergedInto': None,
             'cancelReason': None,
+            'customer': None,
+            'campaigns': [],
+            'campaignsExcluded': [],
+            'rewards': [],
         })
 
     if not order:
@@ -315,8 +359,90 @@ def apply_order_op(order, op, payload, staff_id, at):
         o['cancelledBy'] = staff_id
         o['prepared'] = p.get('prepared') is not False
         o['approvedBy'] = p.get('approvedBy') or staff_id
+    elif op == 'setCustomer':
+        c = p.get('customer', 0)
+        if c is not None and not isinstance(c, dict):
+            raise OrderError("Müşteri geçersiz.")
+        new = None if c is None else {'id': _str(c.get('id'), 'Müşteri', 64), 'name': _str(c.get('name'), 'Müşteri adı', 60),
+                                      'tier': _str(c.get('tier'), 'Seviye', 20, optional=True) or None}
+        if ((o.get('customer') or {}).get('id')) != ((new or {}).get('id')):
+            o['rewards'] = []
+            o['campaigns'] = []
+        o['customer'] = new
+    elif op == 'useReward':
+        if not o.get('customer'):
+            raise OrderError("Önce müşteri seçilmelidir.")
+        if any(x.get('lineIds') for x in o['payments']):
+            raise OrderError("Ürün seçerek ödeme alınmış adisyonda ödül kullanılamaz.")
+        reward_id = _str(p.get('rewardId'), 'Ödül', 64)
+        rewards = o.get('rewards') or []
+        if any(r['rewardId'] == reward_id for r in rewards):
+            raise OrderError("Bu ödül zaten kullanılmış.")
+        line = _find_line(o, p.get('lineId'))
+        if line['status'] != 'active' or line.get('paidBy') or not line.get('stampEligible'):
+            raise OrderError("Ödül bu ürüne uygulanamaz.")
+        if sum(1 for r in rewards if r['lineId'] == line['lineId']) >= line['qty']:
+            raise OrderError("Bu satırdaki bütün ürünlere ödül uygulanmış.")
+        unit = line_total(line) // line['qty']
+        if not _is_int(p.get('amount'), 1, unit) or line_deduction(o, line['lineId']) + p['amount'] > line_total(line):
+            raise OrderError("Ödül tutarı ürün fiyatını aşamaz.")
+        o['rewards'] = rewards + [{'rewardId': reward_id, 'lineId': line['lineId'], 'amount': p['amount'],
+                                   'customerId': o['customer']['id']}]
+        _check_not_below_paid(o)
+    elif op == 'removeReward':
+        if not any(r['rewardId'] == p.get('rewardId') for r in o.get('rewards') or []):
+            raise OrderError("Ödül bulunamadı.")
+        o['rewards'] = [r for r in o['rewards'] if r['rewardId'] != p['rewardId']]
+    elif op == 'applyCampaigns':
+        if any(x.get('lineIds') for x in o['payments']):
+            raise OrderError("Ürün seçerek ödeme alınmış adisyonda kampanya değiştirilemez.")
+        if not isinstance(p.get('campaigns'), list) or len(p['campaigns']) > 20:
+            raise OrderError("Kampanyalar geçersiz.")
+        excluded = p.get('excluded') if p.get('excluded') is not None else []
+        if not isinstance(excluded, list) or len(excluded) > 50 or \
+                any(not isinstance(x, str) or len(x) > 128 for x in excluded):
+            raise OrderError("Kaldırılan kampanyalar geçersiz.")
+        open_lines = {l['lineId']: l for l in o['items'] if l['status'] == 'active' and not l.get('paidBy')}
+        seen, campaigns = set(), []
+        for c in p['campaigns']:
+            c = c if isinstance(c, dict) else {}
+            cid = _str(c.get('campaignId'), 'Kampanya', 128)
+            if cid in seen or cid in excluded:
+                raise OrderError("Kampanya tekrar ediyor.")
+            seen.add(cid)
+            if c.get('type') not in CAMPAIGN_TYPES:
+                raise OrderError("Kampanya türü geçersiz.")
+            entries = list((c.get('lines') or {}).items())
+            if len(entries) > 50:
+                raise OrderError("Kampanya satırları geçersiz.")
+            lines = {}
+            for line_id, amount in entries:
+                if line_id not in open_lines:
+                    raise OrderError("Kampanya satırı bulunamadı.")
+                if not _is_int(amount, 1, MAX_MONEY):
+                    raise OrderError("Kampanya tutarı geçersiz.")
+                lines[line_id] = amount
+            mult = 1
+            if c['type'] == 'double_stamps':
+                mult = c['stampMultiplier'] if _is_int(c.get('stampMultiplier'), 2, 5) else 2
+            elif not entries:
+                raise OrderError("Kampanya satırı yok.")
+            campaigns.append({'campaignId': cid, 'name': _str(c.get('name'), 'Kampanya adı', 60), 'type': c['type'],
+                              'lines': lines, 'amount': sum(lines.values()), 'stampMultiplier': mult})
+        o['campaigns'] = campaigns
+        o['campaignsExcluded'] = list(excluded)
+        for l in open_lines.values():
+            if line_deduction(o, l['lineId']) > line_total(l):
+                raise OrderError("Kampanya ürün fiyatını aşamaz.")
+        if o.get('discount') and any(c['amount'] > 0 for c in campaigns):
+            raise OrderError("Elle iskonto yapılmış adisyonda kampanya uygulanmaz.")
+        _check_not_below_paid(o)
     else:
         raise OrderError(f"Bilinmeyen adisyon işlemi: {op}")
+    if op in ITEM_OPS:
+        _reset_deductions(o)
+    if op == 'setDiscount' and o.get('discount'):
+        o['campaigns'] = []
     return with_totals(o)
 
 
@@ -359,6 +485,7 @@ def merge_orders(target, source, at):
         if line['lineId'] in ids:
             raise OrderError("Satır kimlikleri çakışıyor.")
         t['items'].append({**line, 'mergedFrom': s['id']})
+    _reset_deductions(t)
     s['items'] = []
     s['status'] = 'merged'
     s['mergedInto'] = t['id']

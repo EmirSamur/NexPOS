@@ -142,6 +142,19 @@ class AdminApi:
         self.session = self.client.ensure_fresh(self.session)
         return {doc_id: d.get('hourlyRate') for doc_id, d in self.client.list_docs('staffWages', self.session)}
 
+    # ------------------------------------------------------------ müşteri ve sadakat (10. ekran)
+    def save_customer(self, data, customer_id=None):
+        return self._call('saveCustomer', {**data, **({'id': customer_id} if customer_id else {})})
+
+    def delete_customer(self, customer_id):
+        return self._call('deleteCustomer', {'id': customer_id})
+
+    def export_customer(self, customer_id):
+        return self._call('exportCustomer', {'id': customer_id})
+
+    def save_loyalty_settings(self, data):
+        return self._call('saveLoyaltySettings', data)
+
     def import_stock(self, ingredients, recipes, option_effects):
         return self._call('importStock', {'ingredients': ingredients, 'recipes': recipes,
                                           'optionEffects': option_effects})

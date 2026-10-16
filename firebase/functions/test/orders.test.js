@@ -45,6 +45,7 @@ for (const c of cases) {
       });
     }
     for (const [id, st] of Object.entries(c.expectTableStatus || {})) assert.equal(tableStatusFor(orders[id]), st);
+    for (const [id, n] of Object.entries(c.expectStamps || {})) assert.equal(stampCount(orders[id]), n);
   });
 }
 

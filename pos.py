@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timedelta
 
 import database
+import loyalty
 import stock
 from cloud.orders import (  # noqa: F401 (line_total ekranlar için dışa açık)
     OrderError, apply_order_op, compute_totals, line_total, lines_share, merge_orders, table_status_for
@@ -163,7 +164,13 @@ def _commit_op(conn, before, after, op, payload, staff_id, extra_tables=()):
         _sync_legacy_table(conn, t, after)
     if before and before['status'] == 'open' and after['status'] == 'paid':
         _write_legacy_closed(conn, after)
-    database.enqueue_op(op, payload, staff_id, conn=conn)
+    op_id = database.enqueue_op(op, payload, staff_id, conn=conn)
+    # Sadakat (10. ekran): üye adisyonu kapanınca / iade edilince kartın tahmini için deftere yazılır
+    if op == 'takePayment' and before['status'] == 'open' and after['status'] == 'paid':
+        loyalty.record_close(conn, after, op_id)
+    if op == 'refundPayment':
+        loyalty.record_refund(conn, after, op_id)
+    return op_id
 
 
 def _run(op, payload, user, extra=None):
@@ -315,6 +322,27 @@ def set_discount(user, order_id, discount, reason='', approver_id=None):
     payload = {'orderId': order_id, 'discount': discount, 'reason': reason or '',
                'approvedBy': approver_id or user['cloud_id']}
     return _run('setDiscount', payload, user)
+
+
+# ---- Müşteri ve ödül (10. ekran)
+def set_customer(user, order_id, customer):
+    """customer: üye kaydı (id, name, tier) ya da None (kaldır). Müşteri değişirse seçilen ödüller düşer."""
+    value = None if customer is None else {'id': customer['id'], 'name': customer['name'][:60],
+                                           'tier': customer.get('tier') or None}
+    return _run('setCustomer', {'orderId': order_id, 'customer': value}, user)
+
+
+def use_reward(user, order_id, reward_id):
+    """Ödülü en pahalı uygun içeceğe uygular (ayardaki üst sınırla)."""
+    order = get_order(order_id)
+    target = loyalty.reward_target(order, loyalty.settings()['rewardMaxValue'])
+    if not target:
+        raise OrderError("Adisyonda ödül uygulanacak içecek yok.")
+    return _run('useReward', {'orderId': order_id, 'rewardId': reward_id, 'lineId': target[0], 'amount': target[1]}, user)
+
+
+def remove_reward(user, order_id, reward_id):
+    return _run('removeReward', {'orderId': order_id, 'rewardId': reward_id}, user)
 
 
 def request_bill(user, order_id, value):

@@ -641,3 +641,61 @@ def test_vardiya_plan_internetsiz_mesai_duzeltme_bulutla_ayni(db, client):
     assert api.get_wages() == {waiter: 15000}
     engine.run_once()
     assert db.cache_rows('staffWages') == []
+
+
+def test_sadakat_internetsiz_uye_damga_odul_bulutla_ayni(db, client):
+    import requests
+    import loyalty
+    import pos
+    from cloud.admin_api import AdminApi
+    from cloud.pairing import pair_terminal
+    from cloud.sync import SyncEngine
+
+    requests.delete('http://127.0.0.1:8080/emulator/v1/projects/demo-nexpos/databases/(default)/documents',
+                    timeout=10).raise_for_status()
+    email = f'sadakat-{uuid.uuid4().hex[:6]}@kafe.test'
+    owner_id = create_owner(email)
+    creds, _ = pair_terminal(client, email, 'sahip-sifre-1', 'Kasa 1')
+    api = AdminApi(client, client.sign_in_with_password(email, 'sahip-sifre-1'))
+    engine = SyncEngine(client, creds)
+    api.save_modules({'loyalty': {'enabled': True}})
+    api.save_loyalty_settings({'stampsForReward': 5, 'rewardMaxValue': 9000})
+    cat = api.save_category({'name': 'Kahve', 'station': 'bar', 'stampEligible': True})['id']
+    latte = api.save_product({'categoryId': cat, 'name': 'Latte', 'price': 9500})['id']
+    engine.run_once()
+    user = db.login_with_pin(owner_id, '482913')
+    assert loyalty.enabled() and loyalty.settings()['stampsForReward'] == 5
+
+    # ---- İnternetsiz: kasada yeni üye, 6 latte → 1 damga kalır, ödül internet gelince
+    c = loyalty.create(user, 'Ayşe K.', '0532 111 22 33', True)
+    o = pos.open_order(user)
+    pos.add_line(user, o['id'], pos.product_line(db.menu_item('products', latte), qty=6))
+    o, _ = pos.send_pending(user, o['id'])
+    pos.set_customer(user, o['id'], loyalty.get(c['id']))
+    o = pos.take_payment(user, o['id'], 'card', 57000)
+    card = loyalty.card(c['id'])
+    assert (card['stamps'], card['pendingRewards']) == (1, 1)
+    status = engine.run_once()
+    assert status.online and db.outbox_counts() == (0, 0), db.get_failed_ops()
+    cloud_c = client.get_doc(f"customers/{c['id']}", api.session)[1]
+    assert (cloud_c['stamps'], cloud_c['lifetimeStamps'], cloud_c['visitCount'], cloud_c['totalSpent']) == (1, 6, 1, 57000)
+    card = loyalty.card(c['id'])
+    assert (card['stamps'], card['pendingRewards'], len(card['rewards'])) == (1, 0, 1)
+
+    # ---- Ödül internetsiz kullanılır; iade damgayı geri alır
+    o2 = pos.open_order(user)
+    pos.add_line(user, o2['id'], pos.product_line(db.menu_item('products', latte), qty=2))
+    o2, _ = pos.send_pending(user, o2['id'])
+    pos.set_customer(user, o2['id'], loyalty.get(c['id']))
+    o2 = pos.use_reward(user, o2['id'], card['rewards'][0]['id'])
+    assert o2['total'] == 10000
+    o2 = pos.take_payment(user, o2['id'], 'cash', 10000)
+    pos.refund(user, o['id'], 'card', 57000, 'Yanlış ürün')
+    local = loyalty.card(c['id'])
+    status = engine.run_once()
+    assert status.online and db.outbox_counts() == (0, 0), db.get_failed_ops()
+    cloud_c = client.get_doc(f"customers/{c['id']}", api.session)[1]
+    reward = client.get_doc(f"rewards/{card['rewards'][0]['id']}", api.session)[1]
+    assert reward['status'] == 'used' and reward['usedOrderId'] == o2['id']
+    assert cloud_c['stamps'] == local['stamps'] and cloud_c['lifetimeStamps'] == local['lifetimeStamps']
+    assert loyalty.card(c['id'])['stamps'] == cloud_c['stamps'] and loyalty.card(c['id'])['rewards'] == []

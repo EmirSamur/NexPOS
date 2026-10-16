@@ -3,7 +3,7 @@
 // NexPOS'taki reports.py ile aynı "katkı" hesabıdır; bir kural değişirse iki dosya birlikte
 // güncellenmelidir (uçtan uca test ikisini karşılaştırır). Adisyon ödenip kapandığında ya da iptal
 // edildiğinde katkısı açıldığı iş gününe, iade yapıldığı iş gününe eklenir. Para kuruştur.
-const { computeTotals, lineTotal } = require('./orders');
+const { computeTotals, lineTotal, lineDeduction } = require('./orders');
 
 const DAY_START_HOUR = 5;
 
@@ -16,16 +16,17 @@ function businessDayOf(iso) {
 const listValue = (line) => lineTotal({ ...line, status: 'active' });
 const productKey = (line) => line.productId || `n:${line.name}`;
 
-// Aktif satırlar ve iskonto düşülmüş payları (kuruş farkı son satırda)
+// Aktif satırlar ve kampanya/ödül/iskonto düşülmüş payları (kuruş farkı son satırda)
 function lineNets(order) {
   const lines = order.items.filter((l) => l.status === 'active' && lineTotal(l) > 0);
   const t = computeTotals(order);
+  const nets = lines.map((l) => lineTotal(l) - lineDeduction(order, l.lineId));
+  const base = nets.reduce((s, n) => s + n, 0);
   let left = t.discountAmount;
   return lines.map((l, i) => {
-    const lt = lineTotal(l);
-    const share = i === lines.length - 1 ? left : Math.floor((t.discountAmount * lt) / t.subtotal);
+    const share = i === lines.length - 1 ? left : (base ? Math.floor((t.discountAmount * nets[i]) / base) : 0);
     left -= share;
-    return [l, lt - share];
+    return [l, nets[i] - share];
   });
 }
 
@@ -76,6 +77,16 @@ function contribution(order) {
     c[kind].amount += listValue(l);
     merge(c.byProduct, { [productKey(l)]: { name: l.name, [kind]: l.qty } });
   }
+  // 10. ekran: kampanya, ödül ve üye adisyonları (yalnızca varsa)
+  if (t.campaignAmount) {
+    c.campaign = t.campaignAmount;
+    c.byCampaign = {};
+    for (const x of order.campaigns) {
+      if (x.amount) merge(c.byCampaign, { [x.campaignId]: { name: x.name, count: 1, amount: x.amount } });
+    }
+  }
+  if (t.rewardAmount) c.rewards = { count: order.rewards.length, amount: t.rewardAmount };
+  if (order.customer) c.members = { orders: 1, revenue: t.total };
   return c;
 }
 

@@ -1,4 +1,20 @@
-# 10. Ekran: Müşteri, Sadakat, Kampanya ve Bildirim (tarif, onay bekliyor)
+# 10. Ekran: Müşteri, Sadakat, Kampanya ve Bildirim
+
+> Durum: **10a uygulandı** (müşteri, damga, ödül, kasada üye, müşteri listesi, sadakat ayarları); 10b (kampanya,
+> bildirim, sadakat raporu) sürüyor. Sorulara verilen cevaplar (hepsi öneri yönünde): kasada telefonla üyelik var;
+> içecek başına 1 damga; 10 damga = 1 bedava içecek (en fazla 90 ₺), kendiliğinden en pahalı uygun içecek;
+> seviyeler rozet + yazılı ayrıcalık; kampanya ve elle iskonto üst üste binmez; kampanyalar kendiliğinden uygulanır,
+> kasiyer kaldırabilir; bildirimlerin gerçek gönderimi 11. ekranda açılır.
+>
+> Uygulamada netleşenler (10a):
+> - Elle iskonto, kampanya ve ödül düşüldükten sonra kalan tutara uygulanır. Ödül adisyondaki damga kazandıran
+>   satıra bağlıdır; satır iptal edilirse ödül düşer, müşteri değişirse seçilen ödüller kalkar.
+> - Damga ödeme kapanınca sunucuda işlenir. Kasa, internet gelene kadar kartı kendi defterinden tahmin eder
+>   ("🎁 1 ödül internet gelince"); internetsiz kazanılan ödül internet gelince kullanılabilir.
+> - Kasada aynı telefonla ikinci kez üye açılırsa (iki kasa ya da önbellek eski) kayıt asıl üyeye yönlenir;
+>   damgalar kaybolmaz.
+> - Kullanılmış ya da süresi geçmiş ödül (çok nadir) ödemeyi engellemez; kayda `reward_conflict` olarak düşer.
+> - Pazarlama menüsü Sadakat ya da Kampanyalar modülü açıkken görünür (`loyalty` yetkisi).
 
 ## Amaç
 

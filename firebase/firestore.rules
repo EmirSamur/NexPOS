@@ -125,6 +125,28 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Müşteri ve sadakat (10. ekran): kasa üyeyi telefonla internetsiz tanımak için önbelleğe alır.
+    // Yazma yalnızca fonksiyonlardan (kuyruk: customerCreate, ödeme kapanışı; panel: saveCustomer).
+    match /customers/{id} {
+      allow read: if isManagerPlus() || isActiveTerminal();
+      allow write: if false;
+    }
+    match /rewards/{id} {
+      allow read: if isManagerPlus() || isActiveTerminal();
+      allow write: if false;
+    }
+    match /loyaltyEvents/{id} {
+      allow read: if isManagerPlus();
+      allow write: if false;
+    }
+    // Telefon dizini ve QR token'ları: yalnızca fonksiyonlar
+    match /customerPhones/{phone} {
+      allow read, write: if false;
+    }
+    match /loyaltyTokens/{token} {
+      allow read, write: if false;
+    }
+
     // Günlük özet (7. ekran): yalnızca yönetici ve müdür okur (telefondan rapor için hazırlık).
     match /dailyStats/{day} {
       allow read: if isManagerPlus();

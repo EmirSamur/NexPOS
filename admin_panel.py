@@ -25,6 +25,7 @@ from cash_screen import CashPage
 from reports_screen import DashboardPage, ReportsPage
 from stock_pages import StockPage, WastePage
 from shifts_pages import ShiftDialog, StaffShiftsPage
+from loyalty_pages import MarketingPage
 import cash
 from modules_page import ModulesPanel
 from pos import now_iso as pos_now
@@ -45,6 +46,7 @@ PAGE_PERMISSIONS = [
     'cash',          # 10 Kasa
     'stock',         # 11 Stok (modül açıkken)
     'shifts',        # 12 Vardiya ve Mesai (modül açıkken)
+    'loyalty',       # 13 Pazarlama: müşteriler, sadakat, kampanya (modül açıkken)
 ]
 
 class AdminPanel(QWidget):
@@ -89,6 +91,8 @@ class AdminPanel(QWidget):
         self.pages.addWidget(self.stock_page)                   # 11
         self.shifts_page = StaffShiftsPage(self.user)
         self.pages.addWidget(self.shifts_page)                  # 12
+        self.marketing_page = MarketingPage(self.user)
+        self.pages.addWidget(self.marketing_page)               # 13
         content_w.addWidget(self.pages, 1)
 
         cf = QFrame()
@@ -101,6 +105,8 @@ class AdminPanel(QWidget):
         if idx == 11 and not database.modules()['stock']['enabled']:
             return False  # kapalı modül görünmez
         if idx == 12 and not database.modules()['staff']['enabled']:
+            return False
+        if idx == 13 and not (database.modules()['loyalty']['enabled'] or database.modules()['campaigns']['enabled']):
             return False
         perm = PAGE_PERMISSIONS[idx] if idx < len(PAGE_PERMISSIONS) else None
         return perm is None or database.user_can(self.user, perm)
@@ -223,6 +229,11 @@ class AdminPanel(QWidget):
         self.sidebar_buttons.append(btn_zy)
         self.menu_layout.addWidget(isl)
 
+        paz = ExpandableSection("Pazarlama", ICONS['user'])
+        btn_pazarlama = paz.add_sub_button("Müşteriler ve Sadakat", ICONS['dot'])
+        btn_pazarlama.clicked.connect(lambda: self._show_page(13))
+        self.menu_layout.addWidget(paz)
+
         rap = ExpandableSection("Raporlar", ICONS['chart'])
         btn_rapor = rap.add_sub_button("Satış ve Diğer Raporlar", ICONS['dot'])
         btn_rapor.clicked.connect(lambda: self._show_page(5))
@@ -252,6 +263,7 @@ class AdminPanel(QWidget):
         self.sidebar_buttons.append(btn_kasa)  # sayfa 10
         self.sidebar_buttons.append(btn_stok)  # sayfa 11
         self.sidebar_buttons.append(btn_vardiya)  # sayfa 12
+        self.sidebar_buttons.append(btn_pazarlama)  # sayfa 13
 
         self.menu_layout.addStretch()
 
@@ -359,7 +371,7 @@ class AdminPanel(QWidget):
                    "Kategori ve Ürün Tanımlama / Şube Ürünleri",
                    "Gider/Masraf İşlemleri", "Zayi İşlemleri",
                    "Raporlar", "Kullanıcılar", "Yetki / İzin Ekranı", "Sistem Ayarları",
-                   "Terminaller", "Kasa", "Stok", "Vardiya ve Mesai"]
+                   "Terminaller", "Kasa", "Stok", "Vardiya ve Mesai", "Pazarlama"]
         if idx < len(titles):
             self.page_title.setText(titles[idx])
 
@@ -404,6 +416,8 @@ class AdminPanel(QWidget):
             self._apply_sidebar()
             self.modules_panel.refresh()
             self.cash_page.refresh()
+        if status.changed & {'customers', 'rewards', 'loyalty'} and self.pages.currentWidget() is self.marketing_page:
+            self.marketing_page.refresh()
         if 'shiftPlans' in status.changed and self.pages.currentWidget() is self.shifts_page:
             self.shifts_page.refresh()
         if 'general' in status.changed:

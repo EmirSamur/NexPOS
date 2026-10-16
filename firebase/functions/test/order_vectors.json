@@ -2753,5 +2753,1603 @@
     "prepared": false
    }
   }
+ },
+ {
+  "name": "ödül: damga kazandıran ürün bedava (üst sınırla), ödüllü ürün damga vermez",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 2,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      },
+      {
+       "lineId": "l2",
+       "productId": "p2",
+       "name": "Kek",
+       "unitPrice": 6000,
+       "qty": 1,
+       "station": "kitchen",
+       "options": [],
+       "stampEligible": false
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2"
+     ],
+     "ticketIds": {
+      "bar": "tb",
+      "kitchen": "tk"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setCustomer",
+    "payload": {
+     "orderId": "o1",
+     "customer": {
+      "id": "c1",
+      "name": "Ayşe K.",
+      "tier": "silver"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "useReward",
+    "payload": {
+     "orderId": "o1",
+     "rewardId": "r1",
+     "lineId": "l1",
+     "amount": 9000
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "subtotal": 25000,
+    "rewardAmount": 9000,
+    "total": 16000,
+    "customer": {
+     "id": "c1",
+     "name": "Ayşe K.",
+     "tier": "silver"
+    }
+   }
+  },
+  "expectStamps": {
+   "o1": 1
+  }
+ },
+ {
+  "name": "ödül: damga kazandırmayan ürüne uygulanmaz",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 2,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      },
+      {
+       "lineId": "l2",
+       "productId": "p2",
+       "name": "Kek",
+       "unitPrice": 6000,
+       "qty": 1,
+       "station": "kitchen",
+       "options": [],
+       "stampEligible": false
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2"
+     ],
+     "ticketIds": {
+      "bar": "tb",
+      "kitchen": "tk"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setCustomer",
+    "payload": {
+     "orderId": "o1",
+     "customer": {
+      "id": "c1",
+      "name": "Ayşe K.",
+      "tier": "silver"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "useReward",
+    "payload": {
+     "orderId": "o1",
+     "rewardId": "r1",
+     "lineId": "l2",
+     "amount": 6000
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "Ödül bu ürüne uygulanamaz"
+ },
+ {
+  "name": "ödül: birim fiyatı aşamaz",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 2,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      },
+      {
+       "lineId": "l2",
+       "productId": "p2",
+       "name": "Kek",
+       "unitPrice": 6000,
+       "qty": 1,
+       "station": "kitchen",
+       "options": [],
+       "stampEligible": false
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2"
+     ],
+     "ticketIds": {
+      "bar": "tb",
+      "kitchen": "tk"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setCustomer",
+    "payload": {
+     "orderId": "o1",
+     "customer": {
+      "id": "c1",
+      "name": "Ayşe K.",
+      "tier": "silver"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "useReward",
+    "payload": {
+     "orderId": "o1",
+     "rewardId": "r1",
+     "lineId": "l1",
+     "amount": 9501
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "fiyatını aşamaz"
+ },
+ {
+  "name": "ödül: satırdaki adet kadar",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 2,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      },
+      {
+       "lineId": "l2",
+       "productId": "p2",
+       "name": "Kek",
+       "unitPrice": 6000,
+       "qty": 1,
+       "station": "kitchen",
+       "options": [],
+       "stampEligible": false
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2"
+     ],
+     "ticketIds": {
+      "bar": "tb",
+      "kitchen": "tk"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setCustomer",
+    "payload": {
+     "orderId": "o1",
+     "customer": {
+      "id": "c1",
+      "name": "Ayşe K.",
+      "tier": "silver"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "useReward",
+    "payload": {
+     "orderId": "o1",
+     "rewardId": "r1",
+     "lineId": "l1",
+     "amount": 9500
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "useReward",
+    "payload": {
+     "orderId": "o1",
+     "rewardId": "r2",
+     "lineId": "l1",
+     "amount": 9500
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "useReward",
+    "payload": {
+     "orderId": "o1",
+     "rewardId": "r3",
+     "lineId": "l1",
+     "amount": 100
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "bütün ürünlere"
+ },
+ {
+  "name": "ödül: müşterisiz kullanılamaz",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 2,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      },
+      {
+       "lineId": "l2",
+       "productId": "p2",
+       "name": "Kek",
+       "unitPrice": 6000,
+       "qty": 1,
+       "station": "kitchen",
+       "options": [],
+       "stampEligible": false
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2"
+     ],
+     "ticketIds": {
+      "bar": "tb",
+      "kitchen": "tk"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "useReward",
+    "payload": {
+     "orderId": "o1",
+     "rewardId": "r1",
+     "lineId": "l1",
+     "amount": 9000
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "Önce müşteri"
+ },
+ {
+  "name": "ödül: satır iptal edilince düşer, müşteri değişince silinir",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 2,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      },
+      {
+       "lineId": "l2",
+       "productId": "p2",
+       "name": "Kek",
+       "unitPrice": 6000,
+       "qty": 1,
+       "station": "kitchen",
+       "options": [],
+       "stampEligible": false
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2"
+     ],
+     "ticketIds": {
+      "bar": "tb",
+      "kitchen": "tk"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setCustomer",
+    "payload": {
+     "orderId": "o1",
+     "customer": {
+      "id": "c1",
+      "name": "Ayşe K.",
+      "tier": "silver"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "useReward",
+    "payload": {
+     "orderId": "o1",
+     "rewardId": "r1",
+     "lineId": "l1",
+     "amount": 9000
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "splitLine",
+    "payload": {
+     "orderId": "o1",
+     "lineId": "l1",
+     "qty": 1,
+     "newLineId": "l3"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "useReward",
+    "payload": {
+     "orderId": "o1",
+     "rewardId": "r2",
+     "lineId": "l3",
+     "amount": 9500
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "voidItem",
+    "payload": {
+     "orderId": "o1",
+     "lineId": "l3",
+     "reason": "x"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "rewardAmount": 9000,
+    "rewards": [
+     {
+      "rewardId": "r1",
+      "lineId": "l1",
+      "amount": 9000,
+      "customerId": "c1"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "müşteri değişince ödüller silinir",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 2,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      },
+      {
+       "lineId": "l2",
+       "productId": "p2",
+       "name": "Kek",
+       "unitPrice": 6000,
+       "qty": 1,
+       "station": "kitchen",
+       "options": [],
+       "stampEligible": false
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2"
+     ],
+     "ticketIds": {
+      "bar": "tb",
+      "kitchen": "tk"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setCustomer",
+    "payload": {
+     "orderId": "o1",
+     "customer": {
+      "id": "c1",
+      "name": "Ayşe K.",
+      "tier": "silver"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "useReward",
+    "payload": {
+     "orderId": "o1",
+     "rewardId": "r1",
+     "lineId": "l1",
+     "amount": 9000
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setCustomer",
+    "payload": {
+     "orderId": "o1",
+     "customer": {
+      "id": "c2",
+      "name": "Mehmet"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "rewards": [],
+    "total": 25000,
+    "customer": {
+     "id": "c2",
+     "name": "Mehmet",
+     "tier": null
+    }
+   }
+  }
+ },
+ {
+  "name": "kampanya: satırdan düşer; ürün eklenince yeniden hesaplanmak üzere silinir",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 2,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      },
+      {
+       "lineId": "l2",
+       "productId": "p2",
+       "name": "Kek",
+       "unitPrice": 6000,
+       "qty": 1,
+       "station": "kitchen",
+       "options": [],
+       "stampEligible": false
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2"
+     ],
+     "ticketIds": {
+      "bar": "tb",
+      "kitchen": "tk"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setCustomer",
+    "payload": {
+     "orderId": "o1",
+     "customer": {
+      "id": "c1",
+      "name": "Ayşe K.",
+      "tier": "silver"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "applyCampaigns",
+    "payload": {
+     "orderId": "o1",
+     "campaigns": [
+      {
+       "campaignId": "k1",
+       "name": "Happy Hour",
+       "type": "percent",
+       "lines": {
+        "l1": 3800
+       }
+      }
+     ],
+     "excluded": [
+      "k9"
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "campaignAmount": 3800,
+    "total": 21200,
+    "campaignsExcluded": [
+     "k9"
+    ]
+   }
+  }
+ },
+ {
+  "name": "kampanya ürün değişince silinir, kaldırılanlar korunur",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 2,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      },
+      {
+       "lineId": "l2",
+       "productId": "p2",
+       "name": "Kek",
+       "unitPrice": 6000,
+       "qty": 1,
+       "station": "kitchen",
+       "options": [],
+       "stampEligible": false
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2"
+     ],
+     "ticketIds": {
+      "bar": "tb",
+      "kitchen": "tk"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setCustomer",
+    "payload": {
+     "orderId": "o1",
+     "customer": {
+      "id": "c1",
+      "name": "Ayşe K.",
+      "tier": "silver"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "applyCampaigns",
+    "payload": {
+     "orderId": "o1",
+     "campaigns": [
+      {
+       "campaignId": "k1",
+       "name": "Happy Hour",
+       "type": "percent",
+       "lines": {
+        "l1": 3800
+       }
+      }
+     ],
+     "excluded": [
+      "k9"
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l4",
+       "productId": "p1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 1,
+       "station": "bar",
+       "options": []
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "campaigns": [],
+    "campaignAmount": 0,
+    "campaignsExcluded": [
+     "k9"
+    ],
+    "total": 34500
+   }
+  }
+ },
+ {
+  "name": "kampanya ile elle iskonto üst üste binmez (iskonto kampanyayı kaldırır)",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 2,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      },
+      {
+       "lineId": "l2",
+       "productId": "p2",
+       "name": "Kek",
+       "unitPrice": 6000,
+       "qty": 1,
+       "station": "kitchen",
+       "options": [],
+       "stampEligible": false
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2"
+     ],
+     "ticketIds": {
+      "bar": "tb",
+      "kitchen": "tk"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setCustomer",
+    "payload": {
+     "orderId": "o1",
+     "customer": {
+      "id": "c1",
+      "name": "Ayşe K.",
+      "tier": "silver"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "applyCampaigns",
+    "payload": {
+     "orderId": "o1",
+     "campaigns": [
+      {
+       "campaignId": "k1",
+       "name": "Happy Hour",
+       "type": "percent",
+       "lines": {
+        "l1": 3800
+       }
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setDiscount",
+    "payload": {
+     "orderId": "o1",
+     "discount": {
+      "type": "percent",
+      "value": 10
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "campaigns": [],
+    "discountAmount": 2500,
+    "total": 22500
+   }
+  }
+ },
+ {
+  "name": "iskontolu adisyona kampanya uygulanmaz",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 2,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      },
+      {
+       "lineId": "l2",
+       "productId": "p2",
+       "name": "Kek",
+       "unitPrice": 6000,
+       "qty": 1,
+       "station": "kitchen",
+       "options": [],
+       "stampEligible": false
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2"
+     ],
+     "ticketIds": {
+      "bar": "tb",
+      "kitchen": "tk"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setCustomer",
+    "payload": {
+     "orderId": "o1",
+     "customer": {
+      "id": "c1",
+      "name": "Ayşe K.",
+      "tier": "silver"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setDiscount",
+    "payload": {
+     "orderId": "o1",
+     "discount": {
+      "type": "percent",
+      "value": 10
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "applyCampaigns",
+    "payload": {
+     "orderId": "o1",
+     "campaigns": [
+      {
+       "campaignId": "k1",
+       "name": "Happy Hour",
+       "type": "percent",
+       "lines": {
+        "l1": 3800
+       }
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "Elle iskonto"
+ },
+ {
+  "name": "kampanya satır tutarını aşamaz",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 2,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      },
+      {
+       "lineId": "l2",
+       "productId": "p2",
+       "name": "Kek",
+       "unitPrice": 6000,
+       "qty": 1,
+       "station": "kitchen",
+       "options": [],
+       "stampEligible": false
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2"
+     ],
+     "ticketIds": {
+      "bar": "tb",
+      "kitchen": "tk"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setCustomer",
+    "payload": {
+     "orderId": "o1",
+     "customer": {
+      "id": "c1",
+      "name": "Ayşe K.",
+      "tier": "silver"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "applyCampaigns",
+    "payload": {
+     "orderId": "o1",
+     "campaigns": [
+      {
+       "campaignId": "k1",
+       "name": "Happy Hour",
+       "type": "percent",
+       "lines": {
+        "l2": 6001
+       }
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "fiyatını aşamaz"
+ },
+ {
+  "name": "kampanya alınmış ödemenin altına indiremez",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 2,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      },
+      {
+       "lineId": "l2",
+       "productId": "p2",
+       "name": "Kek",
+       "unitPrice": 6000,
+       "qty": 1,
+       "station": "kitchen",
+       "options": [],
+       "stampEligible": false
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2"
+     ],
+     "ticketIds": {
+      "bar": "tb",
+      "kitchen": "tk"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setCustomer",
+    "payload": {
+     "orderId": "o1",
+     "customer": {
+      "id": "c1",
+      "name": "Ayşe K.",
+      "tier": "silver"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "p1",
+     "method": "card",
+     "amount": 24000
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "applyCampaigns",
+    "payload": {
+     "orderId": "o1",
+     "campaigns": [
+      {
+       "campaignId": "k1",
+       "name": "Happy Hour",
+       "type": "percent",
+       "lines": {
+        "l1": 3800
+       }
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expectError": "altına inemez"
+ },
+ {
+  "name": "çift damga kampanyası damgayı katlar; ödül ve kampanya ile ürün seçerek bölme",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 2,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      },
+      {
+       "lineId": "l2",
+       "productId": "p2",
+       "name": "Kek",
+       "unitPrice": 6000,
+       "qty": 1,
+       "station": "kitchen",
+       "options": [],
+       "stampEligible": false
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2"
+     ],
+     "ticketIds": {
+      "bar": "tb",
+      "kitchen": "tk"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setCustomer",
+    "payload": {
+     "orderId": "o1",
+     "customer": {
+      "id": "c1",
+      "name": "Ayşe K.",
+      "tier": "silver"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "useReward",
+    "payload": {
+     "orderId": "o1",
+     "rewardId": "r1",
+     "lineId": "l1",
+     "amount": 9500
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "applyCampaigns",
+    "payload": {
+     "orderId": "o1",
+     "campaigns": [
+      {
+       "campaignId": "k2",
+       "name": "Çift damga",
+       "type": "double_stamps",
+       "lines": {}
+      },
+      {
+       "campaignId": "k3",
+       "name": "Tatlı",
+       "type": "amount",
+       "lines": {
+        "l2": 1000
+       }
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "p1",
+     "method": "card",
+     "amount": 9500,
+     "lineIds": [
+      "l1"
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "takePayment",
+    "payload": {
+     "orderId": "o1",
+     "paymentId": "p2",
+     "method": "cash",
+     "amount": 5000,
+     "lineIds": [
+      "l2"
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "status": "paid",
+    "campaignAmount": 1000,
+    "rewardAmount": 9500,
+    "total": 14500
+   }
+  },
+  "expectStamps": {
+   "o1": 2
+  }
+ },
+ {
+  "name": "iskonto ödül sonrası kalan tutara uygulanır",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 2,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      },
+      {
+       "lineId": "l2",
+       "productId": "p2",
+       "name": "Kek",
+       "unitPrice": 6000,
+       "qty": 1,
+       "station": "kitchen",
+       "options": [],
+       "stampEligible": false
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1",
+      "l2"
+     ],
+     "ticketIds": {
+      "bar": "tb",
+      "kitchen": "tk"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setCustomer",
+    "payload": {
+     "orderId": "o1",
+     "customer": {
+      "id": "c1",
+      "name": "Ayşe K.",
+      "tier": "silver"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "useReward",
+    "payload": {
+     "orderId": "o1",
+     "rewardId": "r1",
+     "lineId": "l1",
+     "amount": 9500
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setDiscount",
+    "payload": {
+     "orderId": "o1",
+     "discount": {
+      "type": "percent",
+      "value": 10
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "discountAmount": 1550,
+    "total": 13950
+   }
+  }
  }
 ]
