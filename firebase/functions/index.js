@@ -48,6 +48,12 @@ const {
   validateRecipeEffect,
   validateStockMove,
   STOCK_MOVE_TYPES,
+  UNITS,
+  validateSupplier,
+  validatePurchaseOrder,
+  validateReceipt,
+  validateSupplierPayment,
+  weightedUnitCost,
   expectedCash,
 } = require('./src/lib');
 const { OrderError, applyOrderOp, mergeOrders, tableStatusFor, stampCount } = require('./src/orders');
@@ -826,6 +832,91 @@ OP_HANDLERS.stockMove = async (tx, { op, terminalId, staff, matrix }) => {
   tx.set(db.doc(`stockMovements/${m.movementId}`), {
     ...m, applied, by: op.staffId, approvedBy: approverId, terminalId, at: op.createdAt, createdAt: now,
   });
+  return { status: 'ok' };
+};
+
+// Teslim alma (8b): stok artar, birim maliyet ağırlıklı ortalamayla güncellenir, sipariş satırlarına
+// teslim edilen miktar yazılır, ödenmediyse tedarikçinin borç bakiyesi artar. İnternetsiz yapılabilir.
+OP_HANDLERS.receivePurchase = async (tx, { op, terminalId, staff, matrix }) => {
+  if (!staff) return { status: 'rejected', error: 'Personel bulunamadı.' };
+  let r;
+  try {
+    r = validateReceipt(op.payload);
+  } catch (e) {
+    if (e instanceof MenuError) return { status: 'rejected', error: e.message };
+    throw e;
+  }
+  const approverId = typeof op.payload.approvedBy === 'string' && op.payload.approvedBy ? op.payload.approvedBy : op.staffId;
+  let approver = staff;
+  if (approverId !== op.staffId) {
+    const a = await tx.get(db.doc(`staff/${approverId}`));
+    approver = a.exists && a.data().active === true ? a.data() : null;
+  }
+  const supplierRef = db.doc(`suppliers/${r.supplierId}`);
+  const poRef = r.purchaseOrderId ? db.doc(`purchaseOrders/${r.purchaseOrderId}`) : null;
+  const [supplier, po, ...ings] = await Promise.all([tx.get(supplierRef), poRef ? tx.get(poRef) : null,
+    ...r.lines.map((l) => tx.get(db.doc(`ingredients/${l.ingredientId}`)))]);
+  if (!approver || !hasPermission(matrix, approver.role, 'stock', approver.permissions)) {
+    return { status: 'rejected', error: 'Bu işlem için yetki yok (stock).' };
+  }
+  if (!supplier.exists) return { status: 'rejected', error: 'Tedarikçi bulunamadı.' };
+  if (po && (!po.exists || po.data().status === 'cancelled')) return { status: 'rejected', error: 'Sipariş bulunamadı ya da iptal.' };
+  const now = FieldValue.serverTimestamp();
+  // Aynı malzeme iki satırda olabilir: sırayla uygulanır
+  const state = new Map();
+  ings.forEach((snap) => { if (snap.exists) state.set(snap.id, { ...snap.data(), ref: snap.ref }); });
+  const applied = [];
+  for (const l of r.lines) {
+    const ing = state.get(l.ingredientId);
+    if (!ing) continue;
+    const factor = (UNITS[ing.unit] || UNITS.adet).factor;
+    ing.unitCost = weightedUnitCost(ing.stock || 0, ing.unitCost || 0, l.qty, l.amount, factor);
+    ing.stock = (ing.stock || 0) + l.qty;
+    applied.push({ ingredientId: l.ingredientId, qty: l.qty });
+  }
+  for (const [, ing] of state) tx.update(ing.ref, { stock: ing.stock, unitCost: ing.unitCost, updatedAt: now });
+  if (po) {
+    const lines = po.data().lines.map((pl) => {
+      const got = r.lines.filter((l) => l.ingredientId === pl.ingredientId).reduce((s, l) => s + l.qty, 0);
+      return { ...pl, received: (pl.received || 0) + got };
+    });
+    const done = lines.every((pl) => pl.received >= pl.qty);
+    tx.update(poRef, { lines, status: done ? 'received' : 'partial', receivedAt: op.createdAt, updatedAt: now });
+  }
+  if (r.payment.status === 'unpaid') tx.update(supplierRef, { balance: FieldValue.increment(r.total), updatedAt: now });
+  tx.set(db.doc(`purchaseReceipts/${r.receiptId}`), { ...r, by: op.staffId, approvedBy: approverId, terminalId,
+    at: op.createdAt, createdAt: now });
+  tx.set(db.doc(`stockMovements/${r.receiptId}`), { movementId: r.receiptId, type: 'purchase', lines: applied, applied,
+    purchaseOrderId: r.purchaseOrderId, reason: '', by: op.staffId, approvedBy: approverId, terminalId,
+    at: op.createdAt, createdAt: now });
+  return { status: 'ok' };
+};
+
+// Tedarikçiye ödeme (borç bakiyesinden düşer)
+OP_HANDLERS.supplierPayment = async (tx, { op, terminalId, staff, matrix }) => {
+  if (!staff) return { status: 'rejected', error: 'Personel bulunamadı.' };
+  let p;
+  try {
+    p = validateSupplierPayment(op.payload);
+  } catch (e) {
+    if (e instanceof MenuError) return { status: 'rejected', error: e.message };
+    throw e;
+  }
+  const approverId = typeof op.payload.approvedBy === 'string' && op.payload.approvedBy ? op.payload.approvedBy : op.staffId;
+  let approver = staff;
+  if (approverId !== op.staffId) {
+    const a = await tx.get(db.doc(`staff/${approverId}`));
+    approver = a.exists && a.data().active === true ? a.data() : null;
+  }
+  const ref = db.doc(`suppliers/${p.supplierId}`);
+  const snap = await tx.get(ref);
+  if (!approver || !hasPermission(matrix, approver.role, 'stock', approver.permissions)) {
+    return { status: 'rejected', error: 'Bu işlem için yetki yok (stock).' };
+  }
+  if (!snap.exists) return { status: 'rejected', error: 'Tedarikçi bulunamadı.' };
+  tx.update(ref, { balance: FieldValue.increment(-p.amount), updatedAt: FieldValue.serverTimestamp() });
+  tx.set(db.doc(`supplierPayments/${p.paymentId}`), { ...p, by: op.staffId, approvedBy: approverId, terminalId,
+    at: op.createdAt, createdAt: FieldValue.serverTimestamp() });
   return { status: 'ok' };
 };
 
@@ -1615,6 +1706,76 @@ exports.deleteIngredient = onCall(async (request) => {
     audit(tx, { action: 'ingredient_delete', actor: actor.uid, target: `ingredients/${id}` });
   });
   return { deleted: true };
+});
+
+// Tedarikçiler ve sipariş (8b). Teslim alma ve ödeme kuyruktan gelir (internetsiz).
+exports.saveSupplier = onCall(async (request) => {
+  const actor = await requireStaff(request, 'stock');
+  const data = validated(validateSupplier, request.data);
+  const id = request.data?.id;
+  const ref = id ? db.doc(`suppliers/${requireString(id, 'Tedarikçi', { max: 128 })}`) : db.collection('suppliers').doc();
+  if (id) await requireLive(ref, 'Tedarikçi');
+  await db.runTransaction(async (tx) => {
+    if (id) tx.update(ref, { ...data, updatedAt: FieldValue.serverTimestamp() });
+    else tx.set(ref, { ...data, balance: 0, deleted: false, createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
+    audit(tx, { action: id ? 'supplier_update' : 'supplier_create', actor: actor.uid, target: `suppliers/${ref.id}`,
+      after: { name: data.name } });
+  });
+  return { id: ref.id };
+});
+
+exports.deleteSupplier = onCall(async (request) => {
+  const actor = await requireStaff(request, 'stock');
+  const ref = db.doc(`suppliers/${requireString(request.data?.id, 'Tedarikçi', { max: 128 })}`);
+  const s = (await requireLive(ref, 'Tedarikçi')).data();
+  if (s.balance) throw new HttpsError('failed-precondition', 'Borç bakiyesi olan tedarikçi silinemez.');
+  await db.runTransaction(async (tx) => {
+    tx.update(ref, { deleted: true, updatedAt: FieldValue.serverTimestamp() });
+    audit(tx, { action: 'supplier_delete', actor: actor.uid, target: ref.path });
+  });
+  return { deleted: true };
+});
+
+// Sipariş: taslak ya da gönderildi durumunda düzenlenir; numara sırayla verilir.
+exports.savePurchaseOrder = onCall(async (request) => {
+  const actor = await requireStaff(request, 'stock');
+  const data = validated(validatePurchaseOrder, request.data);
+  await requireLive(db.doc(`suppliers/${data.supplierId}`), 'Tedarikçi');
+  const id = request.data?.id;
+  const ref = id ? db.doc(`purchaseOrders/${requireString(id, 'Sipariş', { max: 128 })}`) : db.collection('purchaseOrders').doc();
+  const counter = db.doc('counters/purchaseOrders');
+  const no = await db.runTransaction(async (tx) => {
+    const [before, c] = await Promise.all([tx.get(ref), tx.get(counter)]);
+    const total = data.lines.reduce((s, l) => s + l.amount, 0);
+    if (id) {
+      if (!before.exists) throw new HttpsError('not-found', 'Sipariş bulunamadı.');
+      if (!['draft', 'sent'].includes(before.data().status)) {
+        throw new HttpsError('failed-precondition', 'Teslim alınmış ya da iptal edilmiş sipariş değiştirilemez.');
+      }
+      tx.update(ref, { ...data, total, updatedAt: FieldValue.serverTimestamp() });
+      return before.data().no;
+    }
+    const next = (c.exists ? c.data().last : 0) + 1;
+    tx.set(counter, { last: next });
+    tx.set(ref, { ...data, total, no: next, createdBy: actor.uid, createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp() });
+    audit(tx, { action: 'purchase_order_create', actor: actor.uid, target: ref.path, after: { no: next, total } });
+    return next;
+  });
+  return { id: ref.id, no };
+});
+
+exports.cancelPurchaseOrder = onCall(async (request) => {
+  const actor = await requireStaff(request, 'stock');
+  const ref = db.doc(`purchaseOrders/${requireString(request.data?.id, 'Sipariş', { max: 128 })}`);
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new HttpsError('not-found', 'Sipariş bulunamadı.');
+    if (!['draft', 'sent'].includes(snap.data().status)) throw new HttpsError('failed-precondition', 'Bu sipariş iptal edilemez.');
+    tx.update(ref, { status: 'cancelled', updatedAt: FieldValue.serverTimestamp() });
+    audit(tx, { action: 'purchase_order_cancel', actor: actor.uid, target: ref.path });
+  });
+  return { cancelled: true };
 });
 
 // Hazır şablon / toplu kurulum: malzemeler oluşturulur, ürün reçeteleri ve seçenek etkileri yazılır.

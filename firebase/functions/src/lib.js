@@ -320,7 +320,86 @@ function validateIngredient(input) {
     target: d.target == null ? null : qtyInt(d.target, 'Hedef seviye', { min: 0 }),
     unitCost: kurus(d.unitCost ?? 0, 'Birim maliyet'),
     supplierName: text(d.supplierName, 'Tedarikçi', { max: 60, optional: true }),
+    supplierId: d.supplierId ? text(d.supplierId, 'Tedarikçi', { max: 128 }) : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Tedarik (8b)
+// ---------------------------------------------------------------------------
+
+const PURCHASE_PAYMENT_METHODS = ['cash', 'card', 'transfer'];
+
+function validateSupplier(input) {
+  const d = input || {};
+  return {
+    name: text(d.name, 'Tedarikçi adı', { max: 60 }),
+    contactName: text(d.contactName, 'Yetkili', { max: 60, optional: true }),
+    phone: text(d.phone, 'Telefon', { max: 20, optional: true }),
+    email: text(d.email, 'E-posta', { max: 80, optional: true }),
+    note: text(d.note, 'Not', { max: 200, optional: true }),
+  };
+}
+
+// Sipariş / teslim satırı: miktar temel birimde, tutar kuruş (satır toplamı)
+function purchaseLines(list, { allowZero = false } = {}) {
+  if (!Array.isArray(list) || list.length < 1 || list.length > 60) throw new MenuError('Satır yok ya da çok fazla.');
+  return list.map((l) => ({
+    ingredientId: text(l?.ingredientId, 'Malzeme', { max: 128 }),
+    qty: qtyInt(l.qty, 'Miktar', { min: allowZero ? 0 : 1 }),
+    amount: kurus(l.amount ?? 0, 'Tutar', { max: 100_000_000 }),
+  }));
+}
+
+function validatePurchaseOrder(input) {
+  const d = input || {};
+  if (!['draft', 'sent'].includes(d.status ?? 'draft')) throw new MenuError('Sipariş durumu geçersiz.');
+  return {
+    supplierId: text(d.supplierId, 'Tedarikçi', { max: 128 }),
+    status: d.status ?? 'draft',
+    lines: purchaseLines(d.lines),
+    note: text(d.note, 'Not', { max: 200, optional: true }),
+  };
+}
+
+// Teslim alma (kuyruktan): { receiptId, supplierId, purchaseOrderId?, lines, payment: { status, method? }, note }
+function validateReceipt(input) {
+  const d = input || {};
+  const pay = d.payment || {};
+  if (!['paid', 'unpaid'].includes(pay.status)) throw new MenuError('Ödeme durumu ödendi ya da ödenecek olmalıdır.');
+  if (pay.status === 'paid' && !PURCHASE_PAYMENT_METHODS.includes(pay.method)) throw new MenuError('Ödeme yöntemi geçersiz.');
+  const lines = purchaseLines(d.lines, { allowZero: true }).filter((l) => l.qty > 0);
+  if (!lines.length) throw new MenuError('Teslim alınan malzeme yok.');
+  return {
+    receiptId: text(d.receiptId, 'Teslim', { max: 64 }),
+    supplierId: text(d.supplierId, 'Tedarikçi', { max: 128 }),
+    purchaseOrderId: d.purchaseOrderId ? text(d.purchaseOrderId, 'Sipariş', { max: 128 }) : null,
+    lines,
+    total: lines.reduce((s, l) => s + l.amount, 0),
+    payment: { status: pay.status, method: pay.status === 'paid' ? pay.method : null },
+    note: text(d.note, 'Not', { max: 200, optional: true }),
+  };
+}
+
+function validateSupplierPayment(input) {
+  const d = input || {};
+  if (!PURCHASE_PAYMENT_METHODS.includes(d.method)) throw new MenuError('Ödeme yöntemi geçersiz.');
+  return {
+    paymentId: text(d.paymentId, 'Ödeme', { max: 64 }),
+    supplierId: text(d.supplierId, 'Tedarikçi', { max: 128 }),
+    amount: kurus(d.amount, 'Tutar', { min: 1, max: 100_000_000 }),
+    method: d.method,
+    note: text(d.note, 'Not', { max: 200, optional: true }),
+  };
+}
+
+// Ağırlıklı ortalama birim maliyet. stock: temel birim (eksi stok 0 sayılır), unitCost: kuruş / kg-L-adet,
+// gelen: qty (temel birim) ve amount (kuruş, satır toplamı). factor: 1000 (g, ml) ya da 1 (adet).
+function weightedUnitCost(stock, unitCost, qty, amount, factor) {
+  const s = Math.max(stock, 0);
+  if (qty <= 0) return unitCost;
+  // s × (unitCost / factor) + amount  →  toplam değer (kuruş); bölü (s + qty) × factor
+  return Math.round(((s * unitCost) / factor + amount) * factor / (s + qty));
 }
 
 function validateRecipe(list) {
@@ -358,6 +437,7 @@ function validateRecipeEffect(e) {
 }
 
 const STOCK_MOVE_TYPES = { sale: 'openTable', void_return: 'openTable', count: 'stock', adjust: 'stock', waste: 'waste' };
+// Not: alış (purchase) hareketi stockMove ile değil, receivePurchase işlemiyle gelir (maliyeti de günceller).
 
 // Stok hareketi (kuyruktan): { movementId, type, orderId?, lineId?, reason?, lines: [{ ingredientId, qty (+/−) }] }
 function validateStockMove(p) {
@@ -610,6 +690,12 @@ function expectedCash(session, payments, refunds) {
 }
 
 module.exports = {
+  PURCHASE_PAYMENT_METHODS,
+  validateSupplier,
+  validatePurchaseOrder,
+  validateReceipt,
+  validateSupplierPayment,
+  weightedUnitCost,
   UNITS,
   STOCK_MOVE_TYPES,
   validateIngredient,

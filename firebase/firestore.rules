@@ -142,6 +142,24 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Tedarik (8b): yönetici/müdür ve terminal okur; yazma fonksiyonlardan.
+    match /suppliers/{id} {
+      allow read: if isManagerPlus() || isActiveTerminal();
+      allow write: if false;
+    }
+    match /purchaseOrders/{id} {
+      allow read: if isManagerPlus() || isActiveTerminal();
+      allow write: if false;
+    }
+    match /purchaseReceipts/{id} {
+      allow read: if isManagerPlus() || isActiveTerminal();
+      allow write: if false;
+    }
+    match /supplierPayments/{id} {
+      allow read: if isManagerPlus() || isActiveTerminal();
+      allow write: if false;
+    }
+
     match /auditLogs/{logId} {
       allow read: if isManagerPlus();
       allow write: if false;

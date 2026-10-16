@@ -355,6 +355,17 @@ class Report:
         order = {'star': 0, 'plowhorse': 1, 'puzzle': 2, 'dog': 3}
         return sorted(out, key=lambda r: (order[r['class']], -r['profit']))
 
+    def stock(self):
+        """Stok sekmesi: malzeme tüketimi (satış, zayi, alış, sayım farkı) ve toplamlar."""
+        import stock as stock_mod
+        rows = stock_mod.consumption_report(self.day_from, self.day_to)
+        purchases = stock_mod.purchases(self.day_from, self.day_to)
+        waste = stock_mod.waste_entries(self.day_from, self.day_to)
+        return {'rows': rows, 'value': stock_mod.stock_value(),
+                'purchases': sum(p['total'] for p in purchases), 'purchaseCount': len(purchases),
+                'waste': sum(w['cost'] or 0 for w in waste), 'wasteCount': len(waste),
+                'countDiff': sum(r['diffCost'] for r in rows)}
+
     def categories(self):
         cats = {}
         for key, p in self.stats.get('byProduct', {}).items():
@@ -500,6 +511,12 @@ class Report:
         net = self.summary()['net'] + self.legacy['revenue']
         total_exp = sum(expenses.values())
         waste = int(round((waste or 0) * 100))
+        # 8b: yeni zayi kayıtları (ürün ve malzeme zayisi)
+        conn = database.get_connection()
+        new_waste = conn.execute("SELECT COALESCE(SUM(cost),0) FROM waste_log WHERE business_day BETWEEN ? AND ?",
+                                 (self.day_from, self.day_to)).fetchone()[0]
+        conn.close()
+        waste += new_waste
         c = self.costing()
         cogs = c['sold'] + c['comps']
         return {'net': net, 'expenses': total_exp, 'expensesByType': expenses, 'waste': waste,

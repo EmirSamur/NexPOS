@@ -123,6 +123,13 @@ class UserPanel(QWidget):
             btn_tukendi.clicked.connect(lambda: SoldOutDialog(self.user, self).exec())
             ly.addWidget(btn_tukendi)
 
+        if database.user_can(self.user, 'waste'):
+            btn_zayi = QPushButton("🗑 Zayi")
+            btn_zayi.setObjectName("ghostBtn")
+            btn_zayi.setCursor(Qt.PointingHandCursor)
+            btn_zayi.clicked.connect(self._waste)
+            ly.addWidget(btn_zayi)
+
         btn_vardiya = QPushButton(f"📊 Vardiyam")
         btn_vardiya.setObjectName("ghostBtn")
         btn_vardiya.clicked.connect(self._show_shift_summary)
@@ -370,6 +377,17 @@ class UserPanel(QWidget):
     def _close_pos(self):
         self.pages.setCurrentIndex(0)
         self._refresh_bolgeler()
+
+    def _waste(self):
+        """Ürün zayisi (bozuldu, düştü…): reçetesi stoktan düşer, maliyeti kaydedilir."""
+        from stock_pages import WasteDialog, record_waste
+        from pos_screen import authorize
+        dlg = WasteDialog('product', self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        approver, _ = authorize(self, self.user, 'waste', "Zayi girişi", need_reason=False)
+        if approver:
+            record_waste(self, self.user, dlg, approver)
 
     def _show_shift_summary(self):
         """Vardiyam: bugünkü kendi satırı (raporlarla aynı hesap)."""

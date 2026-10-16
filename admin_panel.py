@@ -23,7 +23,7 @@ from qr_print import default_base_url
 from cloud.permissions import PANEL_ROLES
 from cash_screen import CashPage
 from reports_screen import DashboardPage, ReportsPage
-from stock_pages import IngredientsPage
+from stock_pages import StockPage, WastePage
 import cash
 from modules_page import ModulesPanel
 from pos import now_iso as pos_now
@@ -35,7 +35,7 @@ PAGE_PERMISSIONS = [
     'editMenu',      # 1 Masa / Bölgeler
     'editMenu',      # 2 Menü / Ürünler
     'expense',       # 3 Gider
-    'expense',       # 4 Zayi
+    'waste',         # 4 Zayi
     'viewReports',   # 5 İstatistikler
     'manageUsers',   # 6 Kullanıcılar
     'manageUsers',   # 7 Yetkiler
@@ -83,7 +83,7 @@ class AdminPanel(QWidget):
         self.pages.addWidget(self.terminals_page)               # 9
         self.cash_page = CashPage(self.user)
         self.pages.addWidget(self.cash_page)                    # 10
-        self.stock_page = IngredientsPage(self.user)
+        self.stock_page = StockPage(self.user)
         self.pages.addWidget(self.stock_page)                   # 11
         content_w.addWidget(self.pages, 1)
 
@@ -386,6 +386,9 @@ class AdminPanel(QWidget):
         self.floor_page.on_sync_status(status)
         if self.pages.currentWidget() is self.dashboard_page:
             self.dashboard_page.refresh()  # rakamlar yerelden; her senkronda tazelenir
+        if status.changed & {'ingredients', 'suppliers', 'purchaseOrders'} and \
+                self.pages.currentWidget() is self.stock_page:
+            self.stock_page.refresh()
         if 'modules' in status.changed:
             self._apply_sidebar()
             self.modules_panel.refresh()
@@ -640,254 +643,9 @@ class AdminPanel(QWidget):
         dlg.exec()
 
     def _create_zayi_page(self):
-        page = QWidget()
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("border: none; background: transparent;")
-        content = QWidget()
-        content.setStyleSheet("background: transparent;")
-        ly = QVBoxLayout(content)
-        ly.setContentsMargins(32, 24, 32, 32)
-        ly.setSpacing(16)
-
-        hr = QHBoxLayout()
-        header = PageHeader("Zayi İşlemleri", "Ürün kayıtlarından düşülmesi gereken zayiatları girin.", COLORS['danger'], ICONS['trash'])
-        hr.addWidget(header, 1)
-
-        csv_btn = QPushButton(f"{ICONS['save']} CSV Dışa Aktar")
-        csv_btn.setFixedHeight(44)
-        csv_btn.setCursor(Qt.PointingHandCursor)
-        csv_btn.setStyleSheet(f"""
-            QPushButton {{ background: {COLORS['success']}; border: none; color: white;
-                font-size: 13px; font-weight: bold; border-radius: 8px; padding: 0 18px; }}
-            QPushButton:hover {{ background: {COLORS['success_dark']}; }}
-        """)
-        csv_btn.clicked.connect(self._export_waste_csv)
-        hr.addWidget(csv_btn, 0, Qt.AlignVCenter)
-        hr.addSpacing(8)
-
-        ab = QPushButton(f"{ICONS['plus']} Zayi Ekle")
-        ab.setFixedHeight(44)
-        ab.setCursor(Qt.PointingHandCursor)
-        ab.setStyleSheet(f"""
-            QPushButton {{ background: {COLORS['primary']}; border: none; color: white;
-                font-size: 14px; font-weight: bold; border-radius: 8px; padding: 0 20px; }}
-            QPushButton:hover {{ background: {COLORS['primary_dark']}; }}
-        """)
-        ab.clicked.connect(self._add_waste_dialog)
-        hr.addWidget(ab, 0, Qt.AlignVCenter)
-        ly.addLayout(hr)
-
-        # Özet İstatistik Kartları
-        self.waste_cards_layout = QHBoxLayout()
-        self.waste_cards_layout.setSpacing(16)
-        ly.addLayout(self.waste_cards_layout)
-
-        # Tarih filtresi
-        fr = QHBoxLayout()
-        self.waste_start = QDateEdit(QDate.currentDate().addMonths(-1))
-        self.waste_end = QDateEdit(QDate.currentDate())
-        for de in [self.waste_start, self.waste_end]:
-            de.setCalendarPopup(True)
-            de.setFixedWidth(140)
-            de.setFixedHeight(40)
-        fr.addWidget(QLabel("Başlangıç:"))
-        fr.addWidget(self.waste_start)
-        fr.addSpacing(16)
-        fr.addWidget(QLabel("Bitiş:"))
-        fr.addWidget(self.waste_end)
-        wb = QPushButton("Listele")
-        wb.setObjectName("outlineBtn")
-        wb.clicked.connect(self._refresh_waste)
-        fr.addWidget(wb)
-        fr.addStretch()
-        ly.addLayout(fr)
-
-        # Ürüne Göre Zayi Dağılımı
-        grp_title = QLabel("Ürüne Göre Zayi Dağılımı")
-        grp_title.setFont(QFont(FONTS['family'], FONTS['size_md'], QFont.Bold))
-        grp_title.setStyleSheet(f"color: {COLORS['text_dark']};")
-        ly.addWidget(grp_title)
-
-        self.waste_summary_table = QTableWidget()
-        self.waste_summary_table.setColumnCount(3)
-        self.waste_summary_table.setHorizontalHeaderLabels(["Ürün Adı", "Toplam Adet", "Toplam Maliyet"])
-        self.waste_summary_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.waste_summary_table.setAlternatingRowColors(True)
-        self.waste_summary_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.waste_summary_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.waste_summary_table.setMaximumHeight(200)
-        ly.addWidget(self.waste_summary_table)
-
-        # Detay Tablosu
-        detail_title = QLabel("Detaylı Zayi Kayıtları")
-        detail_title.setFont(QFont(FONTS['family'], FONTS['size_md'], QFont.Bold))
-        detail_title.setStyleSheet(f"color: {COLORS['text_dark']};")
-        ly.addWidget(detail_title)
-
-        self.waste_table = QTableWidget()
-        self.waste_table.setColumnCount(8)
-        self.waste_table.setHorizontalHeaderLabels(["Ürün", "Neden", "Adet", "Zayi Tarihi", "Kayıt Tarihi", "Sorumlu", "Maliyet(₺)", "Sil"])
-        self.waste_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.waste_table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)
-        self.waste_table.setAlternatingRowColors(True)
-        self.waste_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.waste_table.setSelectionBehavior(QTableWidget.SelectRows)
-        ly.addWidget(self.waste_table, 1)
-
-        scroll.setWidget(content)
-        pg = QVBoxLayout(page)
-        pg.setContentsMargins(0, 0, 0, 0)
-        pg.addWidget(scroll)
-        self._refresh_waste()
-        return page
-
-    def _refresh_waste(self):
-        s = self.waste_start.date().toString("yyyy-MM-dd")
-        e = self.waste_end.date().toString("yyyy-MM-dd")
-
-        # Özet kartları güncelle
-        while self.waste_cards_layout.count():
-            item = self.waste_cards_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
-        ws = database.get_waste(s, e)
-        total_cost = sum((w.get('maliyet_tutari') or 0) for w in ws)
-        total_adet = sum((w.get('adet') or 0) for w in ws)
-        
-        # En çok zayi olan ürün
-        summary = database.get_waste_summary(s, e)
-        top_product = summary[0]['urun_adi'] if summary else "—"
-        top_adet = summary[0]['toplam_adet'] if summary else 0
-        last_date = ws[0].get('zayi_tarihi', '—') if ws else "—"
-
-        cards_data = [
-            (ICONS['trash'], "Toplam Zayi Maliyet", f"₺{total_cost:,.2f}", f"{len(ws)} kayıt", COLORS['danger'], COLORS['bg_danger']),
-            (ICONS['menu_food'], "Zayi Ürün Adedi", str(total_adet), "Toplam adet", COLORS['warning'], COLORS['bg_warning']),
-            (ICONS['star'], "En Çok Zayi Ürün", str(top_product), f"x{top_adet}", COLORS['info'], COLORS['card_blue_bg']),
-            (ICONS['chart'], "Son Kayıt", str(last_date), "Zayi tarihi", COLORS['primary'], COLORS['primary_bg']),
-        ]
-        for icon, title, val, sub, color, bg in cards_data:
-            c = StatCard(icon, title, val, sub, color, bg)
-            self.waste_cards_layout.addWidget(c, 1)
-
-        # Ürüne göre gruplu tablo
-        self.waste_summary_table.setRowCount(len(summary) + 1)
-        sum_adet = 0
-        sum_cost = 0
-        for i, sm in enumerate(summary):
-            self.waste_summary_table.setItem(i, 0, QTableWidgetItem(sm.get('urun_adi', '') or ''))
-            adet = sm.get('toplam_adet', 0) or 0
-            sum_adet += adet
-            self.waste_summary_table.setItem(i, 1, QTableWidgetItem(str(adet)))
-            cost = sm.get('toplam_maliyet', 0) or 0
-            sum_cost += cost
-            tv = QTableWidgetItem(f"₺{cost:,.2f}")
-            tv.setFont(QFont(FONTS['family'], FONTS['size_sm'], QFont.Bold))
-            tv.setForeground(QColor(COLORS['danger']))
-            self.waste_summary_table.setItem(i, 2, tv)
-        # Toplam
-        tot_lbl = QTableWidgetItem("TOPLAM")
-        tot_lbl.setFont(QFont(FONTS['family'], FONTS['size_md'], QFont.Bold))
-        self.waste_summary_table.setItem(len(summary), 0, tot_lbl)
-        self.waste_summary_table.setItem(len(summary), 1, QTableWidgetItem(str(sum_adet)))
-        tot_val = QTableWidgetItem(f"₺{sum_cost:,.2f}")
-        tot_val.setFont(QFont(FONTS['family'], FONTS['size_md'], QFont.Bold))
-        tot_val.setForeground(QColor(COLORS['danger']))
-        self.waste_summary_table.setItem(len(summary), 2, tot_val)
-
-        # Detay tablosu
-        self.waste_table.setRowCount(len(ws))
-        for i, w in enumerate(ws):
-            self.waste_table.setItem(i, 0, QTableWidgetItem(w.get('urun_adi', '') or ''))
-            self.waste_table.setItem(i, 1, QTableWidgetItem(w.get('zayi_nedeni', '') or ''))
-            self.waste_table.setItem(i, 2, QTableWidgetItem(str(w.get('adet', 0))))
-            self.waste_table.setItem(i, 3, QTableWidgetItem(w.get('zayi_tarihi', '') or ''))
-            self.waste_table.setItem(i, 4, QTableWidgetItem(w.get('eklenme_tarihi', '') or ''))
-            self.waste_table.setItem(i, 5, QTableWidgetItem(w.get('sorumlu_adi', '') or ''))
-            m = w.get('maliyet_tutari') or 0
-            tv = QTableWidgetItem(f"₺{m:,.2f}")
-            tv.setForeground(QColor(COLORS['danger']))
-            tv.setFont(QFont(FONTS['family'], FONTS['size_sm'], QFont.Bold))
-            self.waste_table.setItem(i, 6, tv)
-
-            # Sil butonu
-            del_btn = QPushButton(ICONS['cross'])
-            del_btn.setFixedSize(30, 30)
-            del_btn.setCursor(Qt.PointingHandCursor)
-            del_btn.setStyleSheet(f"""
-                QPushButton {{ background: {COLORS['bg_danger']}; color: {COLORS['danger']};
-                    border-radius: 6px; font-weight: bold; border: none; }}
-                QPushButton:hover {{ background: {COLORS['danger']}; color: white; }}
-            """)
-            wid = w.get('id')
-            del_btn.clicked.connect(lambda _, wid=wid: self._delete_waste(wid))
-            self.waste_table.setCellWidget(i, 7, del_btn)
-
-    def _delete_waste(self, wid):
-        rep = QMessageBox.question(self, "Zayi Sil", "Bu zayi kaydını silmek istediğinize emin misiniz?",
-                                   QMessageBox.Yes | QMessageBox.No)
-        if rep == QMessageBox.Yes:
-            database.delete_waste(wid)
-            self._refresh_waste()
-            ToastNotification(self, "Zayi kaydı silindi.", "warning")
-
-    def _export_waste_csv(self):
-        from datetime import datetime
-        default_name = f"NexPOS_Zayi_{datetime.now().strftime('%Y-%m-%d')}.csv"
-        path, _ = QFileDialog.getSaveFileName(self, "CSV Olarak Kaydet", default_name, "CSV Dosyaları (*.csv)")
-        if not path:
-            return
-        s = self.waste_start.date().toString("yyyy-MM-dd")
-        e = self.waste_end.date().toString("yyyy-MM-dd")
-        ws = database.get_waste(s, e)
-        try:
-            with open(path, 'w', encoding='utf-8-sig') as f:
-                f.write("Ürün;Neden;Adet;Zayi Tarihi;Kayıt Tarihi;Sorumlu;Maliyet\n")
-                total = 0
-                for w in ws:
-                    m = w.get('maliyet_tutari') or 0
-                    total += m
-                    f.write(f"{w.get('urun_adi', '')};{w.get('zayi_nedeni', '')};{w.get('adet', 0)};"
-                            f"{w.get('zayi_tarihi', '')};{w.get('eklenme_tarihi', '')};{w.get('sorumlu_adi', '')};{m:.2f}\n")
-                f.write(f"\nTOPLAM;;;;;;{total:.2f}\n")
-            ToastNotification(self, "Zayi raporu CSV olarak kaydedildi!", "success")
-        except Exception as ex:
-            QMessageBox.critical(self, "Hata", f"CSV kaydedilemedi:\n{str(ex)}")
-
-    def _add_waste_dialog(self):
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Zayi Ekle")
-        dlg.setFixedSize(450, 320)
-        form = QFormLayout(dlg)
-        form.setContentsMargins(32, 28, 32, 28)
-        form.setSpacing(16)
-        pc = QComboBox()
-        for p in database.get_products_by_category():
-            pc.addItem(f"{p['ad']} (₺{p['fiyat']})", p['id'])
-        nd = QLineEdit()
-        nd.setPlaceholderText("Zayi nedeni girin (örn: Düşürüldü, Bozuldu)")
-        ad = QSpinBox()
-        ad.setMinimum(1); ad.setMaximum(999)
-        form.addRow("Ürün:", pc)
-        form.addRow("Neden:", nd)
-        form.addRow("Adet:", ad)
-        btn = QPushButton("Kaydet")
-        btn.setObjectName("dangerBtn")
-        def save():
-            pid = pc.currentData()
-            if pid and nd.text().strip():
-                from datetime import datetime
-                prods = database.get_products_by_category()
-                m = sum(p['fiyat'] * ad.value() for p in prods if p['id'] == pid)
-                database.add_waste(pid, nd.text(), ad.value(), m, self.user['id'], datetime.now().strftime("%Y-%m-%d"))
-                dlg.accept()
-                self._refresh_waste()
-                ToastNotification(self, "Zayi kaydı eklendi.", "warning")
-        btn.clicked.connect(save)
-        form.addRow(btn)
-        dlg.exec()
+        # 8b: yeni zayi sayfası (ürün ve malzeme zayisi; eski kayıtlar da listelenir)
+        self.waste_page = WastePage(self.user)
+        return self.waste_page
 
     def _create_raporlar_page(self):
         self.reports_page = ReportsPage(self.user)

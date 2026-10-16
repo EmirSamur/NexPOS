@@ -586,7 +586,7 @@ class DashboardPage(QWidget):
 
 class ReportsPage(QWidget):
     open_cash_history = Signal()
-    TAB_SUMMARY, TAB_PRODUCTS, TAB_MENU, TAB_TIME, TAB_STAFF, TAB_LOSSES, TAB_INCOME, TAB_KITCHEN = range(8)
+    TAB_SUMMARY, TAB_PRODUCTS, TAB_MENU, TAB_TIME, TAB_STAFF, TAB_LOSSES, TAB_INCOME, TAB_KITCHEN, TAB_STOCK = range(9)
     MENU_CLASSES = {'star': ("★ Yıldız", "çok satıyor, kârlı — öne çıkarın"),
                     'plowhorse': ("🐴 İş atı", "çok satıyor, az kârlı — maliyeti düşürün ya da fiyatı gözden geçirin"),
                     'puzzle': ("🧩 Bulmaca", "kârlı ama az satıyor — menüde görünürlüğünü artırın"),
@@ -650,6 +650,7 @@ class ReportsPage(QWidget):
         self.tabs.addTab(self._losses_tab(), "Kayıp ve Denetim")
         self.tabs.addTab(self._income_tab(), "Gelir – Gider")
         self.tabs.addTab(self._kitchen_tab(), "Mutfak")
+        self.tabs.addTab(self._stock_tab(), "Stok")
         ly.addWidget(self.tabs, 1)
         self._loading = True
         self._preset_changed()
@@ -831,6 +832,42 @@ class ReportsPage(QWidget):
         ly.addStretch()
         return w
 
+    def _stock_tab(self):
+        w = QWidget()
+        ly = QVBoxLayout(w)
+        ly.setContentsMargins(0, 10, 0, 0)
+        self.stock_summary = QLabel("")
+        self.stock_summary.setStyleSheet("font-size: 14px; background: transparent;")
+        ly.addWidget(self.stock_summary)
+        ly.addWidget(_muted("Satışta kullanılan: reçetelere göre (iade düşülmüş). Olması gereken tüketim = satış + zayi; "
+                            "sayımda eksik çıkan miktar fazladan kullanılmış demektir (fire, israf, kayıt dışı). "
+                            "İlk sayım fark sayılmaz."))
+        self.stock_table = make_table([("Malzeme", True), ("Satışta kullanılan", False), ("Zayi", False),
+                                       ("Alış", False), ("Sayım farkı", False), ("Fark tutarı", False),
+                                       ("Olması gereken → kullanılan", False)], sort=(5, Qt.AscendingOrder))
+        ly.addWidget(self.stock_table, 1)
+        return w
+
+    def _fill_stock(self):
+        import stock as stock_mod
+        st = self.report.stock()
+        self.stock_summary.setText(
+            f"Stok değeri (şimdi): <b>{tl(st['value'])}</b> · Alış: <b>{tl(st['purchases'])}</b> ({st['purchaseCount']}) · "
+            f"Zayi: <b>{tl(st['waste'])}</b> ({st['wasteCount']}) · Sayım farkı: <b>{format_tl(st['countDiff'], sign=True)}</b>")
+        self.stock_summary.setTextFormat(Qt.RichText)
+
+        def q(v, unit):
+            return (stock_mod.format_qty(v, unit) if v else "—", v, True)
+
+        fill_table(self.stock_table, [[text_cell(r['name']), q(r['sale'], r['unit']), q(r['waste'], r['unit']),
+                                       q(r['purchase'], r['unit']),
+                                       (("+" if r['countDiff'] > 0 else "") + stock_mod.format_qty(r['countDiff'], r['unit'])
+                                        if r['countDiff'] else "—", r['countDiff'], True),
+                                       (format_tl(r['diffCost'], sign=True) if r['countDiff'] else "—", r['diffCost'], True),
+                                       (f"{stock_mod.format_qty(r['theoretical'], r['unit'])} → "
+                                        f"{stock_mod.format_qty(r['actual'], r['unit'])}" if r['countDiff'] else "",
+                                        r['actual'], True)] for r in st['rows']])
+
     def _kitchen_tab(self):
         w = QWidget()
         ly = QVBoxLayout(w)
@@ -857,6 +894,7 @@ class ReportsPage(QWidget):
         pa, pb = reports.previous_period(a, b)
         self.range_label.setText(f"{a} – {b} ({days} gün)" + (f" · karşılaştırma: {pa} – {pb}" if self.prev else ""))
         self.tabs.setTabVisible(self.TAB_KITCHEN, database.modules()['kds']['enabled'])
+        self.tabs.setTabVisible(self.TAB_STOCK, database.modules()['stock']['enabled'])
         self.tabs.setTabVisible(self.TAB_LOSSES, self.user.get('role') in PANEL_ROLES)
         self._fill_summary()
         self._fill_products()
@@ -867,6 +905,7 @@ class ReportsPage(QWidget):
         self._fill_losses()
         self._fill_income()
         self._fill_kitchen()
+        self._fill_stock()
 
     def summary_rows(self):
         """(etiket, değer, değişim metni, renk) — ekran ve dışa aktarma aynı satırları kullanır."""
@@ -1040,7 +1079,7 @@ class ReportsPage(QWidget):
         names = {self.TAB_SUMMARY: "Satış özeti", self.TAB_PRODUCTS: "Ürünler", self.TAB_MENU: "Menü analizi",
                  self.TAB_TIME: "Saatler",
                  self.TAB_STAFF: "Personel", self.TAB_LOSSES: "Kayıp ve denetim", self.TAB_INCOME: "Gelir-gider",
-                 self.TAB_KITCHEN: "Mutfak"}
+                 self.TAB_KITCHEN: "Mutfak", self.TAB_STOCK: "Stok"}
         title = f"{names[tab]} {a} – {b}"
         if tab == self.TAB_SUMMARY:
             s = self.report.summary()
@@ -1057,7 +1096,8 @@ class ReportsPage(QWidget):
         if tab == self.TAB_INCOME:
             return title, ["Kalem", "Tutar"], [list(r) for r in self.income_rows()]
         table = {self.TAB_PRODUCTS: self.product_table, self.TAB_MENU: self.menu_table, self.TAB_STAFF: self.staff_table,
-                 self.TAB_LOSSES: self.loss_table, self.TAB_KITCHEN: self.kitchen_product_table}[tab]
+                 self.TAB_LOSSES: self.loss_table, self.TAB_KITCHEN: self.kitchen_product_table,
+                 self.TAB_STOCK: self.stock_table}[tab]
         cols = [c for c in range(table.columnCount()) if not table.isColumnHidden(c)]
         headers = [table.horizontalHeaderItem(c).text() for c in cols]
         rows = [[table.item(r, c).text() if table.item(r, c) else '' for c in cols] for r in range(table.rowCount())]

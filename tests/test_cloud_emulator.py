@@ -548,3 +548,51 @@ def test_stok_sablon_internetsiz_satis_bulutla_ayni(db, client):
     cloud = {d[0]: d[1]['stock'] for d in client.list_docs('ingredients', api.session)}
     assert {k: cloud[k] for k in local} == local
     assert {i['id']: i['stock'] for i in stock.ingredients()} == local   # senkrondan sonra çift sayılmaz
+
+
+def test_tedarik_siparis_internetsiz_teslim_odeme_bulutla_ayni(db, client):
+    import requests
+    import stock
+    from cloud.admin_api import AdminApi
+    from cloud.pairing import pair_terminal
+    from cloud.sync import SyncEngine
+
+    requests.delete('http://127.0.0.1:8080/emulator/v1/projects/demo-nexpos/databases/(default)/documents',
+                    timeout=10).raise_for_status()
+    email = f'tedarik-{uuid.uuid4().hex[:6]}@kafe.test'
+    owner_id = create_owner(email)
+    creds, _ = pair_terminal(client, email, 'sahip-sifre-1', 'Kasa 1')
+    api = AdminApi(client, client.sign_in_with_password(email, 'sahip-sifre-1'))
+    engine = SyncEngine(client, creds)
+    api.save_modules({'stock': {'enabled': True}})
+    sup = api.save_supplier({'name': 'Kahveci'})['id']
+    esp = api.save_ingredient({'name': 'Espresso', 'unit': 'g', 'unitCost': 80000, 'critical': 2000, 'target': 5000,
+                               'purchaseUnit': {'name': 'paket', 'size': 1000}, 'supplierId': sup})['id']
+    engine.run_once()
+    owner = db.login_with_pin(owner_id, '482913')
+    stock.set_counts(owner, {esp: 1000}, 'İlk sayım', owner_id, initial=True)
+    engine.run_once()
+    lines = stock.suggest_order(sup)
+    assert lines == [{'ingredientId': esp, 'qty': 4000, 'amount': 320000}]
+    po = api.save_purchase_order({'supplierId': sup, 'status': 'sent', 'lines': lines})
+    engine.run_once()
+    assert stock.purchase_orders()[0]['no'] == po['no']
+
+    # ---- İnternetsiz: 3 paket geldi (2.550 ₺), ödenecek; sonra 1.000 ₺ havale
+    stock.receive(owner, sup, [{'ingredientId': esp, 'qty': 3000, 'amount': 255000}], {'status': 'unpaid'},
+                  po['id'], 'İrsaliye 9', owner_id)
+    stock.pay_supplier(owner, sup, 100000, 'transfer', approver_id=owner_id)
+    local_ing = stock.ingredient_map()[esp]
+    local_sup = next(s for s in stock.suppliers() if s['id'] == sup)
+    assert (local_ing['stock'], local_ing['unitCost'], local_sup['balance']) == (4000, 83750, 155000)
+
+    status = engine.run_once()
+    assert status.online and db.outbox_counts() == (0, 0), db.get_failed_ops()
+    cloud_ing = client.get_doc(f'ingredients/{esp}', api.session)[1]
+    cloud_sup = client.get_doc(f'suppliers/{sup}', api.session)[1]
+    cloud_po = client.get_doc(f"purchaseOrders/{po['id']}", api.session)[1]
+    assert (cloud_ing['stock'], cloud_ing['unitCost'], cloud_sup['balance']) == (4000, 83750, 155000)
+    assert cloud_po['status'] == 'partial' and cloud_po['lines'][0]['received'] == 3000
+    # Senkrondan sonra yerel görünüm aynı (çift sayım yok)
+    assert stock.ingredient_map()[esp]['stock'] == 4000
+    assert next(s for s in stock.suppliers() if s['id'] == sup)['balance'] == 155000

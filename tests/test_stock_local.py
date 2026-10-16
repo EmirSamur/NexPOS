@@ -180,3 +180,120 @@ def test_hazir_sablon():
     assert effects[('g', 'o')] == {'replace': [{'from': 'mevcut-sut', 'to': 'yulaf'}]}
     assert effects[('b', 'l')] == {'scale': 1.5} and ('g', 'n') not in effects
     assert 'Susamlı Simit' in d['skipped']
+
+
+# =====================================================================
+# 8b
+# =====================================================================
+
+@pytest.fixture
+def tedarik(db, st):
+    stock, pos, user = st
+    seed(db, 'c1', 'cashier', pin='640218')
+    db.upsert_cache('suppliers', [('kahveci', {'name': 'Kahveci', 'balance': 0, 'deleted': False})])
+    db.upsert_cache('ingredients', [('esp', {**ING['esp'], 'supplierId': 'kahveci', 'target': 3000,
+                                             'purchaseUnit': {'name': 'paket', 'size': 1000}, 'deleted': False})])
+    manager = db.login_with_pin('m1', '583920')
+    return stock, pos, user, manager
+
+
+def test_bolunmus_ana_satirin_iptali_guncel_adet_kadar_doner(db, st):
+    stock, pos, user = st
+    o = pos.open_order(user, None)
+    pos.add_line(user, o['id'], pos.product_line(db.menu_item('products', 'latte'), qty=3))
+    o, _ = pos.send_pending(user, o['id'])
+    o, one = pos.split_line(user, o['id'], o['items'][0]['lineId'], 1)
+    o = pos.void_line(user, o['id'], o['items'][0]['lineId'], 'x', 'm1', prepared=False)  # kalan 2 latte
+    assert _stock(stock)['esp'] == 1000 - 18   # yalnızca ayrılan 1 latte düşülü kalır
+
+
+def test_teslim_alma_agirlikli_maliyet_borc_ve_odeme(db, tedarik):
+    import cash
+    stock, pos, user, manager = tedarik
+    # 1 kg stokta 800 ₺/kg; 2 paket (2 kg) 1.900 ₺ gelir → (800 + 1900) / 3 = 900 ₺/kg
+    rid = stock.receive(manager, 'kahveci', [{'ingredientId': 'esp', 'qty': 2000, 'amount': 190000}],
+                        {'status': 'unpaid'}, note='Fatura 12')
+    esp = stock.ingredient_map()['esp']
+    assert esp['stock'] == 3000 and esp['unitCost'] == 90000
+    assert next(s for s in stock.suppliers() if s['id'] == 'kahveci')['balance'] == 190000
+    op = [json.loads(o['payload']) for o in db.get_pending_ops(100) if o['op'] == 'receivePurchase'][0]
+    assert op['receiptId'] == rid and op['payment'] == {'status': 'unpaid'}
+    # Kasiyerin stok yetkisi yok
+    cashier = db.login_with_pin('c1', '640218')
+    with pytest.raises(pos.OrderError, match='stock'):
+        stock.receive(cashier, 'kahveci', [{'ingredientId': 'esp', 'qty': 1, 'amount': 1}], {'status': 'unpaid'})
+    # Nakit ödeme, kasa açık: kasadan çıkış + Masraflar
+    session = cash.open_session(manager, 300000)
+    stock.pay_supplier(manager, 'kahveci', 100000, 'cash', 'Kısmi ödeme')
+    assert next(s for s in stock.suppliers() if s['id'] == 'kahveci')['balance'] == 90000
+    s = cash.current_session()
+    assert s['movements'][-1]['amount'] == 100000 and s['movements'][-1]['type'] == 'out'
+    assert cash.expected_cash(s) == 200000
+    conn = db.get_connection()
+    exp = conn.execute("SELECT tutar, odeme_tipi FROM expenses WHERE masraf_tipi='Tedarikçi: Kahveci'").fetchall()
+    conn.close()
+    assert [(e['tutar'], e['odeme_tipi']) for e in exp] == [(1000, 'Nakit')]   # kasa çıkışı ikinci gider yazmaz
+    # Ödendi (kart) teslim: borç artmaz, Masraflar'a yazılır
+    stock.receive(manager, 'kahveci', [{'ingredientId': 'sut', 'qty': 12000, 'amount': 42000}],
+                  {'status': 'paid', 'method': 'card'})
+    assert next(s for s in stock.suppliers() if s['id'] == 'kahveci')['balance'] == 90000
+    assert [m['kind'] for m in stock.supplier_statement('kahveci')] == ['receipt', 'payment', 'receipt']
+    assert session
+
+
+def test_siparis_onerisi_ve_metni(db, tedarik):
+    stock, pos, user, manager = tedarik
+    db.upsert_cache('ingredients', [('esp', {**ING['esp'], 'stock': 400, 'supplierId': 'kahveci', 'target': 3000,
+                                             'purchaseUnit': {'name': 'paket', 'size': 1000}, 'deleted': False})])
+    lines = stock.suggest_order('kahveci')
+    assert lines == [{'ingredientId': 'esp', 'qty': 3000, 'amount': 240000}]   # 2,6 kg → 3 paket
+    text = stock.order_text({'no': 7, 'lines': lines, 'note': 'Cuma teslim'}, 'Velvet Kafe')
+    assert '3 paket (3 kg) Espresso çekirdeği' in text and 'no 7' in text and 'Cuma teslim' in text
+
+
+def test_zayi_urun_malzeme_ve_eski_kayit(db, tedarik):
+    import reports
+    stock, pos, user, manager = tedarik
+    cost = stock.waste_product(manager, 'latte', 2, 'Döküldü')
+    assert cost == 2 * (1440 + 700) and _stock(stock)['esp'] == 1000 - 36
+    assert stock.waste_ingredient(manager, 'sut', 1000, 'Bozuldu') == 3500
+    assert stock.waste_product(manager, 'kek', 1, 'Düştü', manual_cost=4000) == 4000   # reçetesiz
+    with pytest.raises(pos.OrderError, match='waste'):
+        stock.waste_ingredient(user, 'sut', 1, 'x')   # garsonun zayi yetkisi yok
+    day = pos.business_day()
+    conn = db.get_connection()
+    pid = conn.execute("SELECT id FROM products WHERE cloud_id='kek'").fetchone()[0]
+    conn.execute("INSERT INTO waste (product_id,zayi_nedeni,adet,maliyet_tutari,zayi_tarihi) VALUES (?,?,1,10,?)",
+                 (pid, 'Eski', f"{day} 09:00"))
+    conn.commit()
+    conn.close()
+    entries = stock.waste_entries(day, day)
+    assert len(entries) == 4 and any(e['kind'] == 'legacy' for e in entries)
+    ie = reports.Report(day, day).income_expense()
+    assert ie['waste'] == 4280 + 3500 + 4000 + 1000
+
+
+def test_sayim_ilk_sayim_ve_tuketim_raporu(db, tedarik):
+    import reports
+    stock, pos, user, manager = tedarik
+    stock.set_counts(manager, {'esp': 2000}, 'İlk sayım', initial=True)        # +1000: kayıp sayılmaz
+    o = pos.open_order(user, None)
+    pos.add_line(user, o['id'], pos.product_line(db.menu_item('products', 'latte'), qty=10))   # 180 g
+    pos.send_pending(user, o['id'])
+    stock.waste_ingredient(manager, 'esp', 20, 'Döküldü')
+    stock.receive(manager, 'kahveci', [{'ingredientId': 'esp', 'qty': 1000, 'amount': 80000}], {'status': 'unpaid'})
+    # Sistemde 2000 − 180 − 20 + 1000 = 2800; sayılan 2750 → 50 g eksik
+    stock.set_counts(manager, {'esp': 2750}, 'Haftalık sayım')
+    day = pos.business_day()
+    row = next(r for r in stock.consumption_report(day, day) if r['ingredientId'] == 'esp')
+    assert (row['sale'], row['waste'], row['purchase'], row['countDiff']) == (180, 20, 1000, -50)
+    assert (row['theoretical'], row['actual'], row['diffCost']) == (200, 250, -4000)
+    hist = stock.count_history()
+    assert [h['initial'] for h in hist] == [0, 1] and hist[0]['lines'][0]['diff'] == -50
+    st = reports.Report(day, day).stock()
+    assert st['countDiff'] == -4000 and st['purchases'] == 80000 and st['wasteCount'] == 1
+    # Taslak
+    stock.save_count_draft({'esp': 100}, 'Sayım')
+    assert stock.load_count_draft()['counts'] == {'esp': 100}
+    stock.clear_count_draft()
+    assert stock.load_count_draft() is None

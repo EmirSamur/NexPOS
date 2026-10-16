@@ -10,10 +10,12 @@ NexPOS - Stok ekranları (8. ekran)
 """
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
+from datetime import datetime
+
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFormLayout, QHBoxLayout, QHeaderView,
     QLabel, QLineEdit, QMessageBox, QPushButton, QRadioButton, QSpinBox, QTableWidget, QTableWidgetItem,
-    QTextBrowser, QVBoxLayout, QWidget
+    QTabWidget, QTextBrowser, QVBoxLayout, QWidget
 )
 
 import database
@@ -178,7 +180,7 @@ class IngredientsPage(QWidget):
         approver, _ = authorize(self, self.user, 'stock', "Stok girişi / sayım", need_reason=False)
         if not approver:
             return
-        changed = stock.set_counts(self.user, dlg.counts, dlg.reason, approver)
+        changed = stock.set_counts(self.user, dlg.counts, dlg.reason, approver, initial=not stock.count_history(1))
         ctx.request_sync()
         self.refresh()
         ToastNotification(self.window(), f"{len(changed)} malzemenin stoğu güncellendi.", "success")
@@ -245,8 +247,11 @@ class IngredientDialog(QDialog):
         cost_row = QHBoxLayout()
         cost_row.addWidget(self.cost, 1)
         cost_row.addWidget(self.cost_unit)
-        self.supplier = QLineEdit(i.get('supplierName', ''))
-        self.supplier.setMaxLength(60)
+        self.supplier = QComboBox()
+        self.supplier.addItem("—", None)
+        for sup in stock.suppliers():
+            self.supplier.addItem(sup['name'], sup['id'])
+        self.supplier.setCurrentIndex(max(0, self.supplier.findData(i.get('supplierId'))))
         f.addRow("Ad:", self.name)
         f.addRow("Stok birimi:", self.unit)
         f.addRow("Grup:", self.group)
@@ -289,7 +294,8 @@ class IngredientDialog(QDialog):
         self.values = {'name': self.name.text().strip(), 'unit': self.unit.currentData(),
                        'group': self.group.currentData(), 'purchaseUnit': pu, 'critical': self.critical.value(),
                        'target': self.target.value() or None, 'unitCost': cost,
-                       'supplierName': self.supplier.text().strip()}
+                       'supplierId': self.supplier.currentData(),
+                       'supplierName': self.supplier.currentText() if self.supplier.currentData() else ''}
         self.accept()
 
 
@@ -594,3 +600,779 @@ class EffectDialog(QDialog):
             e['scale'] = round(self.scale.value(), 2)
         self.effect = e or None
         self.accept()
+
+
+# =====================================================================
+# 8b: Sayım, Alışlar, Tedarikçiler, Zayi
+# =====================================================================
+
+def _table(headers, stretch=0):
+    t = QTableWidget(0, len(headers))
+    t.setHorizontalHeaderLabels(headers)
+    t.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+    t.horizontalHeader().setSectionResizeMode(stretch, QHeaderView.Stretch)
+    t.verticalHeader().setVisible(False)
+    t.setEditTriggers(QAbstractItemView.NoEditTriggers)
+    t.setSelectionBehavior(QAbstractItemView.SelectRows)
+    t.setSelectionMode(QAbstractItemView.SingleSelection)
+    t.setAlternatingRowColors(True)
+    return t
+
+
+def _set_row(table, r, cells, key=None):
+    for c, v in enumerate(cells):
+        item = QTableWidgetItem(str(v))
+        if c == 0 and key is not None:
+            item.setData(Qt.UserRole, key)
+        table.setItem(r, c, item)
+
+
+def _selected_key(table):
+    rows = table.selectionModel().selectedRows()
+    return table.item(rows[0].row(), 0).data(Qt.UserRole) if rows else None
+
+
+def _time(iso):
+    try:
+        return datetime.fromisoformat(iso).astimezone().strftime('%d.%m %H:%M')
+    except (TypeError, ValueError):
+        return iso or ''
+
+
+class StockPage(QWidget):
+    """Stok: Malzemeler · Sayım · Alışlar · Tedarikçiler"""
+
+    def __init__(self, user, parent=None):
+        super().__init__(parent)
+        ly = QVBoxLayout(self)
+        ly.setContentsMargins(0, 0, 0, 0)
+        self.tabs = QTabWidget()
+        self.tabs.setStyleSheet(f"""
+            QTabWidget::pane {{ border: none; }}
+            QTabBar::tab {{ padding: 10px 18px; font-weight: bold; color: {COLORS['text_secondary']};
+                background: transparent; border-bottom: 3px solid transparent; }}
+            QTabBar::tab:selected {{ color: {COLORS['primary']}; border-bottom-color: {COLORS['primary']}; }}
+        """)
+        self.ingredients = IngredientsPage(user)
+        self.count = CountPage(user)
+        self.purchases = PurchasesPage(user)
+        self.suppliers = SuppliersPage(user)
+        for w, t in ((self.ingredients, "Malzemeler"), (self.count, "Sayım"), (self.purchases, "Alışlar"),
+                     (self.suppliers, "Tedarikçiler")):
+            self.tabs.addTab(w, t)
+        self.tabs.currentChanged.connect(lambda _: self.refresh())
+        ly.addWidget(self.tabs)
+
+    def refresh(self):
+        w = self.tabs.currentWidget()
+        if hasattr(w, 'refresh'):
+            w.refresh()
+
+
+class _Page(QWidget):
+    def __init__(self, user, title, subtitle, parent=None):
+        super().__init__(parent)
+        self.user = user
+        self.ly = QVBoxLayout(self)
+        self.ly.setContentsMargins(28, 12, 28, 20)
+        self.ly.setSpacing(10)
+        self.head = QHBoxLayout()
+        t = QLabel(f"<b style='font-size:18px'>{title}</b><br><span style='color:#64748b'>{subtitle}</span>")
+        self.head.addWidget(t, 1)
+        self.ly.addLayout(self.head)
+
+    def button(self, text, fn, primary=False):
+        b = _button(text, primary=primary)
+        b.clicked.connect(fn)
+        self.head.addWidget(b, 0, Qt.AlignVCenter)
+        return b
+
+    def authorize(self, permission, text):
+        from pos_screen import authorize
+        approver, _ = authorize(self, self.user, permission, text, need_reason=False)
+        return approver
+
+    def run(self, fn, *args, ok=None, **kwargs):
+        from cloud.orders import OrderError
+        try:
+            result = fn(*args, **kwargs)
+        except OrderError as e:
+            QMessageBox.warning(self, "İşlem yapılamadı", str(e))
+            return None
+        ctx.request_sync()
+        if ok:
+            ToastNotification(self.window(), ok, "success")
+        self.refresh()
+        return result
+
+
+class CountPage(_Page):
+    """Sayım: gruba göre, kısmi; taslak kaydedilir; onaylanınca stok sayılana eşitlenir."""
+
+    def __init__(self, user, parent=None):
+        super().__init__(user, "Sayım", "Sayılan miktarı yazın; boş bırakılan malzeme sayılmamış sayılır. "
+                         "Taslak kaydedip sonra bitirebilirsiniz.")
+        self.group = QComboBox()
+        self.group.addItem("Bütün malzemeler", None)
+        for k, v in stock.GROUPS.items():
+            self.group.addItem(v, k)
+        self.group.currentIndexChanged.connect(self._fill)
+        self.head.addWidget(self.group)
+        self.button("Taslak kaydet", self._draft)
+        self.button("Sayımı onayla", self._approve, primary=True)
+        self.table = _table(["Malzeme", "Sistemde", "Sayılan", "Birim", "Fark", "Fark tutarı"])
+        self.ly.addWidget(self.table, 1)
+        self.total = QLabel("")
+        self.total.setStyleSheet("font-weight: bold; font-size: 14px;")
+        self.ly.addWidget(self.total)
+        self.ly.addWidget(QLabel("<b>Son sayımlar</b>"))
+        self.history = _table(["Tarih", "Açıklama", "Sayılan", "Fark tutarı"], stretch=1)
+        self.history.setMaximumHeight(170)
+        self.ly.addWidget(self.history)
+        self.inputs = {}
+        self.refresh()
+
+    def refresh(self):
+        self.rows = stock.ingredients()
+        draft = stock.load_count_draft() or {}
+        self.values = {k: v for k, v in (draft.get('counts') or {}).items()}
+        self._fill()
+        hist = stock.count_history(20)
+        self.history.setRowCount(len(hist))
+        for r, h in enumerate(hist):
+            counted = len(h['lines'])
+            diff = sum(l['cost'] for l in h['lines'])
+            _set_row(self.history, r, [_time(h['at']), h['reason'] + (" (ilk sayım)" if h['initial'] else ""),
+                                       f"{counted} malzeme", format_tl(diff, sign=True)])
+
+    def _collect(self):
+        for ing_id, (spin, unit) in self.inputs.items():
+            if spin.value() >= 0:
+                self.values[ing_id] = int(round(spin.value() * unit.currentData()))
+            else:
+                self.values.pop(ing_id, None)
+
+    def _fill(self, *_):
+        if self.inputs:
+            self._collect()
+        g = self.group.currentData()
+        rows = [i for i in self.rows if g is None or i.get('group') == g]
+        self.table.setRowCount(len(rows))
+        self.inputs = {}
+        for r, i in enumerate(rows):
+            _set_row(self.table, r, [i['name'], stock.format_qty(i['stock'], i['unit'])], key=i['id'])
+            spin = QDoubleSpinBox()
+            spin.setRange(-1, 10_000_000)
+            spin.setDecimals(3)
+            spin.setSpecialValueText("—")
+            unit = QComboBox()
+            unit.addItem(i['unit'], 1)
+            big, factor = stock.UNITS[i['unit']]
+            if factor > 1:
+                unit.addItem(big, factor)
+            pu = i.get('purchaseUnit')
+            if pu:
+                unit.addItem(pu['name'], pu['size'])
+            spin.setValue(self.values[i['id']] if i['id'] in self.values else -1)
+            spin.valueChanged.connect(self._update)
+            unit.currentIndexChanged.connect(self._update)
+            self.table.setCellWidget(r, 2, spin)
+            self.table.setCellWidget(r, 3, unit)
+            self.inputs[i['id']] = (spin, unit)
+        self._update()
+
+    def _update(self, *_):
+        total = 0
+        by_id = {i['id']: i for i in self.rows}
+        for r in range(self.table.rowCount()):
+            ing = by_id[self.table.item(r, 0).data(Qt.UserRole)]
+            spin, unit = self.inputs[ing['id']]
+            if spin.value() < 0:
+                for c in (4, 5):
+                    self.table.setItem(r, c, QTableWidgetItem(""))
+                continue
+            diff = int(round(spin.value() * unit.currentData())) - ing['stock']
+            cost = stock.cost_of(abs(diff), ing) * (1 if diff >= 0 else -1)
+            total += cost
+            d = QTableWidgetItem(("+" if diff > 0 else "") + stock.format_qty(diff, ing['unit']) + (" ⚠" if diff < 0 else ""))
+            if diff < 0:
+                d.setForeground(QColor('#B91C1C'))
+            self.table.setItem(r, 4, d)
+            self.table.setItem(r, 5, QTableWidgetItem(format_tl(cost, sign=True)))
+        self.total.setText(f"Görünen satırlardaki toplam fark: {format_tl(total, sign=True)}")
+
+    def _draft(self):
+        self._collect()
+        stock.save_count_draft(self.values, 'Sayım')
+        ToastNotification(self.window(), "Sayım taslağı kaydedildi.", "success")
+
+    def _approve(self):
+        self._collect()
+        if not self.values:
+            QMessageBox.information(self, "Sayım", "Hiçbir malzemeye sayılan miktar girilmedi.")
+            return
+        initial = not stock.count_history(1)
+        approver = self.authorize('stock', "Sayım onayı")
+        if not approver:
+            return
+        changed = self.run(stock.set_counts, self.user, dict(self.values), "İlk sayım" if initial else "Sayım",
+                           approver, initial)
+        if changed is not None:
+            stock.clear_count_draft()
+            self.values = {}
+            self.refresh()
+            ToastNotification(self.window(), f"Sayım kaydedildi; {len(changed)} malzemede fark var.", "success")
+
+
+class SuppliersPage(_Page):
+    def __init__(self, user, parent=None):
+        super().__init__(user, "Tedarikçiler", "Borç bakiyesi: \"ödenecek\" teslimler eklenir, ödemelerle düşer.")
+        self.button("+ Tedarikçi", lambda: self._edit(None), primary=True)
+        self.button("Ödeme yap", self._pay)
+        self.table = _table(["Tedarikçi", "Yetkili", "Telefon", "Borç"])
+        self.table.doubleClicked.connect(lambda _: self._edit(self._current()))
+        self.table.itemSelectionChanged.connect(self._statement)
+        self.ly.addWidget(self.table, 1)
+        self.ly.addWidget(QLabel("<b>Hareketler (bu bilgisayar)</b>"))
+        self.moves = _table(["Tarih", "Tür", "Tutar", "Ödeme", "Not"], stretch=4)
+        self.moves.setMaximumHeight(220)
+        self.ly.addWidget(self.moves)
+        self.refresh()
+
+    def refresh(self):
+        self.rows = stock.suppliers()
+        self.table.setRowCount(len(self.rows))
+        for r, s in enumerate(self.rows):
+            _set_row(self.table, r, [s['name'], s.get('contactName', ''), s.get('phone', ''),
+                                     format_tl(s['balance']) if s['balance'] else '—'], key=s['id'])
+        self._statement()
+
+    def _current(self):
+        key = _selected_key(self.table)
+        return next((s for s in self.rows if s['id'] == key), None)
+
+    def _statement(self):
+        s = self._current()
+        rows = stock.supplier_statement(s['id']) if s else []
+        self.moves.setRowCount(len(rows))
+        for r, m in enumerate(rows):
+            kind = "Teslim" if m['kind'] == 'receipt' else "Ödeme"
+            pay = "Ödenecek" if m['payment_status'] == 'unpaid' else stock.PAY_METHODS.get(m['method'], '')
+            _set_row(self.moves, r, [_time(m['at']), kind, format_tl(m['total']), pay, m.get('note') or ''])
+
+    def _edit(self, supplier):
+        dlg = SupplierDialog(supplier, self)
+        if dlg.exec() == QDialog.Accepted:
+            sid = (supplier or {}).get('id')
+            cloud_action(self, lambda api: api.save_supplier(dlg.values, sid), "Tedarikçi kaydedildi.",
+                         lambda _: self.refresh())
+
+    def _pay(self):
+        s = self._current()
+        if not s:
+            QMessageBox.information(self, "Tedarikçi seçin", "Önce listeden bir tedarikçi seçin.")
+            return
+        dlg = PayDialog(s, self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        approver = self.authorize('stock', f"{s['name']} ödemesi")
+        if approver:
+            self.run(stock.pay_supplier, self.user, s['id'], dlg.amount, dlg.method, dlg.note, approver,
+                     ok=f"{s['name']}: {format_tl(dlg.amount)} ödendi.")
+
+
+class SupplierDialog(QDialog):
+    def __init__(self, supplier=None, parent=None):
+        super().__init__(parent)
+        s = supplier or {}
+        self.setWindowTitle(s.get('name') or "Yeni tedarikçi")
+        self.setMinimumWidth(440)
+        self.setStyleSheet("QDialog { background: white; }")
+        ly = QVBoxLayout(self)
+        f = QFormLayout()
+        self.fields = {}
+        for key, label, mx in (('name', "Ad", 60), ('contactName', "Yetkili", 60), ('phone', "Telefon", 20),
+                               ('email', "E-posta", 80), ('note', "Not", 200)):
+            e = QLineEdit(s.get(key, ''))
+            e.setMaxLength(mx)
+            self.fields[key] = e
+            f.addRow(f"{label}:", e)
+        ly.addLayout(f)
+        ok = _button("Kaydet")
+        ok.clicked.connect(self._ok)
+        ly.addWidget(ok)
+
+    def _ok(self):
+        if not self.fields['name'].text().strip():
+            return
+        self.values = {k: e.text().strip() for k, e in self.fields.items()}
+        self.accept()
+
+
+class PayDialog(QDialog):
+    def __init__(self, supplier, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Ödeme · {supplier['name']}")
+        self.setStyleSheet("QDialog { background: white; }")
+        ly = QVBoxLayout(self)
+        ly.addWidget(QLabel(f"Borç bakiyesi: <b>{format_tl(supplier['balance'])}</b>"))
+        f = QFormLayout()
+        self.amount_edit = QLineEdit(format_tl(max(supplier['balance'], 0)).replace(' ₺', ''))
+        self.method_box = QComboBox()
+        for k, v in stock.PAY_METHODS.items():
+            self.method_box.addItem(v, k)
+        self.note_edit = QLineEdit()
+        f.addRow("Tutar:", self.amount_edit)
+        f.addRow("Yöntem:", self.method_box)
+        f.addRow("Not:", self.note_edit)
+        ly.addLayout(f)
+        ly.addWidget(_muted("Masraflar'a yazılır. Nakitse ve kasa açıksa kasadan çıkış olarak da düşer."))
+        self.warn = QLabel("")
+        self.warn.setStyleSheet(f"color: {COLORS['danger']};")
+        ly.addWidget(self.warn)
+        ok = _button("Öde")
+        ok.clicked.connect(self._ok)
+        ly.addWidget(ok)
+
+    def _ok(self):
+        try:
+            self.amount = parse_tl(self.amount_edit.text())
+        except ValueError as e:
+            self.warn.setText(str(e))
+            return
+        if self.amount <= 0:
+            self.warn.setText("Tutar girin.")
+            return
+        self.method, self.note = self.method_box.currentData(), self.note_edit.text().strip()
+        self.accept()
+
+
+class PurchasesPage(_Page):
+    def __init__(self, user, parent=None):
+        super().__init__(user, "Alışlar", "Sipariş taslağı bulutta tutulur (internet gerekir); teslim alma internetsiz yapılır.")
+        self.button("+ Sipariş", lambda: self._edit(None), primary=True)
+        self.button("Siparişsiz alış gir", self._direct)
+        self.table = _table(["No", "Tedarikçi", "Durum", "Tutar", "Tarih"], stretch=1)
+        self.table.doubleClicked.connect(lambda _: self._edit(self._current()))
+        self.ly.addWidget(self.table, 1)
+        row = QHBoxLayout()
+        for text, fn in (("Düzenle", lambda: self._edit(self._current())), ("Metni kopyala", self._copy),
+                         ("PDF", self._pdf), ("Gönderildi işaretle", self._mark_sent), ("Teslim al", self._receive),
+                         ("İptal et", self._cancel)):
+            b = _button(text, primary=text == "Teslim al")
+            b.clicked.connect(fn)
+            row.addWidget(b)
+        row.addStretch()
+        self.ly.addLayout(row)
+        self.refresh()
+
+    def refresh(self):
+        self.orders = stock.purchase_orders()
+        names = {s['id']: s['name'] for s in stock.suppliers(include_deleted=True)}
+        self.table.setRowCount(len(self.orders))
+        for r, o in enumerate(self.orders):
+            _set_row(self.table, r, [f"#{o.get('no', '')}", names.get(o['supplierId'], '?'),
+                                     stock.PO_STATUS.get(o.get('status'), o.get('status')), format_tl(o.get('total', 0)),
+                                     _time(str(o.get('receivedAt') or o.get('createdAt') or ''))], key=o['id'])
+
+    def _current(self):
+        key = _selected_key(self.table)
+        return next((o for o in self.orders if o['id'] == key), None)
+
+    def _edit(self, order):
+        if order and order.get('status') not in ('draft', 'sent'):
+            QMessageBox.information(self, "Sipariş", "Teslim alınmış ya da iptal edilmiş sipariş değiştirilemez.")
+            return
+        if not stock.suppliers():
+            QMessageBox.information(self, "Tedarikçi yok", "Önce Tedarikçiler sekmesinden tedarikçi ekleyin.")
+            return
+        dlg = OrderDialog(order, self)
+        if dlg.exec() == QDialog.Accepted:
+            oid = (order or {}).get('id')
+            cloud_action(self, lambda api: api.save_purchase_order(dlg.values, oid), "Sipariş kaydedildi.",
+                         lambda _: self.refresh())
+
+    def _copy(self):
+        o = self._current()
+        if o:
+            from PySide6.QtWidgets import QApplication
+            QApplication.clipboard().setText(stock.order_text(o, database.general_settings()['cafeName']))
+            ToastNotification(self.window(), "Sipariş metni kopyalandı (WhatsApp / e-posta).", "success")
+
+    def _pdf(self):
+        o = self._current()
+        if not o:
+            return
+        import printing
+        from reports_screen import table_html
+        ings = {i['id']: i for i in stock.ingredients(include_deleted=True)}
+        rows = [[ings.get(l['ingredientId'], {}).get('name', '?'),
+                 stock.format_qty(l['qty'], ings.get(l['ingredientId'], {}).get('unit', 'adet')), format_tl(l['amount'])]
+                for l in o['lines']]
+        name = next((s['name'] for s in stock.suppliers(include_deleted=True) if s['id'] == o['supplierId']), '')
+        title = f"Sipariş #{o.get('no')} · {name}"
+        kind, where = printing.print_html(table_html(database.general_settings()['cafeName'], title,
+                                                     ["Malzeme", "Miktar", "Tutar"], rows), title)
+        ToastNotification(self.window(), "Yazıcıya gönderildi." if kind == 'printer' else f"PDF: {where}", "info")
+
+    def _mark_sent(self):
+        o = self._current()
+        if o and o.get('status') == 'draft':
+            data = {'supplierId': o['supplierId'], 'status': 'sent', 'lines': o['lines'], 'note': o.get('note', '')}
+            cloud_action(self, lambda api: api.save_purchase_order(data, o['id']), "Gönderildi olarak işaretlendi.",
+                         lambda _: self.refresh())
+
+    def _cancel(self):
+        o = self._current()
+        if o and QMessageBox.question(self, "Sipariş iptali", f"#{o.get('no')} iptal edilsin mi?",
+                                      QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+            cloud_action(self, lambda api: api.cancel_purchase_order(o['id']), "Sipariş iptal edildi.",
+                         lambda _: self.refresh())
+
+    def _receive(self, order=None):
+        o = order or self._current()
+        if not o or o.get('status') not in ('draft', 'sent', 'partial'):
+            QMessageBox.information(self, "Teslim al", "Teslim alınacak bir sipariş seçin.")
+            return
+        lines = [{**l, 'qty': max(l['qty'] - l.get('received', 0), 0)} for l in o['lines']]
+        lines = [{**l, 'amount': l['amount'] * l['qty'] // max(1, next(x['qty'] for x in o['lines']
+                                                                     if x['ingredientId'] == l['ingredientId']))}
+                 for l in lines]
+        self._do_receive(o['supplierId'], lines, o['id'])
+
+    def _direct(self):
+        sups = stock.suppliers()
+        if not sups:
+            QMessageBox.information(self, "Tedarikçi yok", "Önce Tedarikçiler sekmesinden tedarikçi ekleyin.")
+            return
+        self._do_receive(None, [], None)
+
+    def _do_receive(self, supplier_id, lines, order_id):
+        dlg = ReceiveDialog(supplier_id, lines, self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        approver = self.authorize('stock', "Teslim alma")
+        if approver:
+            self.run(stock.receive, self.user, dlg.supplier_id, dlg.lines, dlg.payment, order_id, dlg.note, approver,
+                     ok=f"Teslim alındı: {format_tl(sum(l['amount'] for l in dlg.lines))}")
+
+
+class _LinesEditor(QWidget):
+    """Malzeme · miktar (birim seçilir) · tutar satırları. lines(): temel birim + kuruş."""
+
+    def __init__(self, lines, parent=None):
+        super().__init__(parent)
+        self.ings = {i['id']: i for i in stock.ingredients()}
+        ly = QVBoxLayout(self)
+        ly.setContentsMargins(0, 0, 0, 0)
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Malzeme", "Miktar", "Birim", "Tutar (₺)"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(44)
+        ly.addWidget(self.table, 1)
+        row = QHBoxLayout()
+        add = QPushButton("+ Satır")
+        add.setObjectName("ghostBtn")
+        add.clicked.connect(lambda: self.add())
+        rem = QPushButton("Kaldır")
+        rem.setObjectName("ghostBtn")
+        rem.clicked.connect(lambda: self.table.removeRow(self.table.currentRow()) if self.table.currentRow() >= 0 else None)
+        self.total = QLabel("")
+        self.total.setStyleSheet("font-weight: bold;")
+        row.addWidget(add)
+        row.addWidget(rem)
+        row.addStretch()
+        row.addWidget(self.total)
+        ly.addLayout(row)
+        for l in lines:
+            self.add(l)
+
+    def add(self, line=None):
+        l = line or {}
+        r = self.table.rowCount()
+        self.table.insertRow(r)
+        combo = QComboBox()
+        for i in sorted(self.ings.values(), key=lambda x: x['name'].lower()):
+            combo.addItem(i['name'], i['id'])
+        combo.setCurrentIndex(max(0, combo.findData(l.get('ingredientId'))))
+        qty = QDoubleSpinBox()
+        qty.setRange(0, 10_000_000)
+        qty.setDecimals(3)
+        unit = QComboBox()
+        amount = QLineEdit(format_tl(l.get('amount', 0)).replace(' ₺', ''))
+
+        def units():
+            ing = self.ings.get(combo.currentData())
+            unit.blockSignals(True)
+            unit.clear()
+            if ing:
+                pu = ing.get('purchaseUnit')
+                if pu:
+                    unit.addItem(f"{pu['name']} ({stock.format_qty(pu['size'], ing['unit'])})", pu['size'])
+                big, factor = stock.UNITS[ing['unit']]
+                if factor > 1:
+                    unit.addItem(big, factor)
+                unit.addItem(ing['unit'], 1)
+            unit.blockSignals(False)
+
+        units()
+        if l.get('qty'):
+            size = unit.itemData(0) or 1
+            if l['qty'] % size:
+                unit.setCurrentIndex(unit.count() - 1)
+                size = 1
+            qty.setValue(l['qty'] / size)
+        combo.currentIndexChanged.connect(lambda _: (units(), self._total()))
+        for w in (qty,):
+            w.valueChanged.connect(self._total)
+        amount.textChanged.connect(self._total)
+        for c, w in enumerate((combo, qty, unit, amount)):
+            self.table.setCellWidget(r, c, w)
+        self._total()
+
+    def lines(self):
+        out = []
+        for r in range(self.table.rowCount()):
+            combo, qty, unit, amount = (self.table.cellWidget(r, c) for c in range(4))
+            if not combo.currentData() or qty.value() <= 0:
+                continue
+            try:
+                amt = parse_tl(amount.text() or '0')
+            except ValueError:
+                amt = 0
+            out.append({'ingredientId': combo.currentData(), 'qty': int(round(qty.value() * (unit.currentData() or 1))),
+                        'amount': amt})
+        return out
+
+    def _total(self, *_):
+        self.total.setText(f"Toplam {format_tl(sum(l['amount'] for l in self.lines()))}")
+
+
+class OrderDialog(QDialog):
+    def __init__(self, order=None, parent=None):
+        super().__init__(parent)
+        o = order or {}
+        self.setWindowTitle(f"Sipariş #{o['no']}" if order else "Yeni sipariş")
+        self.resize(760, 560)
+        self.setStyleSheet("QDialog { background: white; }")
+        ly = QVBoxLayout(self)
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Tedarikçi:"))
+        self.supplier = QComboBox()
+        for s in stock.suppliers():
+            self.supplier.addItem(s['name'], s['id'])
+        self.supplier.setCurrentIndex(max(0, self.supplier.findData(o.get('supplierId'))))
+        top.addWidget(self.supplier, 1)
+        suggest = _button("Kritik malzemeleri ekle", primary=False)
+        suggest.clicked.connect(self._suggest)
+        top.addWidget(suggest)
+        ly.addLayout(top)
+        self.editor = _LinesEditor(o.get('lines') or [])
+        ly.addWidget(self.editor, 1)
+        self.note = QLineEdit(o.get('note', ''))
+        self.note.setPlaceholderText("Not (teslim günü vb.)")
+        ly.addWidget(self.note)
+        self.warn = QLabel("")
+        self.warn.setStyleSheet(f"color: {COLORS['danger']};")
+        ly.addWidget(self.warn)
+        ok = _button("Kaydet")
+        ok.clicked.connect(self._ok)
+        ly.addWidget(ok)
+        self.status = o.get('status', 'draft')
+
+    def _suggest(self):
+        lines = stock.suggest_order(self.supplier.currentData())
+        if not lines:
+            self.warn.setText("Bu tedarikçinin kritik seviyede malzemesi yok (malzemede tedarikçi seçili olmalı).")
+        for l in lines:
+            self.editor.add(l)
+
+    def _ok(self):
+        lines = self.editor.lines()
+        if not lines:
+            self.warn.setText("En az bir satır girin.")
+            return
+        self.values = {'supplierId': self.supplier.currentData(), 'status': self.status, 'lines': lines,
+                       'note': self.note.text().strip()}
+        self.accept()
+
+
+class ReceiveDialog(QDialog):
+    def __init__(self, supplier_id, lines, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Teslim al")
+        self.resize(760, 600)
+        self.setStyleSheet("QDialog { background: white; }")
+        ly = QVBoxLayout(self)
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Tedarikçi:"))
+        self.supplier = QComboBox()
+        for s in stock.suppliers():
+            self.supplier.addItem(s['name'], s['id'])
+        self.supplier.setCurrentIndex(max(0, self.supplier.findData(supplier_id)))
+        self.supplier.setEnabled(supplier_id is None)
+        top.addWidget(self.supplier, 1)
+        ly.addLayout(top)
+        ly.addWidget(_muted("Gelen miktarı ve faturadaki tutarı yazın (eksik geldiyse düzeltin). Stok artar, birim "
+                            "maliyet ağırlıklı ortalamayla güncellenir."))
+        self.editor = _LinesEditor(lines)
+        ly.addWidget(self.editor, 1)
+        pay = QHBoxLayout()
+        self.paid = QRadioButton("Ödendi")
+        self.unpaid = QRadioButton("Ödenecek (borç)")
+        self.paid.setChecked(True)
+        self.method = QComboBox()
+        for k, v in stock.PAY_METHODS.items():
+            self.method.addItem(v, k)
+        self.paid.toggled.connect(self.method.setEnabled)
+        for w in (self.paid, self.method, self.unpaid):
+            pay.addWidget(w)
+        pay.addStretch()
+        ly.addLayout(pay)
+        self.note_edit = QLineEdit()
+        self.note_edit.setPlaceholderText("Fatura / irsaliye no")
+        ly.addWidget(self.note_edit)
+        self.warn = QLabel("")
+        self.warn.setStyleSheet(f"color: {COLORS['danger']};")
+        ly.addWidget(self.warn)
+        ok = _button("Teslim al")
+        ok.clicked.connect(self._ok)
+        ly.addWidget(ok)
+
+    def _ok(self):
+        self.lines = self.editor.lines()
+        if not self.lines:
+            self.warn.setText("Teslim alınan malzeme yok.")
+            return
+        self.supplier_id = self.supplier.currentData()
+        self.payment = ({'status': 'paid', 'method': self.method.currentData()} if self.paid.isChecked()
+                        else {'status': 'unpaid'})
+        self.note = self.note_edit.text().strip()
+        self.accept()
+
+
+class WastePage(_Page):
+    """Zayi: ürün (reçetesi stoktan düşer) ya da malzeme; gerekçe zorunlu. Eski kayıtlar da listelenir."""
+
+    def __init__(self, user, parent=None):
+        super().__init__(user, "Zayi", "Bozulan, düşen, yanlış hazırlanan ürün ve malzemeler. Maliyet reçeteden "
+                         "hesaplanır; stok modülü açıksa stoktan düşer.")
+        self.button("+ Ürün zayisi", lambda: self._add('product'), primary=True)
+        self.button("+ Malzeme zayisi", lambda: self._add('ingredient'))
+        self.period = QComboBox()
+        for key, label in (('today', 'Bugün'), ('week', 'Bu hafta'), ('month', 'Bu ay'), ('last_month', 'Geçen ay')):
+            self.period.addItem(label, key)
+        self.period.currentIndexChanged.connect(self.refresh)
+        self.head.addWidget(self.period)
+        self.table = _table(["Tarih", "Ne", "Miktar", "Gerekçe", "Maliyet", "Giren"], stretch=1)
+        self.ly.addWidget(self.table, 1)
+        self.total = QLabel("")
+        self.total.setStyleSheet("font-weight: bold;")
+        self.ly.addWidget(self.total)
+        self.refresh()
+
+    def refresh(self):
+        import reports
+        a, b = reports.period(self.period.currentData())
+        rows = stock.waste_entries(a, b)
+        self.table.setRowCount(len(rows))
+        for r, w in enumerate(rows):
+            st = database.get_staff(w.get('staff_id')) if w.get('staff_id') else None
+            qty = stock.format_qty(w['qty'] or 0, w.get('unit') or 'adet')
+            _set_row(self.table, r, [_time(w['at']), w['name'], qty, w['reason'], format_tl(w['cost'] or 0),
+                                     st['name'] if st else ''])
+        self.total.setText(f"{len(rows)} kayıt · toplam {format_tl(sum(w['cost'] or 0 for w in rows))}")
+
+    def _add(self, kind):
+        dlg = WasteDialog(kind, self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        approver = self.authorize('waste', "Zayi girişi")
+        if not approver:
+            return
+        record_waste(self, self.user, dlg, approver)
+        self.refresh()
+
+
+class WasteDialog(QDialog):
+    def __init__(self, kind, parent=None):
+        super().__init__(parent)
+        self.kind = kind
+        self.setWindowTitle("Ürün zayisi" if kind == 'product' else "Malzeme zayisi")
+        self.setMinimumWidth(480)
+        self.setStyleSheet("QDialog { background: white; }")
+        ly = QVBoxLayout(self)
+        f = QFormLayout()
+        self.item = QComboBox()
+        if kind == 'product':
+            for p in database.menu_products():
+                self.item.addItem(p['name'], p['id'])
+        else:
+            self.ings = {i['id']: i for i in stock.ingredients()}
+            for i in self.ings.values():
+                self.item.addItem(i['name'], i['id'])
+        self.qty = QSpinBox()
+        self.qty.setRange(1, 1_000_000)
+        self.reason = QComboBox()
+        self.reason.setEditable(True)
+        self.reason.addItems(stock.WASTE_REASONS)
+        self.cost_edit = QLineEdit()
+        self.cost_edit.setPlaceholderText("Reçetesi yoksa birim maliyet (₺)")
+        self.info = _muted("")
+        f.addRow("Ürün:" if kind == 'product' else "Malzeme:", self.item)
+        f.addRow("Miktar:", self.qty)
+        f.addRow("Gerekçe:", self.reason)
+        if kind == 'product':
+            f.addRow("Maliyet:", self.cost_edit)
+        ly.addLayout(f)
+        ly.addWidget(self.info)
+        ok = _button("Kaydet")
+        ok.clicked.connect(self._ok)
+        ly.addWidget(ok)
+        self.item.currentIndexChanged.connect(self._update)
+        self.qty.valueChanged.connect(self._update)
+        self._update()
+
+    def _update(self, *_):
+        if self.kind == 'ingredient':
+            ing = self.ings.get(self.item.currentData())
+            if ing:
+                self.qty.setSuffix(f" {ing['unit']}")
+                self.info.setText(f"Maliyet: {format_tl(stock.cost_of(self.qty.value(), ing))}")
+            return
+        rec = stock.Recipes()
+        pid = self.item.currentData()
+        has = rec.has_recipe(pid) and stock.enabled()
+        self.cost_edit.setVisible(not has)
+        self.info.setText(f"Reçeteden maliyet: {format_tl(rec.cost(rec.consumption(pid, (), self.qty.value())))}; "
+                          "malzemeler stoktan düşer." if has else "Bu ürünün reçetesi yok: maliyeti elle girin.")
+
+    def _ok(self):
+        self.ref_id, self.qty_value = self.item.currentData(), self.qty.value()
+        self.reason_text = self.reason.currentText().strip()
+        self.manual_cost = None
+        if self.kind == 'product' and self.cost_edit.isVisible() and self.cost_edit.text().strip():
+            try:
+                self.manual_cost = parse_tl(self.cost_edit.text()) * self.qty_value
+            except ValueError:
+                return
+        if not self.ref_id or not self.reason_text:
+            return
+        self.accept()
+
+
+def record_waste(parent, user, dlg, approver):
+    """WasteDialog sonucunu kaydeder (yönetim paneli ve garson/barista paneli ortak)."""
+    from cloud.orders import OrderError
+    try:
+        if dlg.kind == 'product':
+            cost = stock.waste_product(user, dlg.ref_id, dlg.qty_value, dlg.reason_text, approver, dlg.manual_cost)
+        else:
+            cost = stock.waste_ingredient(user, dlg.ref_id, dlg.qty_value, dlg.reason_text, approver)
+    except OrderError as e:
+        QMessageBox.warning(parent, "İşlem yapılamadı", str(e))
+        return False
+    ctx.request_sync()
+    ToastNotification(parent.window(), f"Zayi kaydedildi ({format_tl(cost)}).", "success")
+    return True

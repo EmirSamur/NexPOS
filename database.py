@@ -126,6 +126,16 @@ def init_database():
         id INTEGER PRIMARY KEY AUTOINCREMENT, movement_id TEXT NOT NULL, op_id TEXT, type TEXT NOT NULL,
         ingredient_id TEXT NOT NULL, qty INTEGER NOT NULL, order_id TEXT, line_id TEXT, at TEXT)""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_stock_ledger_line ON stock_ledger(order_id, line_id)")
+    # Zayi, sayım ve alış kayıtları (8b): bu bilgisayarda yapılanların raporlanabilir kopyası.
+    c.execute("""CREATE TABLE IF NOT EXISTS waste_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, movement_id TEXT, kind TEXT NOT NULL, ref_id TEXT, name TEXT,
+        qty INTEGER, unit TEXT, reason TEXT, cost INTEGER, staff_id TEXT, at TEXT, business_day TEXT)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS count_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, movement_id TEXT, at TEXT, business_day TEXT, staff_id TEXT,
+        reason TEXT, initial INTEGER DEFAULT 0, data TEXT)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS purchase_log (
+        id TEXT PRIMARY KEY, kind TEXT NOT NULL, supplier_id TEXT, purchase_order_id TEXT, total INTEGER,
+        payment_status TEXT, method TEXT, note TEXT, data TEXT, at TEXT, business_day TEXT, staff_id TEXT)""")
     # Kasa oturumları (6. ekran): açılış, hareketler, kapanış ve Z raporu JSON olarak.
     c.execute("""CREATE TABLE IF NOT EXISTS cash_sessions (
         id TEXT PRIMARY KEY, data TEXT NOT NULL, status TEXT NOT NULL, business_day TEXT,

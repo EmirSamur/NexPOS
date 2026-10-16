@@ -114,6 +114,18 @@ class AdminApi:
     def delete_ingredient(self, ingredient_id):
         return self._call('deleteIngredient', {'id': ingredient_id})
 
+    def save_supplier(self, data, supplier_id=None):
+        return self._call('saveSupplier', {**data, **({'id': supplier_id} if supplier_id else {})})
+
+    def delete_supplier(self, supplier_id):
+        return self._call('deleteSupplier', {'id': supplier_id})
+
+    def save_purchase_order(self, data, order_id=None):
+        return self._call('savePurchaseOrder', {**data, **({'id': order_id} if order_id else {})})
+
+    def cancel_purchase_order(self, order_id):
+        return self._call('cancelPurchaseOrder', {'id': order_id})
+
     def import_stock(self, ingredients, recipes, option_effects):
         return self._call('importStock', {'ingredients': ingredients, 'recipes': recipes,
                                           'optionEffects': option_effects})
