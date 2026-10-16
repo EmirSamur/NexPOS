@@ -12,6 +12,7 @@ import json
 import uuid
 from datetime import datetime, timedelta
 
+import campaigns_logic
 import database
 import loyalty
 import stock
@@ -173,6 +174,52 @@ def _commit_op(conn, before, after, op, payload, staff_id, extra_tables=()):
     return op_id
 
 
+# Kampanyalar (10. ekran): bu işlemlerden sonra kasa kampanyaları yeniden hesaplar ve değiştiyse
+# applyCampaigns'i aynı transaction'da kuyruğa ekler (sunucu ürün değişince kampanyaları siler).
+CAMPAIGN_TRIGGERS = ('addItems', 'updateItem', 'removeItem', 'voidItem', 'compItem', 'setCustomer',
+                     'setDiscount', 'useReward', 'removeReward', 'mergeOrders', 'refreshCampaigns')
+
+
+def active_campaigns():
+    return [c for c in database.cache_rows('campaigns', include_deleted=True)
+            if not c.get('deleted') and c.get('active', True)]
+
+
+def _campaign_key(campaigns):
+    return [(c['campaignId'], c.get('lines') or {}, c.get('stampMultiplier') or 1) for c in campaigns or []]
+
+
+def campaign_payload(order, excluded=None, approver_id=None):
+    """Kampanyalar değiştiyse applyCampaigns işlemi; değişmediyse None."""
+    if not order or order['status'] != 'open' or not database.modules()['campaigns']['enabled']:
+        return None
+    if any(p.get('lineIds') for p in order['payments']):
+        return None
+    excluded = list(order.get('campaignsExcluded') or []) if excluded is None else excluded
+    categories = {p['id']: p.get('categoryId') for p in database.menu_products()}
+    result = campaigns_logic.compute_campaigns({**order, 'campaignsExcluded': excluded}, active_campaigns(),
+                                               now_iso(), categories)
+    if _campaign_key(result) == _campaign_key(order.get('campaigns')) and \
+            excluded == list(order.get('campaignsExcluded') or []):
+        return None
+    payload = {'orderId': order['id'], 'campaigns': result, 'excluded': excluded}
+    if approver_id:
+        payload['approvedBy'] = approver_id
+    return payload
+
+
+def _apply_campaigns(conn, order, user):
+    payload = campaign_payload(order)
+    if not payload:
+        return order
+    try:
+        after = apply_order_op(order, 'applyCampaigns', payload, user['cloud_id'], now_iso())
+    except OrderError:
+        return order  # ör. alınmış ödemenin altına inecekse kampanya bu adisyonda uygulanmaz
+    _commit_op(conn, order, after, 'applyCampaigns', payload, user['cloud_id'])
+    return after
+
+
 def _run(op, payload, user, extra=None):
     """Tek bir adisyon işlemini uygular ve kaydeder. extra(conn, before, after) yan işler içindir."""
     conn = database.get_connection()
@@ -182,6 +229,8 @@ def _run(op, payload, user, extra=None):
         if extra:
             extra(conn, before, after)
         _commit_op(conn, before, after, op, payload, user['cloud_id'])
+        if op in CAMPAIGN_TRIGGERS:
+            after = _apply_campaigns(conn, after, user)
         conn.commit()
         return after
     finally:
@@ -345,6 +394,29 @@ def remove_reward(user, order_id, reward_id):
     return _run('removeReward', {'orderId': order_id, 'rewardId': reward_id}, user)
 
 
+def refresh_campaigns(user, order_id):
+    """Saat değişmiş olabilir (Happy Hour başladı/bitti): ödeme ve adisyon açılışında yeniden hesaplanır."""
+    conn = database.get_connection()
+    try:
+        order = _load(conn, order_id)
+        after = _apply_campaigns(conn, order, user) if order else order
+        conn.commit()
+        return after
+    finally:
+        conn.close()
+
+
+def exclude_campaign(user, order_id, campaign_id, approver_id=None):
+    """Kasiyer kampanyayı bu adisyondan kaldırır (iskonto yetkisi)."""
+    require_permission(user, approver_id, 'discount')
+    order = get_order(order_id)
+    excluded = list(dict.fromkeys(list(order.get('campaignsExcluded') or []) + [campaign_id]))
+    payload = campaign_payload(order, excluded, approver_id or user['cloud_id']) or \
+        {'orderId': order_id, 'campaigns': order.get('campaigns') or [], 'excluded': excluded,
+         'approvedBy': approver_id or user['cloud_id']}
+    return _run('applyCampaigns', payload, user)
+
+
 def request_bill(user, order_id, value):
     return _run('requestBill', {'orderId': order_id, 'value': bool(value)}, user)
 
@@ -365,6 +437,7 @@ def merge_into(user, target_id, source_id):
         _save(conn, new_source)
         _sync_legacy_table(conn, source.get('tableId'), new_source)
         _commit_op(conn, target, new_target, 'mergeOrders', payload, user['cloud_id'])
+        new_target = _apply_campaigns(conn, new_target, user)
         conn.commit()
         return new_target
     finally:

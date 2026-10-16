@@ -198,6 +198,24 @@ Yalnızca Yönetici açıp kapatır; ayar bulutta tutulur ve bütün cihazlara i
    kişiye çift tıklayınca gün gün döküm. CSV ve PDF. **Saatlik ücretler** (yalnızca Yönetici, internet ister)
    girilirse işçilik maliyeti ve cironun yüzdesi görünür; ücretler bu bilgisayara kaydedilmez.
 
+## Müşteri, sadakat ve kampanyalar
+
+1. **Ayarlar → Modüller**'de "Sadakat (damga kartı)" ve/veya "Kampanyalar"ı açın. Panelde **Pazarlama** menüsü çıkar.
+2. **Pazarlama → Sadakat Ayarları** (Yönetici): kaç damgada ödül (varsayılan 10), bedava ürünün üst sınırı (90 ₺),
+   ödül süresi (60 gün), doğum günü ödülü, seviyeler (Bronz / Gümüş / Altın) ve ayrıcalık metinleri. Hangi ürünlerin
+   damga kazandırdığı Menü'de kategori/ürün ayarındaki "damga kazandırır" seçeneğidir.
+3. Kasada adisyonun üstündeki **👤 Müşteri ekle**: telefon (ya da son 4 hane, ad) ile arayın, uygulama QR'ını
+   okutun (internet ister) ya da **+ Yeni üye** (ad, telefon, isterse doğum günü; kampanya bildirimi izni müşteriye
+   sorulur). Damgalar ödeme kapanınca işlenir; kart dolunca **🎁 Ödül kullan** en pahalı uygun içeceği bedava yapar.
+4. **Pazarlama → Kampanyalar**: Happy Hour (%), tutar indirimi, "2. ürün %50", menü fiyatı, çift damga; gün/saat,
+   tarih, kime (herkes / üyeler / Gümüş+ / Altın) ve en az adisyon tutarı. Kasada koşulu tutan kampanya
+   kendiliğinden 🏷 satırı olarak çıkar; kasiyer ✕ ile (iskonto yetkisiyle) kaldırabilir. Elle iskonto yapılan
+   adisyonda kampanya uygulanmaz.
+5. **Pazarlama → Müşteriler**: liste, filtreler, düzenle, damga düzelt (gerekçeli), geçmiş ve JSON dışa aktarma,
+   KVKK silme (Yönetici). **Bildirimler**: metin ve kitle seçilir, erişim tahmini görünür; gönderim müşteri
+   uygulaması yayınlanınca başlar.
+6. **Raporlar → Sadakat ve Kampanya**: üyeler, tekrar gelme, damga ve ödüller, kampanya başına indirim ve etkisi.
+
 ## Mutfak / bar ekranı (tablet)
 
 1. **Ayarlar → Modüller**'de "Mutfak / Bar Ekranı"nı açın.

@@ -586,7 +586,8 @@ class DashboardPage(QWidget):
 
 class ReportsPage(QWidget):
     open_cash_history = Signal()
-    TAB_SUMMARY, TAB_PRODUCTS, TAB_MENU, TAB_TIME, TAB_STAFF, TAB_LOSSES, TAB_INCOME, TAB_KITCHEN, TAB_STOCK = range(9)
+    TAB_SUMMARY, TAB_PRODUCTS, TAB_MENU, TAB_TIME, TAB_STAFF, TAB_LOSSES, TAB_INCOME, TAB_KITCHEN, TAB_STOCK, \
+        TAB_LOYALTY = range(10)
     MENU_CLASSES = {'star': ("★ Yıldız", "çok satıyor, kârlı — öne çıkarın"),
                     'plowhorse': ("🐴 İş atı", "çok satıyor, az kârlı — maliyeti düşürün ya da fiyatı gözden geçirin"),
                     'puzzle': ("🧩 Bulmaca", "kârlı ama az satıyor — menüde görünürlüğünü artırın"),
@@ -651,6 +652,7 @@ class ReportsPage(QWidget):
         self.tabs.addTab(self._income_tab(), "Gelir – Gider")
         self.tabs.addTab(self._kitchen_tab(), "Mutfak")
         self.tabs.addTab(self._stock_tab(), "Stok")
+        self.tabs.addTab(self._loyalty_tab(), "Sadakat ve Kampanya")
         ly.addWidget(self.tabs, 1)
         self._loading = True
         self._preset_changed()
@@ -868,6 +870,45 @@ class ReportsPage(QWidget):
                                         f"{stock_mod.format_qty(r['actual'], r['unit'])}" if r['countDiff'] else "",
                                         r['actual'], True)] for r in st['rows']])
 
+    def _loyalty_tab(self):
+        w = QWidget()
+        ly = QVBoxLayout(w)
+        ly.setContentsMargins(0, 10, 0, 0)
+        self.loyalty_summary = QLabel("")
+        self.loyalty_summary.setTextFormat(Qt.RichText)
+        self.loyalty_summary.setWordWrap(True)
+        self.loyalty_summary.setStyleSheet("font-size: 14px; background: transparent;")
+        ly.addWidget(self.loyalty_summary)
+        ly.addWidget(_muted("Saatli kampanyalarda \"aynı saatler\" sütunu, kampanya saatlerindeki ciroyu önceki 4 haftanın "
+                            "aynı gün ve saatlerinin ortalamasıyla karşılaştırır (ok ve metinle)."))
+        self.campaign_table = make_table([("Kampanya", True), ("Adisyon", False), ("İndirim", False), ("Ciro", False),
+                                          ("Ortalama adisyon", False), ("Aynı saatler: şimdi / önce", False),
+                                          ("Değişim", False)], sort=(2, Qt.DescendingOrder))
+        ly.addWidget(self.campaign_table, 1)
+        return w
+
+    def _fill_loyalty(self):
+        if not self.tabs.isTabVisible(self.TAB_LOYALTY):
+            return
+        r = self.report.loyalty()
+        cost = f" (ürün maliyeti {tl(r['rewardCost'])})" if r['rewardCost'] is not None else ""
+        self.loyalty_summary.setText(
+            f"Üye: <b>{r['members']}</b> · bu dönem yeni <b>{r['new']}</b> · gelen <b>{r['active']}</b> · "
+            f"tekrar gelen <b>%{r['returnRate']}</b> · üye başına <b>{r['visitsPerMember']}</b> ziyaret<br>"
+            f"Üye adisyonu: <b>{r['memberOrders']}</b> · cirodaki payı <b>%{r['memberShare']}</b> "
+            f"({tl(r['memberRevenue'])})<br>"
+            f"Verilen damga: <b>{r['stamps']}</b> · kullanılan ödül: <b>{r['rewards']}</b> "
+            f"(<b>{tl(r['rewardValue'])}</b> satış değeri{cost})")
+        rows = []
+        for c in r['campaigns']:
+            window = (f"{tl(c['windowRevenue'])} / {tl(c['windowBefore'])}" if c['windowRevenue'] is not None else "—",
+                      c['windowRevenue'] or 0, True)
+            text, color = change_text(c['windowChange']) if c['windowChange'] is not None else ("", None)
+            rows.append([text_cell(c['name']), num_cell(c['orders']), money_cell(c['discount']),
+                         money_cell(c['revenue']), money_cell(c['average']), window,
+                         (text, c['windowChange'] or 0, True)])
+        fill_table(self.campaign_table, rows)
+
     def _kitchen_tab(self):
         w = QWidget()
         ly = QVBoxLayout(w)
@@ -895,6 +936,8 @@ class ReportsPage(QWidget):
         self.range_label.setText(f"{a} – {b} ({days} gün)" + (f" · karşılaştırma: {pa} – {pb}" if self.prev else ""))
         self.tabs.setTabVisible(self.TAB_KITCHEN, database.modules()['kds']['enabled'])
         self.tabs.setTabVisible(self.TAB_STOCK, database.modules()['stock']['enabled'])
+        m = database.modules()
+        self.tabs.setTabVisible(self.TAB_LOYALTY, m['loyalty']['enabled'] or m['campaigns']['enabled'])
         self.tabs.setTabVisible(self.TAB_LOSSES, self.user.get('role') in PANEL_ROLES)
         self._fill_summary()
         self._fill_products()
@@ -906,6 +949,7 @@ class ReportsPage(QWidget):
         self._fill_income()
         self._fill_kitchen()
         self._fill_stock()
+        self._fill_loyalty()
 
     def summary_rows(self):
         """(etiket, değer, değişim metni, renk) — ekran ve dışa aktarma aynı satırları kullanır."""
@@ -920,6 +964,9 @@ class ReportsPage(QWidget):
         legacy = s['legacy']
         rows = [
             ("Brüt satış (KDV dahil)", tl(s['gross']), *chg('gross')),
+            *([("− Kampanya", tl(-s['campaign']), "", None)] if s['campaign'] else []),
+            *([(f"− Sadakat ödülü ({s['rewards']['count']})", tl(-s['rewards']['amount']), "", None)]
+              if s['rewards']['amount'] else []),
             (f"− İskonto ({s['discountCount']} adisyon)", tl(-s['discount']), *chg('discount', True)),
             (f"− İade ({s['refundCount']})", tl(-s['refunds']), *chg('refunds', True)),
             ("= Net satış", tl(s['net']), *chg('net')),
@@ -1079,7 +1126,7 @@ class ReportsPage(QWidget):
         names = {self.TAB_SUMMARY: "Satış özeti", self.TAB_PRODUCTS: "Ürünler", self.TAB_MENU: "Menü analizi",
                  self.TAB_TIME: "Saatler",
                  self.TAB_STAFF: "Personel", self.TAB_LOSSES: "Kayıp ve denetim", self.TAB_INCOME: "Gelir-gider",
-                 self.TAB_KITCHEN: "Mutfak", self.TAB_STOCK: "Stok"}
+                 self.TAB_KITCHEN: "Mutfak", self.TAB_STOCK: "Stok", self.TAB_LOYALTY: "Sadakat ve kampanya"}
         title = f"{names[tab]} {a} – {b}"
         if tab == self.TAB_SUMMARY:
             s = self.report.summary()
@@ -1097,7 +1144,7 @@ class ReportsPage(QWidget):
             return title, ["Kalem", "Tutar"], [list(r) for r in self.income_rows()]
         table = {self.TAB_PRODUCTS: self.product_table, self.TAB_MENU: self.menu_table, self.TAB_STAFF: self.staff_table,
                  self.TAB_LOSSES: self.loss_table, self.TAB_KITCHEN: self.kitchen_product_table,
-                 self.TAB_STOCK: self.stock_table}[tab]
+                 self.TAB_STOCK: self.stock_table, self.TAB_LOYALTY: self.campaign_table}[tab]
         cols = [c for c in range(table.columnCount()) if not table.isColumnHidden(c)]
         headers = [table.horizontalHeaderItem(c).text() for c in cols]
         rows = [[table.item(r, c).text() if table.item(r, c) else '' for c in cols] for r in range(table.rowCount())]

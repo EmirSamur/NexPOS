@@ -699,3 +699,47 @@ def test_sadakat_internetsiz_uye_damga_odul_bulutla_ayni(db, client):
     assert reward['status'] == 'used' and reward['usedOrderId'] == o2['id']
     assert cloud_c['stamps'] == local['stamps'] and cloud_c['lifetimeStamps'] == local['lifetimeStamps']
     assert loyalty.card(c['id'])['stamps'] == cloud_c['stamps'] and loyalty.card(c['id'])['rewards'] == []
+
+
+def test_kampanya_panelden_kasada_internetsiz_bulutla_ayni(db, client):
+    import requests
+    import pos
+    import reports
+    from cloud.admin_api import AdminApi
+    from cloud.pairing import pair_terminal
+    from cloud.sync import SyncEngine
+
+    requests.delete('http://127.0.0.1:8080/emulator/v1/projects/demo-nexpos/databases/(default)/documents',
+                    timeout=10).raise_for_status()
+    email = f'kampanya-{uuid.uuid4().hex[:6]}@kafe.test'
+    owner_id = create_owner(email)
+    creds, _ = pair_terminal(client, email, 'sahip-sifre-1', 'Kasa 1')
+    api = AdminApi(client, client.sign_in_with_password(email, 'sahip-sifre-1'))
+    engine = SyncEngine(client, creds)
+    api.save_modules({'campaigns': {'enabled': True}})
+    kahve = api.save_category({'name': 'Kahve', 'station': 'bar', 'stampEligible': True})['id']
+    tatli = api.save_category({'name': 'Tatlı', 'station': 'kitchen'})['id']
+    latte = api.save_product({'categoryId': kahve, 'name': 'Latte', 'price': 9500})['id']
+    kurabiye = api.save_product({'categoryId': tatli, 'name': 'Kurabiye', 'price': 4500})['id']
+    nth = api.save_campaign({'name': '2. kahve %50', 'type': 'nth', 'value': 50, 'nthQty': 2,
+                             'appliesTo': {'categoryIds': [kahve]}})['id']
+    api.save_campaign({'name': 'Menü', 'type': 'bundle', 'bundle': {'productIds': [latte, kurabiye], 'price': 12000}})
+    engine.run_once()
+    user = db.login_with_pin(owner_id, '482913')
+    assert len(pos.active_campaigns()) == 2
+
+    # ---- İnternetsiz: 3 latte + 1 kurabiye → en avantajlı birleşim kasada hesaplanır
+    o = pos.open_order(user)
+    pos.add_line(user, o['id'], pos.product_line(db.menu_item('products', latte), qty=3))
+    o = pos.add_line(user, o['id'], pos.product_line(db.menu_item('products', kurabiye)))
+    o, _ = pos.send_pending(user, o['id'])
+    assert o['campaignAmount'] == 4750 + 2000   # 2. latte %50 + menü (95 + 45 → 120)
+    o = pos.take_payment(user, o['id'], 'card', o['total'])
+    status = engine.run_once()
+    assert status.online and db.outbox_counts() == (0, 0), db.get_failed_ops()
+    cloud = client.get_doc(f"orders/{o['id']}", api.session)[1]
+    assert (cloud['total'], cloud['campaignAmount'], cloud['status']) == (o['total'], o['campaignAmount'], 'paid')
+    stats = client.get_doc(f"dailyStats/{o['businessDay']}", api.session)[1]
+    local = reports.contribution(o)
+    assert stats['campaign'] == local['campaign'] == 6750
+    assert stats['byCampaign'][nth]['amount'] == local['byCampaign'][nth]['amount'] == 4750

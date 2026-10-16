@@ -139,6 +139,15 @@ service cloud.firestore {
       allow read: if isManagerPlus();
       allow write: if false;
     }
+    // Kampanyalar herkese açıktır (müşteri uygulaması gösterir); bildirimler yönetici ve terminal (panel geçmişi).
+    match /campaigns/{id} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /notifications/{id} {
+      allow read: if isManagerPlus() || isActiveTerminal();
+      allow write: if false;
+    }
     // Telefon dizini ve QR token'ları: yalnızca fonksiyonlar
     match /customerPhones/{phone} {
       allow read, write: if false;

@@ -14,7 +14,7 @@ TAX_RATES = (0, 1, 10, 20)
 PAYMENT_METHODS = ('cash', 'card', 'meal')
 ORDER_TYPES = ('dine_in', 'takeaway')
 CAMPAIGN_TYPES = ('percent', 'amount', 'nth', 'bundle', 'double_stamps')
-ITEM_OPS = ('addItems', 'updateItem', 'removeItem', 'voidItem', 'compItem', 'splitLine')
+ITEM_OPS = ('addItems', 'updateItem', 'removeItem', 'voidItem', 'compItem')
 MAX_MONEY = 10_000_000
 
 
@@ -298,9 +298,26 @@ def apply_order_op(order, op, payload, staff_id, at):
         new_id = _str(p.get('newLineId'), 'Satır kimliği', 64)
         if any(l['lineId'] == new_id for l in o['items']):
             raise OrderError("Bu satır zaten eklenmiş.")
+        before_qty = line['qty']
         line['qty'] -= p['qty']
         o['items'].insert(o['items'].index(line) + 1,
                           {**copy.deepcopy(line), 'lineId': new_id, 'qty': p['qty'], 'splitFrom': line['lineId']})
+        # Kampanya indirimi adet oranında, satırın kalan adedinden fazla ödül yeni satıra geçer (toplam değişmez)
+        for c in o.get('campaigns') or []:
+            amount = (c.get('lines') or {}).get(line['lineId'])
+            if not amount:
+                continue
+            moved = amount * p['qty'] // before_qty
+            if moved:
+                c['lines'][new_id] = moved
+                c['lines'][line['lineId']] = amount - moved
+        kept = 0
+        for r in o.get('rewards') or []:
+            if r['lineId'] != line['lineId']:
+                continue
+            kept += 1
+            if kept > line['qty']:
+                r['lineId'] = new_id
     elif op == 'takePayment':
         t = compute_totals(o)
         if any(l['status'] == 'active' and l['state'] == 'pending' for l in o['items']):

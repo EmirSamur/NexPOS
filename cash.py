@@ -161,7 +161,7 @@ def close_session(user, counted_cash, reason='', approver_id=None):
 
 def _cloud_report(report):
     """Buluta giden özet (raporlar ekranı için); satır ayrıntısı yok."""
-    keys = ('sales', 'refunds', 'tips', 'discount', 'comps', 'voids', 'vat', 'orders', 'staff', 'cash')
+    keys = ('sales', 'refunds', 'tips', 'discount', 'campaign', 'rewards', 'comps', 'voids', 'vat', 'orders', 'staff', 'cash')
     return {k: report[k] for k in keys}
 
 
@@ -260,6 +260,10 @@ def build_report(session):
         'refunds': {**refunds, 'total': sum(refunds.values()), 'count': refund_count},
         'discount': {'amount': sum(o['discountAmount'] for o in closed),
                      'count': sum(1 for o in closed if o['discountAmount'])},
+        'campaign': {'amount': sum(o.get('campaignAmount') or 0 for o in closed),
+                     'count': sum(1 for o in closed if o.get('campaignAmount'))},
+        'rewards': {'amount': sum(o.get('rewardAmount') or 0 for o in closed),
+                    'count': sum(len(o.get('rewards') or []) for o in closed)},
         'comps': comps,
         'voids': voids,
         'vat': vat,

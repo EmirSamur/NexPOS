@@ -1,0 +1,1467 @@
+{
+ "validate": [
+  {
+   "name": "yüzde: varsayılanlar",
+   "input": {
+    "name": " Happy Hour ",
+    "type": "percent",
+    "value": 20,
+    "appliesTo": {
+     "categoryIds": [
+      "kahve",
+      "kahve"
+     ]
+    },
+    "schedule": {
+     "days": [
+      5,
+      1,
+      1
+     ],
+     "from": "14:00",
+     "to": "17:00"
+    }
+   },
+   "expect": {
+    "name": "Happy Hour",
+    "type": "percent",
+    "value": 20,
+    "nthQty": null,
+    "bundle": null,
+    "stampMultiplier": 1,
+    "appliesTo": {
+     "categoryIds": [
+      "kahve"
+     ],
+     "productIds": []
+    },
+    "schedule": {
+     "days": [
+      1,
+      5
+     ],
+     "from": "14:00",
+     "to": "17:00",
+     "startDate": null,
+     "endDate": null
+    },
+    "audience": "all",
+    "minTotal": 0,
+    "active": true,
+    "showInApp": false,
+    "description": ""
+   }
+  },
+  {
+   "name": "x. ürün: adet",
+   "input": {
+    "name": "3 al 2 öde",
+    "type": "nth",
+    "value": 100,
+    "nthQty": 1
+   },
+   "error": "2-10"
+  },
+  {
+   "name": "menü: en az iki ürün",
+   "input": {
+    "name": "M",
+    "type": "bundle",
+    "bundle": {
+     "productIds": [
+      "a",
+      "a"
+     ],
+     "price": 100
+    }
+   },
+   "error": "iki farklı"
+  },
+  {
+   "name": "saat aralığı eksik",
+   "input": {
+    "name": "X",
+    "type": "percent",
+    "value": 5,
+    "schedule": {
+     "from": "14:00"
+    }
+   },
+   "error": "Saat"
+  },
+  {
+   "name": "tarih sırası",
+   "input": {
+    "name": "X",
+    "type": "percent",
+    "value": 5,
+    "schedule": {
+     "startDate": "2026-10-20",
+     "endDate": "2026-10-01"
+    }
+   },
+   "error": "Bitiş"
+  },
+  {
+   "name": "yüzde sınırı",
+   "input": {
+    "name": "X",
+    "type": "percent",
+    "value": 0
+   },
+   "error": "1-100"
+  },
+  {
+   "name": "kitle",
+   "input": {
+    "name": "X",
+    "type": "double_stamps",
+    "audience": "vip"
+   },
+   "error": "kitlesi"
+  },
+  {
+   "name": "çift damga: çarpan",
+   "input": {
+    "name": "Çift",
+    "type": "double_stamps",
+    "stampMultiplier": 3,
+    "schedule": {
+     "days": [
+      2
+     ]
+    }
+   },
+   "expect": {
+    "name": "Çift",
+    "type": "double_stamps",
+    "value": 0,
+    "nthQty": null,
+    "bundle": null,
+    "stampMultiplier": 3,
+    "appliesTo": {
+     "categoryIds": [],
+     "productIds": []
+    },
+    "schedule": {
+     "days": [
+      2
+     ],
+     "from": null,
+     "to": null,
+     "startDate": null,
+     "endDate": null
+    },
+    "audience": "all",
+    "minTotal": 0,
+    "active": true,
+    "showInApp": false,
+    "description": ""
+   }
+  }
+ ],
+ "live": [
+  {
+   "name": "happy hour içinde",
+   "campaign": {
+    "id": "hh",
+    "name": "Happy Hour",
+    "type": "percent",
+    "value": 20,
+    "appliesTo": {
+     "categoryIds": [
+      "kahve"
+     ],
+     "productIds": []
+    },
+    "schedule": {
+     "days": [
+      1,
+      2,
+      3,
+      4,
+      5
+     ],
+     "from": "14:00",
+     "to": "17:00",
+     "startDate": null,
+     "endDate": null
+    },
+    "audience": "all",
+    "minTotal": 0,
+    "active": true
+   },
+   "at": "2026-10-16T15:30:00+03:00",
+   "customer": null,
+   "expect": true
+  },
+  {
+   "name": "happy hour bitişi dahil değil",
+   "campaign": {
+    "id": "hh",
+    "name": "Happy Hour",
+    "type": "percent",
+    "value": 20,
+    "appliesTo": {
+     "categoryIds": [
+      "kahve"
+     ],
+     "productIds": []
+    },
+    "schedule": {
+     "days": [
+      1,
+      2,
+      3,
+      4,
+      5
+     ],
+     "from": "14:00",
+     "to": "17:00",
+     "startDate": null,
+     "endDate": null
+    },
+    "audience": "all",
+    "minTotal": 0,
+    "active": true
+   },
+   "at": "2026-10-16T17:00:00+03:00",
+   "customer": null,
+   "expect": false
+  },
+  {
+   "name": "hafta sonu değil",
+   "campaign": {
+    "id": "hh",
+    "name": "Happy Hour",
+    "type": "percent",
+    "value": 20,
+    "appliesTo": {
+     "categoryIds": [
+      "kahve"
+     ],
+     "productIds": []
+    },
+    "schedule": {
+     "days": [
+      1,
+      2,
+      3,
+      4,
+      5
+     ],
+     "from": "14:00",
+     "to": "17:00",
+     "startDate": null,
+     "endDate": null
+    },
+    "audience": "all",
+    "minTotal": 0,
+    "active": true
+   },
+   "at": "2026-10-17T15:00:00+03:00",
+   "customer": null,
+   "expect": false
+  },
+  {
+   "name": "gece aralığı: cuma 23:00",
+   "campaign": {
+    "id": "hh",
+    "name": "Happy Hour",
+    "type": "percent",
+    "value": 20,
+    "appliesTo": {
+     "categoryIds": [
+      "kahve"
+     ],
+     "productIds": []
+    },
+    "schedule": {
+     "days": [
+      5
+     ],
+     "from": "22:00",
+     "to": "02:00"
+    },
+    "audience": "all",
+    "minTotal": 0,
+    "active": true
+   },
+   "at": "2026-10-16T23:00:00+03:00",
+   "customer": null,
+   "expect": true
+  },
+  {
+   "name": "gece aralığı: cumartesi 01:00 cumanın devamı",
+   "campaign": {
+    "id": "hh",
+    "name": "Happy Hour",
+    "type": "percent",
+    "value": 20,
+    "appliesTo": {
+     "categoryIds": [
+      "kahve"
+     ],
+     "productIds": []
+    },
+    "schedule": {
+     "days": [
+      5
+     ],
+     "from": "22:00",
+     "to": "02:00"
+    },
+    "audience": "all",
+    "minTotal": 0,
+    "active": true
+   },
+   "at": "2026-10-17T01:00:00+03:00",
+   "customer": null,
+   "expect": true
+  },
+  {
+   "name": "gece aralığı: cuma 01:00 perşembenin devamı",
+   "campaign": {
+    "id": "hh",
+    "name": "Happy Hour",
+    "type": "percent",
+    "value": 20,
+    "appliesTo": {
+     "categoryIds": [
+      "kahve"
+     ],
+     "productIds": []
+    },
+    "schedule": {
+     "days": [
+      5
+     ],
+     "from": "22:00",
+     "to": "02:00"
+    },
+    "audience": "all",
+    "minTotal": 0,
+    "active": true
+   },
+   "at": "2026-10-16T01:00:00+03:00",
+   "customer": null,
+   "expect": false
+  },
+  {
+   "name": "tarih aralığı dışında",
+   "campaign": {
+    "id": "nth",
+    "name": "2. kahve %50",
+    "type": "nth",
+    "value": 50,
+    "nthQty": 2,
+    "appliesTo": {
+     "categoryIds": [
+      "kahve"
+     ],
+     "productIds": []
+    },
+    "schedule": {
+     "days": [
+      5
+     ],
+     "startDate": "2026-11-01"
+    },
+    "audience": "all",
+    "minTotal": 0,
+    "active": true
+   },
+   "at": "2026-10-16T15:30:00+03:00",
+   "customer": null,
+   "expect": false
+  },
+  {
+   "name": "pasif",
+   "campaign": {
+    "id": "nth",
+    "name": "2. kahve %50",
+    "type": "nth",
+    "value": 50,
+    "nthQty": 2,
+    "appliesTo": {
+     "categoryIds": [
+      "kahve"
+     ],
+     "productIds": []
+    },
+    "schedule": {
+     "days": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+     ],
+     "from": null,
+     "to": null
+    },
+    "audience": "all",
+    "minTotal": 0,
+    "active": false
+   },
+   "at": "2026-10-16T15:30:00+03:00",
+   "customer": null,
+   "expect": false
+  },
+  {
+   "name": "üyelere: müşterisiz değil",
+   "campaign": {
+    "id": "ds",
+    "name": "Çift Damga Salı",
+    "type": "double_stamps",
+    "stampMultiplier": 2,
+    "schedule": {
+     "days": [
+      2
+     ]
+    },
+    "audience": "members",
+    "active": true
+   },
+   "at": "2026-10-13T10:00:00+03:00",
+   "customer": null,
+   "expect": false
+  },
+  {
+   "name": "üyelere: üyeyle salı",
+   "campaign": {
+    "id": "ds",
+    "name": "Çift Damga Salı",
+    "type": "double_stamps",
+    "stampMultiplier": 2,
+    "schedule": {
+     "days": [
+      2
+     ]
+    },
+    "audience": "members",
+    "active": true
+   },
+   "at": "2026-10-13T10:00:00+03:00",
+   "customer": {
+    "id": "c1",
+    "tier": "bronze"
+   },
+   "expect": true
+  },
+  {
+   "name": "altın: gümüş üye değil",
+   "campaign": {
+    "id": "gold",
+    "name": "Altın %10",
+    "type": "percent",
+    "value": 10,
+    "appliesTo": {},
+    "schedule": {
+     "days": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+     ]
+    },
+    "audience": "gold",
+    "active": true
+   },
+   "at": "2026-10-16T15:30:00+03:00",
+   "customer": {
+    "id": "c1",
+    "tier": "silver"
+   },
+   "expect": false
+  },
+  {
+   "name": "gümüş ve üstü: altın",
+   "campaign": {
+    "id": "gold",
+    "name": "Altın %10",
+    "type": "percent",
+    "value": 10,
+    "appliesTo": {},
+    "schedule": {
+     "days": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+     ]
+    },
+    "audience": "silver",
+    "active": true
+   },
+   "at": "2026-10-16T15:30:00+03:00",
+   "customer": {
+    "id": "c1",
+    "tier": "gold"
+   },
+   "expect": true
+  }
+ ],
+ "compute": [
+  {
+   "name": "happy hour: kahvelere %20, tatlıya değil",
+   "order": {
+    "items": [
+     {
+      "lineId": "l1",
+      "productId": "latte",
+      "name": "latte",
+      "unitPrice": 9500,
+      "qty": 2,
+      "status": "active",
+      "options": [],
+      "stampEligible": true
+     },
+     {
+      "lineId": "l2",
+      "productId": "kek",
+      "name": "kek",
+      "unitPrice": 7000,
+      "qty": 1,
+      "status": "active",
+      "options": [],
+      "stampEligible": false
+     }
+    ],
+    "rewards": [],
+    "discount": null,
+    "customer": null,
+    "campaignsExcluded": []
+   },
+   "campaigns": [
+    {
+     "id": "hh",
+     "name": "Happy Hour",
+     "type": "percent",
+     "value": 20,
+     "appliesTo": {
+      "categoryIds": [
+       "kahve"
+      ],
+      "productIds": []
+     },
+     "schedule": {
+      "days": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "from": "14:00",
+      "to": "17:00",
+      "startDate": null,
+      "endDate": null
+     },
+     "audience": "all",
+     "minTotal": 0,
+     "active": true
+    }
+   ],
+   "at": "2026-10-16T15:30:00+03:00",
+   "expect": [
+    {
+     "campaignId": "hh",
+     "name": "Happy Hour",
+     "type": "percent",
+     "lines": {
+      "l1": 3800
+     }
+    }
+   ],
+   "categoryOf": {
+    "latte": "kahve",
+    "mocha": "kahve",
+    "amer": "kahve",
+    "kurabiye": "tatli",
+    "kek": "tatli"
+   }
+  },
+  {
+   "name": "happy hour saati dışında yok",
+   "order": {
+    "items": [
+     {
+      "lineId": "l1",
+      "productId": "latte",
+      "name": "latte",
+      "unitPrice": 9500,
+      "qty": 2,
+      "status": "active",
+      "options": [],
+      "stampEligible": true
+     }
+    ],
+    "rewards": [],
+    "discount": null,
+    "customer": null,
+    "campaignsExcluded": []
+   },
+   "campaigns": [
+    {
+     "id": "hh",
+     "name": "Happy Hour",
+     "type": "percent",
+     "value": 20,
+     "appliesTo": {
+      "categoryIds": [
+       "kahve"
+      ],
+      "productIds": []
+     },
+     "schedule": {
+      "days": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "from": "14:00",
+      "to": "17:00",
+      "startDate": null,
+      "endDate": null
+     },
+     "audience": "all",
+     "minTotal": 0,
+     "active": true
+    }
+   ],
+   "at": "2026-10-16T18:00:00+03:00",
+   "expect": [],
+   "categoryOf": {
+    "latte": "kahve",
+    "mocha": "kahve",
+    "amer": "kahve",
+    "kurabiye": "tatli",
+    "kek": "tatli"
+   }
+  },
+  {
+   "name": "2. kahve %50: pahalıdan ucuza eşlenir, en ucuzu indirimli; tek kalan indirimsiz",
+   "order": {
+    "items": [
+     {
+      "lineId": "l1",
+      "productId": "mocha",
+      "name": "mocha",
+      "unitPrice": 11000,
+      "qty": 1,
+      "status": "active",
+      "options": [],
+      "stampEligible": true
+     },
+     {
+      "lineId": "l2",
+      "productId": "latte",
+      "name": "latte",
+      "unitPrice": 9500,
+      "qty": 2,
+      "status": "active",
+      "options": [],
+      "stampEligible": true
+     },
+     {
+      "lineId": "l3",
+      "productId": "amer",
+      "name": "amer",
+      "unitPrice": 8500,
+      "qty": 1,
+      "status": "active",
+      "options": [],
+      "stampEligible": true
+     }
+    ],
+    "rewards": [],
+    "discount": null,
+    "customer": null,
+    "campaignsExcluded": []
+   },
+   "campaigns": [
+    {
+     "id": "nth",
+     "name": "2. kahve %50",
+     "type": "nth",
+     "value": 50,
+     "nthQty": 2,
+     "appliesTo": {
+      "categoryIds": [
+       "kahve"
+      ],
+      "productIds": []
+     },
+     "schedule": {
+      "days": [
+       1,
+       2,
+       3,
+       4,
+       5,
+       6,
+       7
+      ],
+      "from": null,
+      "to": null
+     },
+     "audience": "all",
+     "minTotal": 0,
+     "active": true
+    }
+   ],
+   "at": "2026-10-16T15:30:00+03:00",
+   "expect": [
+    {
+     "campaignId": "nth",
+     "name": "2. kahve %50",
+     "type": "nth",
+     "lines": {
+      "l2": 4750,
+      "l3": 4250
+     }
+    }
+   ],
+   "categoryOf": {
+    "latte": "kahve",
+    "mocha": "kahve",
+    "amer": "kahve",
+    "kurabiye": "tatli",
+    "kek": "tatli"
+   }
+  },
+  {
+   "name": "ürüne tek kampanya: en avantajlısı önce (2. kahve > happy hour), kalanına happy hour",
+   "order": {
+    "items": [
+     {
+      "lineId": "l1",
+      "productId": "latte",
+      "name": "latte",
+      "unitPrice": 9500,
+      "qty": 3,
+      "status": "active",
+      "options": [],
+      "stampEligible": true
+     }
+    ],
+    "rewards": [],
+    "discount": null,
+    "customer": null,
+    "campaignsExcluded": []
+   },
+   "campaigns": [
+    {
+     "id": "hh",
+     "name": "Happy Hour",
+     "type": "percent",
+     "value": 20,
+     "appliesTo": {
+      "categoryIds": [
+       "kahve"
+      ],
+      "productIds": []
+     },
+     "schedule": {
+      "days": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "from": "14:00",
+      "to": "17:00",
+      "startDate": null,
+      "endDate": null
+     },
+     "audience": "all",
+     "minTotal": 0,
+     "active": true
+    },
+    {
+     "id": "nth",
+     "name": "2. kahve %50",
+     "type": "nth",
+     "value": 50,
+     "nthQty": 2,
+     "appliesTo": {
+      "categoryIds": [
+       "kahve"
+      ],
+      "productIds": []
+     },
+     "schedule": {
+      "days": [
+       1,
+       2,
+       3,
+       4,
+       5,
+       6,
+       7
+      ],
+      "from": null,
+      "to": null
+     },
+     "audience": "all",
+     "minTotal": 0,
+     "active": true
+    }
+   ],
+   "at": "2026-10-16T15:30:00+03:00",
+   "expect": [
+    {
+     "campaignId": "nth",
+     "name": "2. kahve %50",
+     "type": "nth",
+     "lines": {
+      "l1": 4750
+     }
+    },
+    {
+     "campaignId": "hh",
+     "name": "Happy Hour",
+     "type": "percent",
+     "lines": {
+      "l1": 1900
+     }
+    }
+   ],
+   "categoryOf": {
+    "latte": "kahve",
+    "mocha": "kahve",
+    "amer": "kahve",
+    "kurabiye": "tatli",
+    "kek": "tatli"
+   }
+  },
+  {
+   "name": "menü: latte + kurabiye 120 ₺, fark fiyat oranında dağılır",
+   "order": {
+    "items": [
+     {
+      "lineId": "l1",
+      "productId": "latte",
+      "name": "latte",
+      "unitPrice": 9500,
+      "qty": 1,
+      "status": "active",
+      "options": [],
+      "stampEligible": true
+     },
+     {
+      "lineId": "l2",
+      "productId": "kurabiye",
+      "name": "kurabiye",
+      "unitPrice": 4500,
+      "qty": 2,
+      "status": "active",
+      "options": [],
+      "stampEligible": false
+     }
+    ],
+    "rewards": [],
+    "discount": null,
+    "customer": null,
+    "campaignsExcluded": []
+   },
+   "campaigns": [
+    {
+     "id": "menu",
+     "name": "Öğrenci Menüsü",
+     "type": "bundle",
+     "bundle": {
+      "productIds": [
+       "latte",
+       "kurabiye"
+      ],
+      "price": 12000
+     },
+     "schedule": {
+      "days": [
+       1,
+       2,
+       3,
+       4,
+       5,
+       6,
+       7
+      ]
+     },
+     "audience": "all",
+     "active": true
+    }
+   ],
+   "at": "2026-10-16T15:30:00+03:00",
+   "expect": [
+    {
+     "campaignId": "menu",
+     "name": "Öğrenci Menüsü",
+     "type": "bundle",
+     "lines": {
+      "l1": 1357,
+      "l2": 643
+     }
+    }
+   ],
+   "categoryOf": {
+    "latte": "kahve",
+    "mocha": "kahve",
+    "amer": "kahve",
+    "kurabiye": "tatli",
+    "kek": "tatli"
+   }
+  },
+  {
+   "name": "menü zarar ettirmez (toplam menü fiyatından ucuzsa uygulanmaz)",
+   "order": {
+    "items": [
+     {
+      "lineId": "l1",
+      "productId": "latte",
+      "name": "latte",
+      "unitPrice": 7000,
+      "qty": 1,
+      "status": "active",
+      "options": [],
+      "stampEligible": true
+     },
+     {
+      "lineId": "l2",
+      "productId": "kurabiye",
+      "name": "kurabiye",
+      "unitPrice": 4000,
+      "qty": 1,
+      "status": "active",
+      "options": [],
+      "stampEligible": false
+     }
+    ],
+    "rewards": [],
+    "discount": null,
+    "customer": null,
+    "campaignsExcluded": []
+   },
+   "campaigns": [
+    {
+     "id": "menu",
+     "name": "Öğrenci Menüsü",
+     "type": "bundle",
+     "bundle": {
+      "productIds": [
+       "latte",
+       "kurabiye"
+      ],
+      "price": 12000
+     },
+     "schedule": {
+      "days": [
+       1,
+       2,
+       3,
+       4,
+       5,
+       6,
+       7
+      ]
+     },
+     "audience": "all",
+     "active": true
+    }
+   ],
+   "at": "2026-10-16T15:30:00+03:00",
+   "expect": [],
+   "categoryOf": {
+    "latte": "kahve",
+    "mocha": "kahve",
+    "amer": "kahve",
+    "kurabiye": "tatli",
+    "kek": "tatli"
+   }
+  },
+  {
+   "name": "ödül alan ürün kampanyaya girmez",
+   "order": {
+    "items": [
+     {
+      "lineId": "l1",
+      "productId": "latte",
+      "name": "latte",
+      "unitPrice": 9500,
+      "qty": 2,
+      "status": "active",
+      "options": [],
+      "stampEligible": true
+     }
+    ],
+    "rewards": [
+     {
+      "rewardId": "r1",
+      "lineId": "l1",
+      "amount": 9000
+     }
+    ],
+    "discount": null,
+    "customer": {
+     "id": "c1",
+     "tier": "bronze"
+    },
+    "campaignsExcluded": []
+   },
+   "campaigns": [
+    {
+     "id": "hh",
+     "name": "Happy Hour",
+     "type": "percent",
+     "value": 20,
+     "appliesTo": {
+      "categoryIds": [
+       "kahve"
+      ],
+      "productIds": []
+     },
+     "schedule": {
+      "days": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "from": "14:00",
+      "to": "17:00",
+      "startDate": null,
+      "endDate": null
+     },
+     "audience": "all",
+     "minTotal": 0,
+     "active": true
+    }
+   ],
+   "at": "2026-10-16T15:30:00+03:00",
+   "expect": [
+    {
+     "campaignId": "hh",
+     "name": "Happy Hour",
+     "type": "percent",
+     "lines": {
+      "l1": 1900
+     }
+    }
+   ],
+   "categoryOf": {
+    "latte": "kahve",
+    "mocha": "kahve",
+    "amer": "kahve",
+    "kurabiye": "tatli",
+    "kek": "tatli"
+   }
+  },
+  {
+   "name": "elle iskonto varsa para kampanyası yok, çift damga kalır",
+   "order": {
+    "items": [
+     {
+      "lineId": "l1",
+      "productId": "latte",
+      "name": "latte",
+      "unitPrice": 9500,
+      "qty": 1,
+      "status": "active",
+      "options": [],
+      "stampEligible": true
+     }
+    ],
+    "rewards": [],
+    "discount": {
+     "type": "percent",
+     "value": 10
+    },
+    "customer": {
+     "id": "c1",
+     "tier": "bronze"
+    },
+    "campaignsExcluded": []
+   },
+   "campaigns": [
+    {
+     "id": "hh",
+     "name": "Happy Hour",
+     "type": "percent",
+     "value": 20,
+     "appliesTo": {
+      "categoryIds": [
+       "kahve"
+      ],
+      "productIds": []
+     },
+     "schedule": {
+      "days": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "from": "14:00",
+      "to": "17:00",
+      "startDate": null,
+      "endDate": null
+     },
+     "audience": "all",
+     "minTotal": 0,
+     "active": true
+    },
+    {
+     "id": "ds",
+     "name": "Çift Damga Salı",
+     "type": "double_stamps",
+     "stampMultiplier": 2,
+     "schedule": {
+      "days": [
+       2
+      ]
+     },
+     "audience": "members",
+     "active": true
+    }
+   ],
+   "at": "2026-10-13T15:00:00+03:00",
+   "expect": [
+    {
+     "campaignId": "ds",
+     "name": "Çift Damga Salı",
+     "type": "double_stamps",
+     "lines": {},
+     "stampMultiplier": 2
+    }
+   ],
+   "categoryOf": {
+    "latte": "kahve",
+    "mocha": "kahve",
+    "amer": "kahve",
+    "kurabiye": "tatli",
+    "kek": "tatli"
+   }
+  },
+  {
+   "name": "kasiyerin kaldırdığı kampanya uygulanmaz",
+   "order": {
+    "items": [
+     {
+      "lineId": "l1",
+      "productId": "latte",
+      "name": "latte",
+      "unitPrice": 9500,
+      "qty": 1,
+      "status": "active",
+      "options": [],
+      "stampEligible": true
+     }
+    ],
+    "rewards": [],
+    "discount": null,
+    "customer": null,
+    "campaignsExcluded": [
+     "hh"
+    ]
+   },
+   "campaigns": [
+    {
+     "id": "hh",
+     "name": "Happy Hour",
+     "type": "percent",
+     "value": 20,
+     "appliesTo": {
+      "categoryIds": [
+       "kahve"
+      ],
+      "productIds": []
+     },
+     "schedule": {
+      "days": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "from": "14:00",
+      "to": "17:00",
+      "startDate": null,
+      "endDate": null
+     },
+     "audience": "all",
+     "minTotal": 0,
+     "active": true
+    }
+   ],
+   "at": "2026-10-16T15:30:00+03:00",
+   "expect": [],
+   "categoryOf": {
+    "latte": "kahve",
+    "mocha": "kahve",
+    "amer": "kahve",
+    "kurabiye": "tatli",
+    "kek": "tatli"
+   }
+  },
+  {
+   "name": "en az tutar",
+   "order": {
+    "items": [
+     {
+      "lineId": "l1",
+      "productId": "kek",
+      "name": "kek",
+      "unitPrice": 7000,
+      "qty": 1,
+      "status": "active",
+      "options": [],
+      "stampEligible": false
+     }
+    ],
+    "rewards": [],
+    "discount": null,
+    "customer": null,
+    "campaignsExcluded": []
+   },
+   "campaigns": [
+    {
+     "id": "tatli",
+     "name": "Tatlıda 20 ₺",
+     "type": "amount",
+     "value": 2000,
+     "appliesTo": {
+      "categoryIds": [
+       "tatli"
+      ]
+     },
+     "schedule": {
+      "days": [
+       1,
+       2,
+       3,
+       4,
+       5,
+       6,
+       7
+      ]
+     },
+     "audience": "all",
+     "active": true,
+     "minTotal": 10000
+    }
+   ],
+   "at": "2026-10-16T15:30:00+03:00",
+   "expect": [],
+   "categoryOf": {
+    "latte": "kahve",
+    "mocha": "kahve",
+    "amer": "kahve",
+    "kurabiye": "tatli",
+    "kek": "tatli"
+   }
+  },
+  {
+   "name": "tutar indirimi ürün fiyatını aşmaz",
+   "order": {
+    "items": [
+     {
+      "lineId": "l1",
+      "productId": "kurabiye",
+      "name": "kurabiye",
+      "unitPrice": 1500,
+      "qty": 2,
+      "status": "active",
+      "options": [],
+      "stampEligible": false
+     }
+    ],
+    "rewards": [],
+    "discount": null,
+    "customer": null,
+    "campaignsExcluded": []
+   },
+   "campaigns": [
+    {
+     "id": "tatli",
+     "name": "Tatlıda 20 ₺",
+     "type": "amount",
+     "value": 2000,
+     "appliesTo": {
+      "categoryIds": [
+       "tatli"
+      ]
+     },
+     "schedule": {
+      "days": [
+       1,
+       2,
+       3,
+       4,
+       5,
+       6,
+       7
+      ]
+     },
+     "audience": "all",
+     "active": true
+    }
+   ],
+   "at": "2026-10-16T15:30:00+03:00",
+   "expect": [
+    {
+     "campaignId": "tatli",
+     "name": "Tatlıda 20 ₺",
+     "type": "amount",
+     "lines": {
+      "l1": 3000
+     }
+    }
+   ],
+   "categoryOf": {
+    "latte": "kahve",
+    "mocha": "kahve",
+    "amer": "kahve",
+    "kurabiye": "tatli",
+    "kek": "tatli"
+   }
+  },
+  {
+   "name": "altın üyeye bütün adisyonda %10, ödenmiş satır hariç",
+   "order": {
+    "items": [
+     {
+      "lineId": "l1",
+      "productId": "latte",
+      "name": "latte",
+      "unitPrice": 9500,
+      "qty": 1,
+      "status": "active",
+      "options": [],
+      "stampEligible": true
+     },
+     {
+      "lineId": "l2",
+      "productId": "kek",
+      "name": "kek",
+      "unitPrice": 7000,
+      "qty": 1,
+      "status": "active",
+      "options": [],
+      "stampEligible": false,
+      "paidBy": "p1"
+     }
+    ],
+    "rewards": [],
+    "discount": null,
+    "customer": {
+     "id": "c1",
+     "tier": "gold"
+    },
+    "campaignsExcluded": []
+   },
+   "campaigns": [
+    {
+     "id": "gold",
+     "name": "Altın %10",
+     "type": "percent",
+     "value": 10,
+     "appliesTo": {},
+     "schedule": {
+      "days": [
+       1,
+       2,
+       3,
+       4,
+       5,
+       6,
+       7
+      ]
+     },
+     "audience": "gold",
+     "active": true
+    }
+   ],
+   "at": "2026-10-16T15:30:00+03:00",
+   "expect": [
+    {
+     "campaignId": "gold",
+     "name": "Altın %10",
+     "type": "percent",
+     "lines": {
+      "l1": 950
+     }
+    }
+   ],
+   "categoryOf": {
+    "latte": "kahve",
+    "mocha": "kahve",
+    "amer": "kahve",
+    "kurabiye": "tatli",
+    "kek": "tatli"
+   }
+  },
+  {
+   "name": "çift damga damgasız adisyonda yok",
+   "order": {
+    "items": [
+     {
+      "lineId": "l1",
+      "productId": "kek",
+      "name": "kek",
+      "unitPrice": 7000,
+      "qty": 1,
+      "status": "active",
+      "options": [],
+      "stampEligible": false
+     }
+    ],
+    "rewards": [],
+    "discount": null,
+    "customer": {
+     "id": "c1",
+     "tier": "bronze"
+    },
+    "campaignsExcluded": []
+   },
+   "campaigns": [
+    {
+     "id": "ds",
+     "name": "Çift Damga Salı",
+     "type": "double_stamps",
+     "stampMultiplier": 2,
+     "schedule": {
+      "days": [
+       2
+      ]
+     },
+     "audience": "members",
+     "active": true
+    }
+   ],
+   "at": "2026-10-13T10:00:00+03:00",
+   "expect": [],
+   "categoryOf": {
+    "latte": "kahve",
+    "mocha": "kahve",
+    "amer": "kahve",
+    "kurabiye": "tatli",
+    "kek": "tatli"
+   }
+  }
+ ]
+}

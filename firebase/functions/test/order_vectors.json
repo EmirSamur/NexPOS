@@ -4351,5 +4351,249 @@
     "total": 13950
    }
   }
+ },
+ {
+  "name": "satır bölünce kampanya adet oranında bölünür, ödül kalan adette kalır; toplam değişmez",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 3,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1"
+     ],
+     "ticketIds": {
+      "bar": "tb"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setCustomer",
+    "payload": {
+     "orderId": "o1",
+     "customer": {
+      "id": "c1",
+      "name": "A"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "useReward",
+    "payload": {
+     "orderId": "o1",
+     "rewardId": "r1",
+     "lineId": "l1",
+     "amount": 9500
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "applyCampaigns",
+    "payload": {
+     "orderId": "o1",
+     "campaigns": [
+      {
+       "campaignId": "k1",
+       "name": "HH",
+       "type": "percent",
+       "lines": {
+        "l1": 3800
+       }
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "splitLine",
+    "payload": {
+     "orderId": "o1",
+     "lineId": "l1",
+     "qty": 2,
+     "newLineId": "l2"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "total": 15200,
+    "campaignAmount": 3800,
+    "rewardAmount": 9500,
+    "campaigns": [
+     {
+      "campaignId": "k1",
+      "name": "HH",
+      "type": "percent",
+      "lines": {
+       "l1": 1267,
+       "l2": 2533
+      },
+      "amount": 3800,
+      "stampMultiplier": 1
+     }
+    ],
+    "rewards": [
+     {
+      "rewardId": "r1",
+      "lineId": "l1",
+      "amount": 9500,
+      "customerId": "c1"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "satır bölünce kalan adetten fazla ödül yeni satıra geçer",
+  "steps": [
+   {
+    "op": "openOrder",
+    "payload": {
+     "orderId": "o1",
+     "no": "A1",
+     "businessDay": "2026-10-15",
+     "type": "takeaway"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "addItems",
+    "payload": {
+     "orderId": "o1",
+     "items": [
+      {
+       "lineId": "l1",
+       "productId": "p1",
+       "name": "Latte",
+       "unitPrice": 9500,
+       "qty": 3,
+       "station": "bar",
+       "options": [],
+       "stampEligible": true
+      }
+     ]
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "sendItems",
+    "payload": {
+     "orderId": "o1",
+     "lineIds": [
+      "l1"
+     ],
+     "ticketIds": {
+      "bar": "tb"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "setCustomer",
+    "payload": {
+     "orderId": "o1",
+     "customer": {
+      "id": "c1",
+      "name": "A"
+     }
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "useReward",
+    "payload": {
+     "orderId": "o1",
+     "rewardId": "r1",
+     "lineId": "l1",
+     "amount": 9500
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "useReward",
+    "payload": {
+     "orderId": "o1",
+     "rewardId": "r2",
+     "lineId": "l1",
+     "amount": 9500
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   },
+   {
+    "op": "splitLine",
+    "payload": {
+     "orderId": "o1",
+     "lineId": "l1",
+     "qty": 2,
+     "newLineId": "l2"
+    },
+    "staffId": "s1",
+    "at": "2026-10-15T12:00:00+03:00"
+   }
+  ],
+  "expect": {
+   "o1": {
+    "total": 9500,
+    "rewards": [
+     {
+      "rewardId": "r1",
+      "lineId": "l1",
+      "amount": 9500,
+      "customerId": "c1"
+     },
+     {
+      "rewardId": "r2",
+      "lineId": "l2",
+      "amount": 9500,
+      "customerId": "c1"
+     }
+    ]
+   }
+  }
  }
 ]

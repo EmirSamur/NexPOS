@@ -61,6 +61,7 @@ const {
 const shiftCalc = require('./src/shifts');
 const { OrderError, applyOrderOp, mergeOrders, tableStatusFor, stampCount, computeTotals } = require('./src/orders');
 const loyaltyCalc = require('./src/loyalty');
+const campaignCalc = require('./src/campaigns');
 const { businessDayOf, contribution, refundContribution, merge } = require('./src/stats');
 
 initializeApp();
@@ -2125,6 +2126,73 @@ exports.resolveLoyaltyToken = onCall(async (request) => {
     return { customerId: customer.ref.id, name: c.name, stamps: c.stamps || 0, tier: c.tier || 'bronze',
       phone: loyaltyCalc.maskPhone(c.phone) };
   });
+});
+
+// Kampanyalar (10. ekran): panelden (internet); kasa önbelleğe alır ve internetsiz uygular.
+exports.saveCampaign = onCall(async (request) => {
+  const actor = await requireStaff(request, 'campaigns');
+  let data;
+  try {
+    data = campaignCalc.validateCampaign(request.data);
+  } catch (e) {
+    if (e instanceof campaignCalc.CampaignError) throw new HttpsError('invalid-argument', e.message);
+    throw e;
+  }
+  const id = request.data?.id;
+  const ref = id ? db.doc(`campaigns/${requireString(id, 'Kampanya', { max: 128 })}`) : db.collection('campaigns').doc();
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (id && (!snap.exists || snap.data().deleted === true)) throw new HttpsError('not-found', 'Kampanya bulunamadı.');
+    const now = FieldValue.serverTimestamp();
+    tx.set(ref, { ...data, deleted: false, updatedBy: actor.uid, updatedAt: now,
+      createdAt: snap.exists ? snap.data().createdAt : now });
+    audit(tx, { action: id ? 'campaign_update' : 'campaign_create', actor: actor.uid, target: ref.path, after: data });
+  });
+  return { id: ref.id };
+});
+
+exports.deleteCampaign = onCall(async (request) => {
+  const actor = await requireStaff(request, 'campaigns');
+  const ref = db.doc(`campaigns/${requireString(request.data?.id, 'Kampanya', { max: 128 })}`);
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new HttpsError('not-found', 'Kampanya bulunamadı.');
+    tx.update(ref, { deleted: true, active: false, updatedAt: FieldValue.serverTimestamp() });
+    audit(tx, { action: 'campaign_delete', actor: actor.uid, target: ref.path });
+  });
+  return { deleted: true };
+});
+
+// Bildirim (10. ekran): yalnızca izin veren üyeler. Kitle ve erişim burada hesaplanır; gerçek gönderim
+// müşteri uygulaması (11. ekran) yayınlanınca açılır (durum: waiting_app). Kişi başı günde en fazla 1 bildirim.
+const SEGMENTS = ['all', 'inactive30', 'silver', 'gold', 'birthday'];
+function inSegment(c, segment, day) {
+  if (!c.marketingConsent || c.deleted === true || c.aliasOf) return false;
+  if (segment === 'inactive30') return String(c.lastVisitAt || c.createdAt || '').slice(0, 10) < loyaltyCalc.addDays(day, -30);
+  if (segment === 'silver') return ['silver', 'gold'].includes(c.tier);
+  if (segment === 'gold') return c.tier === 'gold';
+  if (segment === 'birthday') return loyaltyCalc.isBirthdayWeek(c.birthDate, day);
+  return true;
+}
+
+exports.saveNotification = onCall(async (request) => {
+  const actor = await requireStaff(request, 'campaigns');
+  const d = request.data || {};
+  const title = requireString(d.title, 'Başlık', { max: 60 });
+  const body = requireString(d.body, 'Metin', { max: 200 });
+  if (!SEGMENTS.includes(d.segment)) throw new HttpsError('invalid-argument', 'Kitle geçersiz.');
+  const campaignId = typeof d.campaignId === 'string' && d.campaignId ? d.campaignId.slice(0, 128) : null;
+  const day = typeof d.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.day) ? d.day : new Date().toISOString().slice(0, 10);
+  const customers = await db.collection('customers').where('marketingConsent', '==', true).get();
+  const reach = customers.docs.filter((x) => inSegment(x.data(), d.segment, day)).length;
+  const ref = db.collection('notifications').doc();
+  await db.runTransaction(async (tx) => {
+    const now = FieldValue.serverTimestamp();
+    tx.set(ref, { title, body, segment: d.segment, campaignId, reach, status: 'waiting_app', createdBy: actor.uid,
+      createdAt: now, updatedAt: now });
+    audit(tx, { action: 'notification_create', actor: actor.uid, target: ref.path, after: { segment: d.segment, reach } });
+  });
+  return { id: ref.id, reach };
 });
 
 // Tedarikçiler ve sipariş (8b). Teslim alma ve ödeme kuyruktan gelir (internetsiz).

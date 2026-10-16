@@ -39,6 +39,8 @@ PULL_COLLECTIONS = {
     'shiftPlans': lambda docs: database.upsert_cache('shiftPlans', docs),   # vardiya planı (9. ekran)
     'customers': lambda docs: database.upsert_cache('customers', docs),     # sadakat (10. ekran)
     'rewards': lambda docs: database.upsert_cache('rewards', docs),
+    'campaigns': lambda docs: database.upsert_cache('campaigns', docs),
+    'notifications': lambda docs: database.upsert_cache('notifications', docs),
 }
 
 # Yalnızca yakın geçmişi gereken koleksiyonlar (ilk senkronda tümü indirilmez)

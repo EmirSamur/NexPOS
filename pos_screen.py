@@ -251,6 +251,10 @@ class POSScreen(QWidget):
         self.lines_holder.setStyleSheet("background: white;")
         lscroll.setWidget(self.lines_holder)
         pl.addWidget(lscroll, 1)
+        from campaign_pages import CampaignBox
+        self.campaign_box = CampaignBox(self.user)
+        self.campaign_box.changed.connect(self._order_changed)
+        pl.addWidget(self.campaign_box)
 
         totals = QFormLayout()
         totals.setSpacing(2)
@@ -318,11 +322,13 @@ class POSScreen(QWidget):
         """table: {'id': masa bulut kimliği, 'name': ad}"""
         self.table = table
         self.order = pos.open_order_for_table(table['id'])
+        self._refresh_campaigns()
         self._reload_menu()
         self._refresh()
 
     def open_existing(self, order_id):
         self.order = pos.get_order(order_id)
+        self._refresh_campaigns()
         self.table = {'id': self.order['tableId'], 'name': self.order['tableName']} if self.order.get('tableId') else None
         self._reload_menu()
         self._refresh()
@@ -417,6 +423,7 @@ class POSScreen(QWidget):
         for w in (self.lbl_deduct, self.row_deduct_label):
             w.setVisible(bool(deduct))
         self.customer_bar.set_order(o)
+        self.campaign_box.set_order(o)
         disc = (o or {}).get('discount')
         self.row_disc_label.setText(f"İskonto %{disc['value']}" if disc and disc['type'] == 'percent' else "İskonto")
         self.lbl_disc.setText(format_tl(-t['discountAmount']) if t['discountAmount'] else "—")
@@ -597,7 +604,16 @@ class POSScreen(QWidget):
             return False
         return None
 
+    def _refresh_campaigns(self):
+        """Happy Hour gibi saatli kampanyalar adisyon açılınca ve ödemeden önce yeniden hesaplanır."""
+        if self.order and self.order['status'] == 'open':
+            updated = self._do(pos.refresh_campaigns, self.user, self.order['id'])
+            if updated:
+                self.order = updated
+
     def _pay(self):
+        self._refresh_campaigns()
+        self._refresh()
         oid = self.order['id']
         dlg = PaymentDialog(self.order, self, people_left=self.split_people.get(oid))
         if dlg.exec() != QDialog.Accepted:

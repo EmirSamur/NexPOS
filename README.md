@@ -32,6 +32,7 @@ Kafe ve restoran işletmelerinin masa takibi, sipariş yönetimi, finansal rapor
 - Masa transfer — aktif siparişi başka bir masaya taşıma
 - Sipariş panosu: Mutfakta / Hazır aşamalarını gerçek zamanlı takip
 - Vardiyam — mesaiye başla/bitir, mola, haftalık plan ve çalışılan saat, günün satışı
+- Müşteri kartı — telefon ya da uygulama QR'ı ile üye, damga, bedava içecek ödülü; kampanyalar kendiliğinden uygulanır
 - Nakit / Kredi Kartı / Yemek Kartı ödeme; hesabı eşit bölme ya da ürün seçerek bölme
 - Kasa: açılış, para giriş/çıkışı, X ve Z raporu (KDV dökümü, personel, kasa farkı), iade
 - Bilgi fişi (adisyon), mutfak/bar fişi ve rapor yazdırma; yazıcı yoksa PDF
@@ -44,6 +45,7 @@ Kafe ve restoran işletmelerinin masa takibi, sipariş yönetimi, finansal rapor
 - Kullanıcı yönetimi — personel ekleme, rol atama, aktif/pasif durumu
 - Yetkilendirme matrisi — Garson, Kurye, Kasa, Müdür, Yönetici rolleri için işlem bazlı izin yönetimi
 - Vardiya planı (şablon, izin, 45 saat uyarısı, yayınla, PDF/WhatsApp) ve mesai raporu (geç, gelmedi, fazla mesai, işçilik maliyeti)
+- Pazarlama — müşteri listesi (KVKK), sadakat ayarları, kampanyalar (Happy Hour, 2. ürün, menü, çift damga), bildirim taslağı, sadakat ve kampanya raporu
 - Gider / Masraf takibi — tarih filtreli listeleme ve özet
 - Zayi yönetimi — bozulan veya hatalı üretilen ürünlerin stoktan düşülmesi
 - Raporlar — satış özeti ve KDV dökümü, ürün/seçenek, saat ısı haritası, personel, kayıp ve denetim, gelir-gider, mutfak; CSV ve PDF

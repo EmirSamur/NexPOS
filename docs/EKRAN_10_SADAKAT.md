@@ -1,7 +1,7 @@
 # 10. Ekran: Müşteri, Sadakat, Kampanya ve Bildirim
 
-> Durum: **10a uygulandı** (müşteri, damga, ödül, kasada üye, müşteri listesi, sadakat ayarları); 10b (kampanya,
-> bildirim, sadakat raporu) sürüyor. Sorulara verilen cevaplar (hepsi öneri yönünde): kasada telefonla üyelik var;
+> Durum: **uygulandı** (10a: müşteri, damga, ödül, kasada üye, müşteri listesi, sadakat ayarları; 10b: kampanya,
+> bildirim, sadakat ve kampanya raporu). Sorulara verilen cevaplar (hepsi öneri yönünde): kasada telefonla üyelik var;
 > içecek başına 1 damga; 10 damga = 1 bedava içecek (en fazla 90 ₺), kendiliğinden en pahalı uygun içecek;
 > seviyeler rozet + yazılı ayrıcalık; kampanya ve elle iskonto üst üste binmez; kampanyalar kendiliğinden uygulanır,
 > kasiyer kaldırabilir; bildirimlerin gerçek gönderimi 11. ekranda açılır.
@@ -15,6 +15,21 @@
 >   damgalar kaybolmaz.
 > - Kullanılmış ya da süresi geçmiş ödül (çok nadir) ödemeyi engellemez; kayda `reward_conflict` olarak düşer.
 > - Pazarlama menüsü Sadakat ya da Kampanyalar modülü açıkken görünür (`loyalty` yetkisi).
+>
+> Uygulamada netleşenler (10b):
+> - Kampanya türleri: yüzde, tutar, "X. ürün %Y" (2. kahveye %50, 3 al 2 öde: X=3, %100), sabit fiyatlı menü,
+>   çift damga. Kasa geçerli kampanyaların bütün sıralarını dener ve müşteriye en çok indirimi veren birleşimi
+>   seçer (bir ürüne tek kampanya; ödülle bedava alınan ürün kampanyaya girmez).
+> - Ürün eklenince/değişince kampanyalar sunucuda da silinir; kasa aynı anda yeniden hesaplayıp gönderir. Saatli
+>   kampanyalar (Happy Hour) adisyon açılırken ve ödemeden önce yeniden hesaplanır. Ürün seçerek ödemede satır
+>   bölünürse kampanya indirimi adet oranında bölünür; toplam değişmez.
+> - Kampanyayı adisyondan kaldırmak iskonto yetkisi ister; kaldırılan kampanya o adisyonda geri gelmez.
+> - Bildirim kitlesi: izinli herkes, 30 gündür gelmeyen, Gümüş ve üstü, Altın, bu hafta doğum günü. Kayıt
+>   "uygulama bekleniyor" durumunda tutulur; gönderim 11. ekranda.
+> - Rapor: Raporlar → Sadakat ve Kampanya (üye sayısı, tekrar gelme, cirodaki pay, damga, ödül ve maliyeti,
+>   kampanya başına adisyon/indirim/ciro, saatli kampanyada aynı saatlerin önceki 4 haftayla karşılaştırması).
+>   Satış özeti, fiş ve Z raporunda kampanya ve ödül ayrı satırdır.
+> - Bu ekranda bulunan eski bir hata da düzeltildi: termal fiş PDF'i dar dizilip birkaç sayfaya bölünüyordu.
 
 ## Amaç
 
@@ -166,13 +181,13 @@ Kampanyaya bağla: [Happy Hour ▾]                                 Tahmini eri�
 
 ## "Bitti" sayılma ölçütü
 
-- [ ] Sadakat ve Kampanyalar modülleri açılıp kapanıyor
-- [ ] Kasada müşteri: telefonla arama, yeni üye (onaylı), QR ile tanıma (internetle); kart özeti adisyonda
-- [ ] Ödemede damga; ikram/iptal/ödül damga vermez; iadede geri alınır; damga dolunca ödül; doğum günü ödülü
-- [ ] Ödül kullanma (en pahalı uygun içecek, üst sınır), süre sonu; internetsiz çalışıyor, buluta bir kez gidiyor
-- [ ] Kampanyalar: 5 tür, koşullar ve takvim, kasada kendiliğinden, ürüne tek kampanya, elle iskontoyla çakışmıyor,
+- [x] Sadakat ve Kampanyalar modülleri açılıp kapanıyor
+- [x] Kasada müşteri: telefonla arama, yeni üye (onaylı), QR ile tanıma (internetle); kart özeti adisyonda
+- [x] Ödemede damga; ikram/iptal/ödül damga vermez; iadede geri alınır; damga dolunca ödül; doğum günü ödülü
+- [x] Ödül kullanma (en pahalı uygun içecek, üst sınır), süre sonu; internetsiz çalışıyor, buluta bir kez gidiyor
+- [x] Kampanyalar: 5 tür, koşullar ve takvim, kasada kendiliğinden, ürüne tek kampanya, elle iskontoyla çakışmıyor,
       fişte/Z raporunda/raporlarda ayrı satır
-- [ ] Müşteri listesi, detay, elle düzeltme (gerekçeli), KVKK silme ve dışa aktarma
-- [ ] Bildirim taslağı, kitle seçimi, erişim tahmini, izin ve günlük sınır kuralları
-- [ ] Sadakat raporu ve kampanya etkisi
-- [ ] Testler: kampanya hesabı ve damga kuralları (yerel + sunucu aynı sonuç, ortak senaryolar), emülatör, uçtan uca
+- [x] Müşteri listesi, detay, elle düzeltme (gerekçeli), KVKK silme ve dışa aktarma
+- [x] Bildirim taslağı, kitle seçimi, erişim tahmini, izin ve günlük sınır kuralları
+- [x] Sadakat raporu ve kampanya etkisi
+- [x] Testler: kampanya hesabı ve damga kuralları (yerel + sunucu aynı sonuç, ortak senaryolar), emülatör, uçtan uca

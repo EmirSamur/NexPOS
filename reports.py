@@ -290,6 +290,7 @@ class Report:
         revenue = s.get('revenue', 0)
         return {
             'gross': s.get('gross', 0), 'discount': s.get('discount', 0), 'discountCount': s.get('discountCount', 0),
+            'campaign': s.get('campaign', 0), 'rewards': s.get('rewards', {'count': 0, 'amount': 0}),
             'revenue': revenue,
             'refunds': refunds.get('amount', 0), 'refundCount': refunds.get('count', 0),
             'net': revenue - refunds.get('amount', 0),
@@ -536,6 +537,75 @@ class Report:
                 'remaining': net - total_exp - waste - cogs - c['waste']}
 
     # ---------------------------------------------------------------- mutfak
+    # ---------------------------------------------------------------- sadakat ve kampanya (10. ekran)
+    def loyalty(self):
+        """Üyeler, damga, ödül ve kampanya etkisi (bu bilgisayardaki adisyonlardan)."""
+        import campaigns_logic
+        import loyalty as loy
+        import stock
+        from cloud.orders import stamp_count
+        paid = self.paid
+        members = [o for o in paid if o.get('customer')]
+        revenue = sum(o['total'] for o in paid)
+        member_revenue = sum(o['total'] for o in members)
+        visits = {}
+        for o in members:
+            visits[o['customer']['id']] = visits.get(o['customer']['id'], 0) + 1
+        all_members = loy.customers()
+        new = [c for c in all_members if self.day_from <= str(c.get('createdAt') or '')[:10] <= self.day_to]
+        recipes = stock.Recipes() if stock.enabled() else None
+        reward_cost = 0
+        for o in members:
+            for r in o.get('rewards') or []:
+                line = next((l for l in o['items'] if l['lineId'] == r['lineId']), None)
+                if recipes and line:
+                    reward_cost += recipes.line_cost(line, o['type']) // max(line['qty'], 1)
+        out = {
+            'members': len(all_members), 'new': len(new), 'active': len(visits),
+            'returning': sum(1 for n in visits.values() if n >= 2),
+            'memberOrders': len(members), 'memberRevenue': member_revenue,
+            'memberShare': round(member_revenue * 100 / revenue) if revenue else 0,
+            'visitsPerMember': round(len(members) / len(visits), 1) if visits else 0,
+            'stamps': sum(stamp_count(o) for o in members),
+            'rewards': sum(len(o.get('rewards') or []) for o in members),
+            'rewardValue': sum(o.get('rewardAmount') or 0 for o in members),
+            'rewardCost': reward_cost if recipes else None,
+        }
+        out['returnRate'] = round(out['returning'] * 100 / out['active']) if out['active'] else 0
+        # Kampanyalar: kaç adisyonda, indirim, o adisyonların cirosu; saatli kampanyada aynı saatlerin
+        # önceki 4 haftası ile karşılaştırma
+        docs = {c['id']: c for c in database.cache_rows('campaigns', include_deleted=True)}
+        rows = {}
+        for o in paid:
+            for c in o.get('campaigns') or []:
+                r = rows.setdefault(c['campaignId'], {'campaignId': c['campaignId'], 'name': c['name'], 'orders': 0,
+                                                      'discount': 0, 'revenue': 0, 'stampOrders': 0})
+                r['orders'] += 1
+                r['discount'] += c['amount']
+                r['revenue'] += o['total']
+                r['stampOrders'] += 1 if (c.get('stampMultiplier') or 1) > 1 else 0
+        days = (date.fromisoformat(self.day_to) - date.fromisoformat(self.day_from)).days + 1
+        before = _orders((date.fromisoformat(self.day_from) - timedelta(days=28)).isoformat(),
+                         (date.fromisoformat(self.day_from) - timedelta(days=1)).isoformat())
+        before = [o for o in before if o['status'] == 'paid']
+        for cid, r in rows.items():
+            doc = docs.get(cid)
+            r['average'] = r['revenue'] // r['orders'] if r['orders'] else 0
+            r['windowRevenue'] = r['windowBefore'] = r['windowChange'] = None
+            if not doc or not (doc.get('schedule') or {}).get('from'):
+                continue
+            window = {**doc, 'active': True, 'deleted': False, 'audience': 'all',
+                      'schedule': {**doc['schedule'], 'startDate': None, 'endDate': None}}
+
+            def in_window(o):
+                return campaigns_logic.is_live(window, (o.get('closedAt') or o['openedAt'])[:19], None)
+            now_rev = sum(o['total'] for o in paid if in_window(o))
+            prev_rev = sum(o['total'] for o in before if in_window(o)) * days // 28
+            r['windowRevenue'], r['windowBefore'] = now_rev, prev_rev
+            r['windowChange'] = change(now_rev, prev_rev)
+        out['campaigns'] = sorted(rows.values(), key=lambda r: -r['discount'])
+        return out
+
     def kitchen(self):
         """İstasyon ve ürün başına ortalama hazırlama süresi (gönderme → hazır), geciken fiş oranı."""
         late_min = database.modules()['kds']['lateMinutes']

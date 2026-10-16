@@ -1164,6 +1164,16 @@ def turkish_lower(text):
     return (text or '').replace('İ', 'i').replace('I', 'ı').lower()
 
 
+_TR_ALPHABET = 'abcçdefgğhıijklmnoöprsştuüvyz'
+_TR_ORDER = {ch: i for i, ch in enumerate(_TR_ALPHABET)}
+
+
+def turkish_sort_key(text):
+    """Türkçe alfabe sırası: 'Çift' 'Cem'den sonra, 'Deniz'den önce gelir."""
+    return [(_TR_ORDER[ch], '') if ch in _TR_ORDER else (-1, ch) if ch.isdigit() or ch == ' ' else (100, ch)
+            for ch in turkish_lower(text)]
+
+
 def legacy_import_payload():
     """importMenu fonksiyonuna gönderilecek (kategoriler, ürünler) listeleri."""
     cats, prods = legacy_menu_for_import()

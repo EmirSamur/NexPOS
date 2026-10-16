@@ -40,7 +40,7 @@ def _live(c):
 def customers():
     """Önbellekteki üyeler (silinmiş ve birleştirilmiş kayıtlar hariç), ada göre."""
     rows = [c for c in database.cache_rows('customers', include_deleted=True) if _live(c)]
-    return sorted(rows, key=lambda c: database.turkish_lower(c.get('name', '')))
+    return sorted(rows, key=lambda c: database.turkish_sort_key(c.get('name', '')))
 
 
 def get(customer_id):

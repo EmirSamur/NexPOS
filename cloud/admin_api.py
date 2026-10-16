@@ -155,6 +155,15 @@ class AdminApi:
     def save_loyalty_settings(self, data):
         return self._call('saveLoyaltySettings', data)
 
+    def save_campaign(self, data, campaign_id=None):
+        return self._call('saveCampaign', {**data, **({'id': campaign_id} if campaign_id else {})})
+
+    def delete_campaign(self, campaign_id):
+        return self._call('deleteCampaign', {'id': campaign_id})
+
+    def save_notification(self, data):
+        return self._call('saveNotification', data)
+
     def import_stock(self, ingredients, recipes, option_effects):
         return self._call('importStock', {'ingredients': ingredients, 'recipes': recipes,
                                           'optionEffects': option_effects})

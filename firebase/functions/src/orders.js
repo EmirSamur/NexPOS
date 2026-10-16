@@ -244,8 +244,25 @@ function applyOrderOp(order, op, payload, ctx) {
       if (!isInt(p.qty, 1, line.qty - 1)) fail('Ayrılacak adet satırdaki adetten az olmalıdır.');
       const newId = str(p.newLineId, 'Satır kimliği', 64);
       if (o.items.some((l) => l.lineId === newId)) fail('Bu satır zaten eklenmiş.');
+      const before = line.qty;
       line.qty -= p.qty;
       o.items.splice(o.items.indexOf(line) + 1, 0, { ...clone(line), lineId: newId, qty: p.qty, splitFrom: line.lineId });
+      // Kampanya indirimi adet oranında, satırın kalan adedinden fazla ödül yeni satıra geçer (toplam değişmez)
+      for (const c of o.campaigns || []) {
+        const amount = (c.lines || {})[line.lineId];
+        if (!amount) continue;
+        const moved = Math.floor((amount * p.qty) / before);
+        if (moved) {
+          c.lines[newId] = moved;
+          c.lines[line.lineId] = amount - moved;
+        }
+      }
+      let kept = 0;
+      for (const r of o.rewards || []) {
+        if (r.lineId !== line.lineId) continue;
+        kept += 1;
+        if (kept > line.qty) r.lineId = newId;
+      }
       break;
     }
     case 'takePayment': {
@@ -377,7 +394,7 @@ function applyOrderOp(order, op, payload, ctx) {
 
 // Ürünler değişince kampanyalar yeniden hesaplanmak üzere silinir (terminal ödemeden önce tekrar
 // uygular); ödüller, satırı hâlâ duruyorsa kalır.
-const ITEM_OPS = ['addItems', 'updateItem', 'removeItem', 'voidItem', 'compItem', 'splitLine'];
+const ITEM_OPS = ['addItems', 'updateItem', 'removeItem', 'voidItem', 'compItem'];
 function resetDeductions(o) {
   o.campaigns = [];
   const used = new Map();

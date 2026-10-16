@@ -93,6 +93,16 @@ def bill_html(order):
         amount = 'İKRAM' if l['status'] == 'comp' else format_tl(line_total(l))
         rows.append(_row(f"{l['qty']} × {_e(l['name'])}{opts}", amount))
     totals = [_row('Ara toplam', format_tl(t['subtotal']))]
+    names = {l['lineId']: l['name'] for l in order['items']}
+    for c in order.get('campaigns') or []:
+        if c['amount']:
+            totals.append(_row(f"Kampanya: {_e(c['name'])}", format_tl(-c['amount'])))
+        elif c.get('stampMultiplier', 1) > 1:
+            totals.append(_row(f"{_e(c['name'])} ({c['stampMultiplier']}× damga)", ''))
+    for r in order.get('rewards') or []:
+        totals.append(_row(f"Ödül: {_e(names.get(r['lineId'], ''))}", format_tl(-r['amount'])))
+    if order.get('customer'):
+        totals.append(_row(f"Üye: {_e(order['customer']['name'])}", ''))
     if t['discountAmount']:
         d = order['discount']
         label = f"İskonto (%{d['value']})" if d['type'] == 'percent' else 'İskonto'
@@ -134,6 +144,10 @@ def report_html(report):
         if r['sales'][m]:
             rows.append(_row(f"&nbsp;&nbsp;{PAYMENT_LABELS[m]}", format_tl(r['sales'][m])))
     rows.append(_row(f"İade ({r['refunds']['count']})", format_tl(-r['refunds']['total'])))
+    if r.get('campaign', {}).get('amount'):
+        rows.append(_row(f"Kampanya ({r['campaign']['count']} adisyon)", format_tl(-r['campaign']['amount'])))
+    if r.get('rewards', {}).get('amount'):
+        rows.append(_row(f"Sadakat ödülü ({r['rewards']['count']})", format_tl(-r['rewards']['amount'])))
     rows.append(_row(f"İskonto ({r['discount']['count']} adisyon)", format_tl(-r['discount']['amount'])))
     rows.append(_row(f"İkram ({r['comps']['count']} ürün)", format_tl(r['comps']['amount'])))
     rows.append(_row(f"İptal ({r['voids']['count']} ürün)", format_tl(r['voids']['amount'])))
@@ -207,7 +221,9 @@ def print_html(html_text, name, settings=None):
             info = QPrinterInfo.printerInfo(settings['name'])
             if not info.isNull():
                 printer = QPrinter(info, QPrinter.HighResolution)
-                size, margins = _layout(paper, _height_mm(doc, paper))
+                height = _height_mm(doc, paper)
+                size, margins = _layout(paper, height)
+                _fit_page(doc, height)
                 printer.setPageLayout(QPageLayout(size, QPageLayout.Portrait, margins, QPageLayout.Millimeter))
                 printer.setDocName(name)
                 doc.print_(printer)
@@ -224,6 +240,13 @@ def _height_mm(doc, paper):
     return max(80, int(doc.size().height() / 96 * 25.4) + 12)
 
 
+def _fit_page(doc, height_mm):
+    """Belge 96 dpi mantıksal birimle dizilir; sayfa boyu da aynı birimle verilmezse yazıcı/PDF çözünürlüğünde
+    (300 dpi) ~3 kat dar dizilir. Sayfa boyu verilince Qt ölçekleyerek basar."""
+    content_mm = height_mm - (30 if height_mm == 297 else 8)
+    doc.setPageSize(QSizeF(doc.textWidth(), max(content_mm / 25.4 * 96, 1)))
+
+
 def save_pdf(html_text, name, paper=None, path=None):
     paper = paper or printer_settings()['paper']
     doc = _document(html_text, paper)
@@ -231,7 +254,9 @@ def save_pdf(html_text, name, paper=None, path=None):
         os.makedirs(pdf_dir(), exist_ok=True)
         path = os.path.join(pdf_dir(), f"{datetime.now():%Y%m%d-%H%M%S}-{_safe_name(name)}.pdf")
     writer = QPdfWriter(path)
-    size, margins = _layout(paper, _height_mm(doc, paper))
+    height = _height_mm(doc, paper)
+    size, margins = _layout(paper, height)
+    _fit_page(doc, height)
     writer.setPageLayout(QPageLayout(size, QPageLayout.Portrait, margins, QPageLayout.Millimeter))
     writer.setResolution(300)
     writer.setTitle(name)

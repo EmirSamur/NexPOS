@@ -456,22 +456,30 @@ Siparişi değiştiren her işlem bir **callable function** üzerinden yapılır
 > Akış şöyle: müşteri `getLoyaltyQr` çağırır → kasiyer okutur → `attachCustomer(orderId, token)` çalışır →
 > ödeme alınınca `takePayment` uygun ürün sayısı kadar damga basar.
 
-### `campaigns/{id}`
+### `campaigns/{id}` (10. ekran; panelden `saveCampaign` / `deleteCampaign`, `campaigns` yetkisi)
 ```ts
 {
   name: "Happy Hour",
-  type: "percent"|"amount"|"buy_x_get_y"|"double_stamps",
-  value: number,
-  appliesTo: { categoryIds?: [], productIds?: [] },
-  schedule: { days: [1,2,3,4,5], from: "14:00", to: "17:00", startDate, endDate },
-  audience: "all"|"tier:gold"|"app_users",
-  active: boolean,
-  showInApp: boolean, bannerUrl?
+  type: "percent"|"amount"|"nth"|"bundle"|"double_stamps",
+  value: 20,                          // percent/nth: %, amount: kuruş
+  nthQty?: 2,                         // nth: her 2 üründe en ucuzuna %value (3 al 2 öde: nthQty 3, value 100)
+  bundle?: { productIds: [a, b], price: 12000 },   // sabit fiyatlı menü
+  stampMultiplier: 2,                 // double_stamps
+  appliesTo: { categoryIds: [], productIds: [] },  // boşsa bütün menü
+  schedule: { days: [1..7], from: "14:00"|null, to: "17:00"|null, startDate?, endDate? },  // 22:00–02:00 olabilir
+  audience: "all"|"members"|"silver"|"gold",
+  minTotal: 0, active: boolean, showInApp: boolean, description, deleted
 }
 ```
+> Herkes okur (müşteri uygulaması gösterir). Kasa hesabı yapar (`campaigns_logic.py`, sunucuda `src/campaigns.js`,
+> ortak senaryolar) ve adisyona `applyCampaigns` işlemiyle yazar:
+> `orders.campaigns: [{ campaignId, name, type, lines: { lineId: indirim }, amount, stampMultiplier }]`,
+> `orders.campaignsExcluded` (kasiyerin kaldırdıkları; kaldırmak `discount` yetkisi ister).
+> Günlük özette `campaign` ve `byCampaign`, ödülde `rewards`, üyede `members` alanları.
 
-### `notifications/{id}`: panelden gönderilen toplu bildirimler
-`{ title, body, segment: "all"|"tier:gold"|"inactive_30d"|"birthday_today", sentAt, sentBy, reach }`
+### `notifications/{id}` (`saveNotification`, `campaigns` yetkisi)
+`{ title, body, segment: "all"|"inactive30"|"silver"|"gold"|"birthday", campaignId?, reach, status: "waiting_app"|"sent", createdBy, createdAt }`
+> Yalnızca `marketingConsent` olan üyeler; kişi başı günde en fazla 1 bildirim. Gönderim 11. ekranda (FCM).
 
 ---
 
@@ -559,7 +567,7 @@ Adisyon ödenip kapanınca ya da iptal edilince katkısı açıldığı iş gün
 
 | Koleksiyon | Okuma | Yazma |
 |---|---|---|
-| `categories`, `products`, `optionGroups`, `campaigns` | herkes (app için) | manager+ |
+| `categories`, `products`, `optionGroups` | herkes (app için) | manager+ |
 | `settings/*` | herkes (`loyalty`, `quiz`) / personel (`general`) | owner |
 | `staff` | personel (kendi), terminal, manager+ (tümü) | manager+ (yalnızca fonksiyon üzerinden; claim senkronu için) |
 | `shiftPlans` | personel, terminal | yalnızca fonksiyon (`shifts` yetkisi) |
@@ -574,8 +582,11 @@ Adisyon ödenip kapanınca ya da iptal edilince katkısı açıldığı iş gün
 | `orders` | personel; müşteri kendi siparişini | yalnızca fonksiyon |
 | `kitchenTickets` | personel | barista/kitchen yalnızca `status` alanı |
 | `payments`, `refunds`, `cashSessions` | manager+ ve terminal | yalnızca fonksiyon |
-| `customers/{uid}` | sahibi, cashier+ | sahibi yalnızca `name`, `birthDate`, `marketingConsent` |
-| `customers/*/loyaltyEvents`, `rewards` | sahibi, cashier+ | yalnızca fonksiyon |
+| `customers`, `rewards` | manager+, terminal (11. ekranda: sahibi) | yalnızca fonksiyon |
+| `loyaltyEvents` | manager+ | yalnızca fonksiyon |
+| `customerPhones`, `loyaltyTokens` | — | yalnızca fonksiyon |
+| `campaigns` | herkes | yalnızca fonksiyon (`campaigns` yetkisi) |
+| `notifications` | manager+, terminal | yalnızca fonksiyon |
 | `dailyStats`, `auditLogs` | manager+ | yalnızca fonksiyon |
 
 "manager+" = manager ve owner. "cashier+" = cashier, manager ve owner.

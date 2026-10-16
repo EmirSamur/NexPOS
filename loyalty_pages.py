@@ -7,7 +7,7 @@ Kasa:
 Panel (Pazarlama):
 - CustomersPage: üye listesi, filtreler, düzenle, damga düzelt, geçmiş/dışa aktar, KVKK silme
 - LoyaltySettingsPanel: damga sayısı, ödül üst sınırı ve süresi, doğum günü, seviyeler
-- MarketingPage: sekmeler (Müşteriler · Sadakat Ayarları; 10b'de Kampanyalar · Bildirimler)
+- MarketingPage: sekmeler (Müşteriler · Kampanyalar · Bildirimler · Sadakat Ayarları)
 """
 import json
 from datetime import date
@@ -737,7 +737,7 @@ class LoyaltySettingsPanel(QWidget):
 
 
 class MarketingPage(QWidget):
-    """Pazarlama: Müşteriler · Sadakat Ayarları (kampanya ve bildirim 10b)."""
+    """Pazarlama: Müşteriler · Kampanyalar · Bildirimler · Sadakat Ayarları."""
 
     def __init__(self, user, parent=None):
         super().__init__(parent)
@@ -750,9 +750,14 @@ class MarketingPage(QWidget):
                 background: transparent; border-bottom: 3px solid transparent; }}
             QTabBar::tab:selected {{ color: {COLORS['primary']}; border-bottom-color: {COLORS['primary']}; }}
         """)
+        from campaign_pages import CampaignsPage, NotificationsPage
         self.customers = CustomersPage(user)
+        self.campaigns = CampaignsPage(user)
+        self.notifications = NotificationsPage(user)
         self.settings = LoyaltySettingsPanel(user)
         self.tabs.addTab(self.customers, "Müşteriler")
+        self.tabs.addTab(self.campaigns, "Kampanyalar")
+        self.tabs.addTab(self.notifications, "Bildirimler")
         self.tabs.addTab(self.settings, "Sadakat Ayarları")
         self.tabs.currentChanged.connect(lambda _: self.refresh())
         ly.addWidget(self.tabs)
