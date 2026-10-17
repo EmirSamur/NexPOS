@@ -279,6 +279,9 @@ Uygulama kafeye özel derlenir (kod aynı):
 
 ## Geliştirme: emülatörle çalışma
 
+> Canlıya almadan bütün sistemi kendi bilgisayarında denemek için adım adım rehber: [`docs/DENEME.md`](docs/DENEME.md)
+> (`demo/` klasöründeki başlatma dosyaları ve örnek kafe).
+
 Canlı veriye dokunmadan denemek için:
 
 ```bash

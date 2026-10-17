@@ -20,7 +20,8 @@ else:
     # Normal Python ile çalışıyor
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-DB_PATH = os.path.join(BASE_DIR, "nexpos.db")
+# Emülatörle deneme (NEXPOS_EMULATOR=1) ayrı veritabanı kullanır; gerçek kasa verisi karışmaz
+DB_PATH = os.path.join(BASE_DIR, "nexpos_demo.db" if os.environ.get('NEXPOS_EMULATOR') == '1' else "nexpos.db")
 
 
 def get_connection():

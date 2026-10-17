@@ -13,8 +13,10 @@ from dataclasses import asdict, dataclass
 from cloud.config import app_dir
 
 SERVICE = 'NexPOS'
-KEY = 'terminal'
-FILE_PATH = os.path.join(app_dir(), 'terminal.json')
+# Emülatörle deneme (NEXPOS_EMULATOR=1) gerçek kafenin terminal anahtarına dokunmaz
+_DEMO = os.environ.get('NEXPOS_EMULATOR') == '1'
+KEY = 'terminal-emulator' if _DEMO else 'terminal'
+FILE_PATH = os.path.join(app_dir(), 'terminal-emulator.json' if _DEMO else 'terminal.json')
 
 
 @dataclass

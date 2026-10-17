@@ -14,3 +14,8 @@ image_cache/
 # Müşteri uygulamasının web derlemesi (mobile/tool/build_web.sh üretir)
 /firebase/hosting/*
 !/firebase/hosting/mutfak/
+
+# Emülatörle deneme (docs/DENEME.md)
+nexpos_demo.db
+terminal-emulator.json
+/firebase/demo-veri/

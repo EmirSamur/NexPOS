@@ -125,6 +125,8 @@ nexpos/
 
 ## Kurulum
 
+> **Önce denemek için:** [docs/DENEME.md](docs/DENEME.md) — bütün sistem (kasa, mutfak ekranı, müşteri uygulaması) bilgisayarında, buluta dokunmadan.
+
 Uygulamayı iki şekilde çalıştırabilirsiniz.
 
 ### Seçenek 1 — Hazır uygulama (Windows .exe)
