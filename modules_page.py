@@ -1,5 +1,5 @@
 """
-NexPOS - Ayarlar → Modüller (5., 6., 8., 9. ve 10. ekran)
+NexPOS - Ayarlar → Modüller (5., 6., 8., 9., 10. ve 11. ekran)
 
 Mutfak ekranı (KDS), zorunlu kasa açılışı, bilgi fişi yazdırma, ödeme yöntemleri ve bahşiş
 modül olarak açılıp kapanır. Ayar bulutta (settings/modules) tutulur ve bütün cihazlara iner;
@@ -106,6 +106,14 @@ class ModulesPanel(QWidget):
                                            "uygulanır. Pazarlama → Kampanyalar.")
         ly.addWidget(box)
 
+        box, bl, self.app = _section("Mobil uygulama",
+                                     "Müşteri uygulaması: sadakat kartı ve QR, menü, kampanyalar. Kafe bilgisi ve "
+                                     "aydınlatma metni: Pazarlama → Mobil Uygulama.")
+        self.table_orders = QCheckBox("Masadan QR ile sipariş")
+        self.pickup = QCheckBox("Gel-al sipariş")
+        bl.addLayout(_row(self.table_orders, self.pickup))
+        ly.addWidget(box)
+
         box, bl, self.tips = _section("Bahşiş", "Kartla ödemede bahşiş alanı gösterilir.")
         self.methods = {k: QCheckBox(v) for k, v in (('cash', 'Nakit'), ('card', 'Kredi Kartı'), ('meal', 'Yemek Kartı'))}
         lbl = QLabel("Ödeme yöntemleri:")
@@ -134,6 +142,7 @@ class ModulesPanel(QWidget):
         self.printing.toggled.connect(self._enable)
         self.stock.toggled.connect(self._enable)
         self.staff.toggled.connect(self._enable)
+        self.app.toggled.connect(self._enable)
         self.refresh()
 
     def _enable(self, *_):
@@ -143,6 +152,10 @@ class ModulesPanel(QWidget):
         self.kitchen_print.setEnabled(owner and self.printing.isChecked())
         self.ask_void.setEnabled(owner and self.stock.isChecked())
         self.tolerance.setEnabled(owner and self.staff.isChecked())
+        # Masadan sipariş ve gel-al 11b'de açılır
+        for w in (self.table_orders, self.pickup):
+            w.setEnabled(False)
+            w.setToolTip("Sonraki sürümde (11b) açılacak.")
 
     def refresh(self):
         m = database.modules()
@@ -161,10 +174,13 @@ class ModulesPanel(QWidget):
         self.tolerance.setValue(m['staff']['lateToleranceMinutes'])
         self.loyalty.setChecked(m['loyalty']['enabled'])
         self.campaigns.setChecked(m['campaigns']['enabled'])
+        self.app.setChecked(m['app']['enabled'])
+        self.table_orders.setChecked(m['app']['tableOrders'])
+        self.pickup.setChecked(m['app']['pickup'])
         for k, c in self.methods.items():
             c.setChecked(m['paymentMethods'][k])
         owner = self.user.get('role') == 'owner'
-        for w in (self.kds, self.cash_required, self.threshold, self.printing, self.tips, self.stock, self.staff, self.loyalty, self.campaigns, self.save_btn,
+        for w in (self.kds, self.cash_required, self.threshold, self.printing, self.tips, self.stock, self.staff, self.loyalty, self.campaigns, self.app, self.save_btn,
                   *self.methods.values()):
             w.setEnabled(owner)
         self._enable()
@@ -185,6 +201,8 @@ class ModulesPanel(QWidget):
             'staff': {'enabled': self.staff.isChecked(), 'lateToleranceMinutes': self.tolerance.value()},
             'loyalty': {'enabled': self.loyalty.isChecked()},
             'campaigns': {'enabled': self.campaigns.isChecked()},
+            'app': {'enabled': self.app.isChecked(), 'tableOrders': self.table_orders.isChecked(),
+                    'pickup': self.pickup.isChecked()},
         }
 
     def validate(self):

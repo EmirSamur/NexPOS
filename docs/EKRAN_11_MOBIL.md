@@ -187,12 +187,28 @@ Bu ekran büyük olduğu için üç parçada gelir; her biri ayrı test edilip g
 
 ## "Bitti" sayılma ölçütü
 
-- [ ] SMS ile giriş; kasada açılmış üyelik aynı numarayla uygulamaya geliyor; KVKK onayı ve hesabı silme
-- [ ] Sadakat kartı canlı (damga, ödül, seviye); dönen QR kasada okunuyor
-- [ ] Menü: fotoğraf, seçenek, alerjen, tükendi anında; favori ve "her zamankinden"
+- [x] SMS ile giriş; kasada açılmış üyelik aynı numarayla uygulamaya geliyor; KVKK onayı ve hesabı silme
+- [x] Sadakat kartı canlı (damga, ödül, seviye); dönen QR kasada okunuyor
+- [x] Menü: fotoğraf, seçenek, alerjen, tükendi anında; favori ve "her zamankinden"
 - [ ] Masadan QR sipariş (uygulama ve tarayıcı): istek → NexPOS onayı → masanın adisyonu → KDS; garson çağır / hesap iste
 - [ ] Gel-al: saat seçimi, onay, hazırlanıyor, hazır bildirimi; kasa çevrimdışıyken kapanıyor
 - [ ] Fiyatlar sunucuda menüden hesaplanıyor; başka masanın QR'ı ve sahte istek reddediliyor
 - [ ] Kahve önerisi: sorular, tat profili, tükenen ürün elenir, öneri sepete eklenir; tutma oranı raporu
 - [ ] Bildirimler: kampanya (izinli, günde 1), sipariş durumu, ödül ve doğum günü
 - [ ] Testler: Flutter birim/ekran, emülatörde uçtan uca; Android APK derleniyor
+
+## Durum
+
+- **11a tamam.** `mobile/` (Flutter, Android + web): giriş (SMS, KVKK onayı, kasadaki üyeliğe bağlanma), ana sayfa
+  (kart, ödüller, kampanyalar, "her zamankinden", kafe bilgisi), 60 sn'de dönen QR, menü (arama, kategori,
+  tükendi, alerjen/kafein, favori), profil (düzenleme, izin, geçmiş, hesabı silme). Panelde
+  **Pazarlama → Mobil Uygulama** (kafe bilgisi, KVKK metni) ve **Modüller → Mobil uygulama**.
+- Testler: Flutter birim/ekran (ortak vektörlerle), emülatörde `customer_app.test.js`, tarayıcıda
+  `app.browser.js` (Flutter web + Playwright).
+
+### Kafeye özel (white-label)
+
+Ad, logo ve renkler henüz belli değil; uygulama kafeye göre derlenir. Kod ortaktır, kafeye özel olanlar:
+`mobile/assets/brand.json` (ad, slogan, renkler, Firebase ayarları), `mobile/assets/logo.png`, Android paket
+adı ve kafenin kendi Firebase projesi. Adres, saatler ve KVKK metni panelden (`settings/app`) canlı gelir.
+Adımlar KURULUM.md → "Yeni kafe için müşteri uygulaması".

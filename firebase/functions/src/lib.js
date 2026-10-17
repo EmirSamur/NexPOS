@@ -633,6 +633,7 @@ const DEFAULT_MODULES = {
   staff: { enabled: false, lateToleranceMinutes: 5 },
   loyalty: { enabled: false },
   campaigns: { enabled: false },
+  app: { enabled: false, tableOrders: false, pickup: false },
 };
 
 function strictBool(v, fallback) {
@@ -681,6 +682,8 @@ function validateModules(input) {
         'Geç kalma toleransı 0-60 dakika olmalıdır.') },
     loyalty: { enabled: strictBool((d.loyalty || {}).enabled, D.loyalty.enabled) },
     campaigns: { enabled: strictBool((d.campaigns || {}).enabled, D.campaigns.enabled) },
+    app: { enabled: strictBool((d.app || {}).enabled, false), tableOrders: strictBool((d.app || {}).tableOrders, false),
+      pickup: strictBool((d.app || {}).pickup, false) },
   };
 }
 

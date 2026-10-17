@@ -106,7 +106,8 @@ class AdminPanel(QWidget):
             return False  # kapalı modül görünmez
         if idx == 12 and not database.modules()['staff']['enabled']:
             return False
-        if idx == 13 and not (database.modules()['loyalty']['enabled'] or database.modules()['campaigns']['enabled']):
+        m = database.modules()
+        if idx == 13 and not (m['loyalty']['enabled'] or m['campaigns']['enabled'] or m['app']['enabled']):
             return False
         perm = PAGE_PERMISSIONS[idx] if idx < len(PAGE_PERMISSIONS) else None
         return perm is None or database.user_can(self.user, perm)
@@ -416,7 +417,7 @@ class AdminPanel(QWidget):
             self._apply_sidebar()
             self.modules_panel.refresh()
             self.cash_page.refresh()
-        if status.changed & {'customers', 'rewards', 'loyalty'} and self.pages.currentWidget() is self.marketing_page:
+        if status.changed & {'customers', 'rewards', 'loyalty', 'app'} and self.pages.currentWidget() is self.marketing_page:
             self.marketing_page.refresh()
         if 'shiftPlans' in status.changed and self.pages.currentWidget() is self.shifts_page:
             self.shifts_page.refresh()

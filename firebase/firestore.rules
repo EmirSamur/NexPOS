@@ -63,7 +63,8 @@ service cloud.firestore {
 
     // Ayarlar: settings/permissions vb. Yazma yalnızca fonksiyonlardan.
     match /settings/{docId} {
-      allow read: if isStaff() || isActiveTerminal() || (isActiveKds() && docId in ['modules', 'general']);
+      allow read: if isStaff() || isActiveTerminal() || (isActiveKds() && docId in ['modules', 'general'])
+        || docId in ['app', 'loyalty', 'modules'];   // müşteri uygulaması (11. ekran): kafe bilgisi, kart kuralları
       allow write: if false;
     }
 
@@ -127,16 +128,20 @@ service cloud.firestore {
 
     // Müşteri ve sadakat (10. ekran): kasa üyeyi telefonla internetsiz tanımak için önbelleğe alır.
     // Yazma yalnızca fonksiyonlardan (kuyruk: customerCreate, ödeme kapanışı; panel: saveCustomer).
+    function customerId() {
+      return signedIn() ? request.auth.token.get('customerId', '') : '';
+    }
     match /customers/{id} {
-      allow read: if isManagerPlus() || isActiveTerminal();
+      allow read: if isManagerPlus() || isActiveTerminal() || (customerId() != '' && customerId() == id);
       allow write: if false;
     }
     match /rewards/{id} {
-      allow read: if isManagerPlus() || isActiveTerminal();
+      allow read: if isManagerPlus() || isActiveTerminal()
+        || (customerId() != '' && resource.data.customerId == customerId());
       allow write: if false;
     }
     match /loyaltyEvents/{id} {
-      allow read: if isManagerPlus();
+      allow read: if isManagerPlus() || (customerId() != '' && resource.data.customerId == customerId());
       allow write: if false;
     }
     // Kampanyalar herkese açıktır (müşteri uygulaması gösterir); bildirimler yönetici ve terminal (panel geçmişi).

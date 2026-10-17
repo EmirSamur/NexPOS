@@ -47,7 +47,7 @@ PULL_COLLECTIONS = {
 RECENT_ONLY = {'kitchenTickets'}
 
 # Tek doküman olarak çekilen ayarlar: settings/<ad> → settings_cache[<ad>]
-PULL_SETTINGS = ('permissions', 'general', 'modules', 'loyalty')
+PULL_SETTINGS = ('permissions', 'general', 'modules', 'loyalty', 'app')
 
 MENU_CHANGES = {'categories', 'optionGroups', 'products'}
 

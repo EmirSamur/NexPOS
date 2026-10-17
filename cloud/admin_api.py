@@ -155,6 +155,10 @@ class AdminApi:
     def save_loyalty_settings(self, data):
         return self._call('saveLoyaltySettings', data)
 
+    def save_app_settings(self, data):
+        """Müşteri uygulamasında görünen kafe bilgisi ve aydınlatma metni (11. ekran, yalnızca yönetici)."""
+        return self._call('saveAppSettings', data)
+
     def save_campaign(self, data, campaign_id=None):
         return self._call('saveCampaign', {**data, **({'id': campaign_id} if campaign_id else {})})
 

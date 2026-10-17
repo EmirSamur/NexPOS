@@ -45,7 +45,7 @@ Kafe ve restoran işletmelerinin masa takibi, sipariş yönetimi, finansal rapor
 - Kullanıcı yönetimi — personel ekleme, rol atama, aktif/pasif durumu
 - Yetkilendirme matrisi — Garson, Kurye, Kasa, Müdür, Yönetici rolleri için işlem bazlı izin yönetimi
 - Vardiya planı (şablon, izin, 45 saat uyarısı, yayınla, PDF/WhatsApp) ve mesai raporu (geç, gelmedi, fazla mesai, işçilik maliyeti)
-- Pazarlama — müşteri listesi (KVKK), sadakat ayarları, kampanyalar (Happy Hour, 2. ürün, menü, çift damga), bildirim taslağı, sadakat ve kampanya raporu
+- Pazarlama — müşteri listesi (KVKK), sadakat ayarları, kampanyalar (Happy Hour, 2. ürün, menü, çift damga), bildirim taslağı, sadakat ve kampanya raporu, mobil uygulama ayarları
 - Gider / Masraf takibi — tarih filtreli listeleme ve özet
 - Zayi yönetimi — bozulan veya hatalı üretilen ürünlerin stoktan düşülmesi
 - Raporlar — satış özeti ve KDV dökümü, ürün/seçenek, saat ısı haritası, personel, kayıp ve denetim, gelir-gider, mutfak; CSV ve PDF
@@ -59,6 +59,11 @@ Kafe ve restoran işletmelerinin masa takibi, sipariş yönetimi, finansal rapor
 - **Yetkili onayı:** yetkisiz işlemde (iskonto, iptal) müdür PIN'i istenir, kayıt altına alınır
 - **Gerçek yetki matrisi:** buluta kaydedilir, hem ekranlarda hem sunucuda uygulanır
 - Hareketsizlikte otomatik ekran kilidi, panelden terminal iptali
+
+### Müşteri Uygulaması (Flutter — Android + web)
+- SMS ile giriş, KVKK onayı; kasada açılmış üyelik aynı numarayla gelir
+- Dijital sadakat kartı, ödüller, 60 sn'de dönen QR, kampanyalar, menü (alerjen, kafein, tükendi), favoriler
+- Kafeye özel derlenir: ad, logo, renkler `mobile/assets/brand.json`'dan ([KURULUM.md](KURULUM.md))
 
 ### Teknik
 - Rol tabanlı erişim kontrolü (RBAC) — her kullanıcı yalnızca kendi panelini görür
@@ -76,6 +81,7 @@ Kafe ve restoran işletmelerinin masa takibi, sipariş yönetimi, finansal rapor
 | Programlama Dili | Python 3.10+ |
 | GUI Framework | PySide6 (Qt for Python) |
 | Bulut | Firebase (Firestore, Authentication, Cloud Functions) |
+| Müşteri uygulaması | Flutter (Dart) — Android + web |
 | Yerel veritabanı | SQLite 3 (önbellek + çevrimdışı işlem kuyruğu) |
 | Mimari | Nesne Yönelimli Programlama (OOP) |
 | Stil | QSS (Qt Style Sheets) |
@@ -95,6 +101,7 @@ nexpos/
 ├── admin_access_pages.py  # Kullanıcılar, Yetki Matrisi, Terminaller sayfaları
 ├── cloud/             # Firebase REST istemcisi, senkron motoru, terminal eşleme
 ├── firebase/          # Firestore kuralları, Cloud Functions ve emülatör testleri
+├── mobile/            # Müşteri uygulaması (Flutter; kafeye özel ayar: assets/brand.json)
 ├── docs/              # Mimari ve veri modeli
 ├── tests/             # pytest testleri
 ├── admin_panel.py     # Yönetici paneli (dashboard, ürün, masa, kullanıcı, raporlar)

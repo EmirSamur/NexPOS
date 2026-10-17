@@ -200,3 +200,28 @@ def test_ekranlar_kasa_cubugu_secici_panel(db, sad, tmp_path):
     assert json.load(open(path, encoding='utf-8'))['customer']['phone'] == '5321112233'
     for w in widgets:
         shiboken6.delete(w)
+
+
+def test_mobil_uygulama_ayarlari_ve_modul(db, sad):
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])  # noqa: F841
+    import shiboken6
+    import loyalty_pages as P
+    from modules_page import ModulesPanel
+    owner = {'role': 'owner', 'cloud_id': 'm1'}
+    db.set_setting('general', {'cafeName': 'Velvet Kafe'})
+    db.set_setting('app', {'address': 'Moda Cad. 12', 'hours': 'Her gün 08–24'})
+    panel = P.AppSettingsPanel(owner)
+    assert panel.cafe.text() == 'Velvet Kafe' and panel.hours.text() == 'Her gün 08–24'
+    panel.phone.setText('0216 000 00 00')
+    panel._template()
+    text = panel.kvkk.toPlainText()
+    assert text.startswith('Velvet Kafe — Kişisel') and 'Moda Cad. 12' in text and '0216 000 00 00' in text
+    assert panel.data()['kvkkText'] == text.strip()
+    manager = P.AppSettingsPanel({'role': 'manager', 'cloud_id': 'm1'})
+    assert not manager.save_btn.isEnabled()
+    mp = ModulesPanel(owner)
+    assert mp.data()['app'] == {'enabled': False, 'tableOrders': False, 'pickup': False}
+    assert not mp.table_orders.isEnabled()   # 11b'de açılır
+    for w in (panel, manager, mp):
+        shiboken6.delete(w)

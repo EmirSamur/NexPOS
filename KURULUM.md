@@ -216,6 +216,32 @@ Yalnızca Yönetici açıp kapatır; ayar bulutta tutulur ve bütün cihazlara i
    uygulaması yayınlanınca başlar.
 6. **Raporlar → Sadakat ve Kampanya**: üyeler, tekrar gelme, damga ve ödüller, kampanya başına indirim ve etkisi.
 
+## Müşteri uygulaması (mobil + web)
+
+1. **Ayarlar → Modüller → Mobil uygulama**'yı açın. **Pazarlama → Mobil Uygulama**'da kafe adı, adres, telefon,
+   Instagram, çalışma saatleri ve KVKK aydınlatma metni girilir ("Hazır metni doldur" bir taslak koyar; hukuki
+   kontrolden geçirin). Bunlar uygulamaya anında yansır.
+2. Müşteri telefon numarasıyla (SMS kodu) girer. Kasada aynı numarayla açılmış üyelik varsa kartı, damgaları ve
+   ödülleri hazır gelir; yoksa ad ve KVKK onayıyla üyelik açılır.
+3. Kasada **👤 Müşteri ekle → QR okut**: uygulamadaki QR 60 saniyede bir değişir, ekran görüntüsüyle kullanılamaz.
+
+### Yeni kafe için müşteri uygulaması
+
+Uygulama kafeye özel derlenir (kod aynı):
+
+1. Kafe için ayrı bir Firebase projesi açın; Authentication'da **Telefon** girişini açın, web ve Android
+   uygulaması ekleyin.
+2. `mobile/assets/brand.json`: `appName`, `slogan`, `primaryColor`, `accentColor`, `firebase` (projenin web
+   ayarları), `functionsRegion`. **`emulator.enabled` canlıda `false` olmalı.**
+3. Logo: `mobile/assets/logo.png` koyup `brand.json`'da `"logoAsset": "assets/logo.png"`.
+4. Android paket adı: `mobile/android/app/build.gradle.kts` içindeki `applicationId` (ör. `com.kafeadi.app`).
+5. Derleme (Flutter 3.4x):
+   ```bash
+   cd mobile && flutter pub get
+   flutter build web --release      # build/web → Firebase Hosting'e
+   flutter build apk --release      # Android (Android SDK gerekir)
+   ```
+
 ## Mutfak / bar ekranı (tablet)
 
 1. **Ayarlar → Modüller**'de "Mutfak / Bar Ekranı"nı açın.
@@ -257,4 +283,10 @@ cd firebase && firebase emulators:exec --project demo-nexpos --only auth,firesto
 # Mutfak ekranı tarayıcıda (Playwright + Chromium)
 cd firebase && firebase emulators:exec --project demo-nexpos --only auth,firestore,functions,hosting \
   "node tests/kds.browser.js"
+# Müşteri uygulaması: Flutter testleri ve tarayıcıda uçtan uca (brand.json'da emulator.enabled true)
+cd mobile && flutter test
+cd mobile && flutter build web --release --no-web-resources-cdn
+cd firebase && firebase emulators:exec --project demo-nexpos --only auth,firestore,functions \
+  "node tests/app.browser.js"
+# gstatic.com'a erişilemeyen ortamda: FIREBASE_JS_DIR=<firebase npm paketi klasörü> node tests/app.browser.js
 ```

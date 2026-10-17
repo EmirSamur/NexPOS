@@ -11,7 +11,7 @@
 //   - Terminal (kafedeki NexPOS): uid = "terminal-<id>", custom claim
 //     { terminal: true, terminalId }.
 
-const { randomInt } = require('crypto');
+const { randomInt, randomBytes } = require('crypto');
 const { initializeApp } = require('firebase-admin/app');
 const { getAuth } = require('firebase-admin/auth');
 const { getFirestore, FieldValue, Timestamp } = require('firebase-admin/firestore');
@@ -2066,10 +2066,9 @@ exports.saveCustomer = onCall(async (request) => {
 });
 
 // KVKK: kişisel bilgiler silinir (ad, telefon, doğum günü); geçmiş satışlar anonim kalır. Yalnızca Yönetici.
-exports.deleteCustomer = onCall(async (request) => {
-  const actor = await requireStaff(request);
-  if (actor.role !== 'owner') throw new HttpsError('permission-denied', 'Müşteri kaydını yalnızca yönetici silebilir.');
-  const ref = db.doc(`customers/${requireString(request.data?.id, 'Müşteri', { max: 64 })}`);
+// Kişisel bilgiler silinir (ad, telefon, doğum günü); geçmiş satışlar anonim kalır, aktif ödüller iptal olur.
+async function anonymizeCustomer(id, actor) {
+  const ref = db.doc(`customers/${id}`);
   const active = await db.collection('rewards').where('customerId', '==', ref.id).where('status', '==', 'active').get();
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
@@ -2078,11 +2077,18 @@ exports.deleteCustomer = onCall(async (request) => {
     if (snap.data().phone) tx.delete(db.doc(`customerPhones/${snap.data().phone}`));
     tx.set(ref, { name: 'Silinmiş müşteri', phone: null, birthDate: null, marketingConsent: false, consentAt: null,
       stamps: 0, lifetimeStamps: snap.data().lifetimeStamps || 0, tier: snap.data().tier || 'bronze',
-      totalSpent: snap.data().totalSpent || 0, visitCount: snap.data().visitCount || 0,
+      totalSpent: snap.data().totalSpent || 0, visitCount: snap.data().visitCount || 0, authUid: null,
       deleted: true, deletedAt: now, createdAt: snap.data().createdAt || now, updatedAt: now });
     for (const r of active.docs) tx.update(r.ref, { status: 'cancelled', updatedAt: now });
-    audit(tx, { action: 'customer_delete', actor: actor.uid, target: ref.path });
+    audit(tx, { action: 'customer_delete', actor, target: ref.path });
   });
+}
+
+// KVKK: yalnızca Yönetici (müşteri kendi hesabını uygulamadan siler: deleteMyAccount)
+exports.deleteCustomer = onCall(async (request) => {
+  const actor = await requireStaff(request);
+  if (actor.role !== 'owner') throw new HttpsError('permission-denied', 'Müşteri kaydını yalnızca yönetici silebilir.');
+  await anonymizeCustomer(requireString(request.data?.id, 'Müşteri', { max: 64 }), actor.uid);
   return { deleted: true };
 });
 
@@ -2112,8 +2118,8 @@ exports.exportCustomer = onCall(async (request) => {
 // Kasada uygulama QR'ı: tek kullanımlık, 60 sn geçerli token → müşteri. İnternet ister.
 exports.resolveLoyaltyToken = onCall(async (request) => {
   await requireTerminal(request);
-  const token = requireString(request.data?.token, 'QR', { max: 128 });
-  const ref = db.doc(`loyaltyTokens/${token.replace(/[^\w-]/g, '')}`);
+  const token = requireString(request.data?.token, 'QR', { max: 128 }).replace(/^KAFE:LOYALTY:/, '');
+  const ref = db.doc(`loyaltyTokens/${token.replace(/[^\w-]/g, '') || 'x'}`);
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const t = snap.exists ? snap.data() : null;
@@ -2126,6 +2132,149 @@ exports.resolveLoyaltyToken = onCall(async (request) => {
     return { customerId: customer.ref.id, name: c.name, stamps: c.stamps || 0, tier: c.tier || 'bronze',
       phone: loyaltyCalc.maskPhone(c.phone) };
   });
+});
+
+// ---------------------------------------------------------------------------
+// Müşteri uygulaması (11. ekran). Müşteri telefonla (SMS) giriş yapar; hesabı telefon numarasıyla
+// üyeliğe bağlanır (kasada açılmış üyelik aynen gelir). Bağlanınca token'a customerId eklenir.
+// ---------------------------------------------------------------------------
+
+function customerView(id, c) {
+  return { id, name: c.name, phone: loyaltyCalc.maskPhone(c.phone), birthDate: c.birthDate || null,
+    marketingConsent: c.marketingConsent === true, stamps: c.stamps || 0, lifetimeStamps: c.lifetimeStamps || 0,
+    tier: c.tier || 'bronze', visitCount: c.visitCount || 0 };
+}
+
+async function requireCustomer(request) {
+  requireAuth(request);
+  const id = request.auth.token.customerId;
+  if (typeof id !== 'string' || !id) throw new HttpsError('failed-precondition', 'Önce üyelik tamamlanmalıdır.');
+  const snap = await db.doc(`customers/${id}`).get();
+  if (!snap.exists || snap.data().deleted === true || snap.data().authUid !== request.auth.uid) {
+    throw new HttpsError('permission-denied', 'Üyelik bulunamadı.');
+  }
+  return { id, ref: snap.ref, data: snap.data() };
+}
+
+function profileInput(d, { create }) {
+  const out = {};
+  if (create || d.name !== undefined) out.name = requireString(d.name, 'Ad', { max: 60 });
+  if (d.birthDate !== undefined && d.birthDate !== null && d.birthDate !== '') {
+    if (typeof d.birthDate !== 'string' || !/^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(d.birthDate)) {
+      throw new HttpsError('invalid-argument', 'Doğum günü AA-GG biçiminde olmalıdır.');
+    }
+    out.birthDate = d.birthDate;
+  } else if (d.birthDate === null || d.birthDate === '') out.birthDate = null;
+  if (create || d.marketingConsent !== undefined) {
+    if (typeof d.marketingConsent !== 'boolean') throw new HttpsError('invalid-argument', 'Bildirim izni belirtilmelidir.');
+    out.marketingConsent = d.marketingConsent;
+  }
+  return out;
+}
+
+// Girişten sonra: telefon kayıtlıysa bağlar ({ status: 'linked' }); değilse ad/izin ister ({ status: 'needsProfile' }),
+// bilgilerle tekrar çağrılınca üyelik açar ({ status: 'created' }).
+exports.linkCustomer = onCall(async (request) => {
+  const uid = requireAuth(request);
+  if (request.auth.token.role || request.auth.token.terminal) {
+    throw new HttpsError('permission-denied', 'Personel ve terminal hesapları müşteri olamaz.');
+  }
+  const phone = loyaltyCalc.normalizePhone(request.auth.token.phone_number || '');
+  if (!phone) throw new HttpsError('failed-precondition', 'Telefon numarası doğrulanmamış.');
+  const d = request.data || {};
+  const result = await db.runTransaction(async (tx) => {
+    const idx = await tx.get(db.doc(`customerPhones/${phone}`));
+    const now = FieldValue.serverTimestamp();
+    if (idx.exists) {
+      const ref = db.doc(`customers/${idx.data().customerId}`);
+      const snap = await tx.get(ref);
+      if (!snap.exists || snap.data().deleted === true) throw new HttpsError('not-found', 'Üyelik bulunamadı.');
+      const update = { authUid: uid, updatedAt: now };
+      if (typeof d.marketingConsent === 'boolean' && d.marketingConsent !== snap.data().marketingConsent) {
+        update.marketingConsent = d.marketingConsent;
+        update.consentAt = d.marketingConsent ? new Date().toISOString() : null;
+      }
+      tx.update(ref, update);
+      return { status: 'linked', id: ref.id, data: { ...snap.data(), ...update } };
+    }
+    if (d.name === undefined) return { status: 'needsProfile' };
+    if (d.kvkkAccepted !== true) throw new HttpsError('invalid-argument', 'Aydınlatma metni onaylanmalıdır.');
+    const p = profileInput(d, { create: true });
+    const ref = db.collection('customers').doc();
+    const data = { name: p.name, phone, birthDate: p.birthDate || null, marketingConsent: p.marketingConsent,
+      consentAt: p.marketingConsent ? new Date().toISOString() : null, kvkkAcceptedAt: new Date().toISOString(),
+      stamps: 0, lifetimeStamps: 0, tier: 'bronze', totalSpent: 0, visitCount: 0, lastVisitAt: null, source: 'app',
+      authUid: uid, deleted: false, createdAt: now, updatedAt: now };
+    tx.set(ref, data);
+    tx.set(db.doc(`customerPhones/${phone}`), { customerId: ref.id });
+    return { status: 'created', id: ref.id, data };
+  });
+  if (result.status === 'needsProfile') return result;
+  await getAuth().setCustomUserClaims(uid, { customerId: result.id });
+  return { status: result.status, customer: customerView(result.id, result.data) };
+});
+
+exports.updateMyProfile = onCall(async (request) => {
+  const c = await requireCustomer(request);
+  const p = profileInput(request.data || {}, { create: false });
+  if (p.marketingConsent !== undefined && p.marketingConsent !== c.data.marketingConsent) {
+    p.consentAt = p.marketingConsent ? new Date().toISOString() : null;
+  }
+  await c.ref.update({ ...p, updatedAt: FieldValue.serverTimestamp() });
+  return { customer: customerView(c.id, { ...c.data, ...p }) };
+});
+
+// Hesabı sil (KVKK, mağaza zorunluluğu): kişisel bilgiler silinir, giriş hesabı kapanır.
+exports.deleteMyAccount = onCall(async (request) => {
+  const c = await requireCustomer(request);
+  await anonymizeCustomer(c.id, request.auth.uid);
+  await getAuth().deleteUser(request.auth.uid);
+  return { deleted: true };
+});
+
+// Kasada okutulacak QR: tek kullanımlık, 60 sn geçerli. İçerik: KAFE:LOYALTY:<token>
+exports.getLoyaltyQr = onCall(async (request) => {
+  const c = await requireCustomer(request);
+  const token = randomBytes(16).toString('hex');
+  const expiresAt = Timestamp.fromMillis(Date.now() + 60_000);
+  await db.doc(`loyaltyTokens/${token}`).set({ uid: c.id, expiresAt, createdAt: FieldValue.serverTimestamp() });
+  return { qr: `KAFE:LOYALTY:${token}`, expiresAt: expiresAt.toDate().toISOString() };
+});
+
+// Geçmiş siparişler ("her zamankinden" ve profil)
+exports.myOrders = onCall(async (request) => {
+  const c = await requireCustomer(request);
+  const snap = await db.collection('orders').where('customer.id', '==', c.id).get();
+  return snap.docs.map((d) => d.data()).filter((o) => o.status === 'paid')
+    .sort((a, b) => String(b.closedAt).localeCompare(String(a.closedAt))).slice(0, 20)
+    .map((o) => ({ id: o.id, no: o.no, businessDay: o.businessDay, closedAt: o.closedAt, total: o.total, stamps: o.stamps || 0,
+      items: o.items.filter((l) => l.status === 'active').map((l) => ({ productId: l.productId, name: l.name, qty: l.qty,
+        options: (l.options || []).map((x) => ({ groupId: x.groupId, optionId: x.optionId, name: x.name })) })) }));
+});
+
+// Uygulamada görünen kafe bilgisi ve aydınlatma metni (Yönetici). Herkes okur.
+exports.saveAppSettings = onCall(async (request) => {
+  const actor = await requireStaff(request);
+  if (actor.role !== 'owner') throw new HttpsError('permission-denied', 'Uygulama ayarlarını yalnızca yönetici değiştirebilir.');
+  const d = request.data || {};
+  const opt = (v, field, max) => (v === undefined || v === null || v === '' ? '' : requireString(v, field, { max }));
+  const intIn = (v, fallback, min, max, field) => {
+    const x = v ?? fallback;
+    if (!Number.isInteger(x) || x < min || x > max) throw new HttpsError('invalid-argument', `${field} ${min}-${max} olmalıdır.`);
+    return x;
+  };
+  const data = {
+    cafeName: opt(d.cafeName, 'Kafe adı', 60), address: opt(d.address, 'Adres', 200), phone: opt(d.phone, 'Telefon', 30),
+    instagram: opt(d.instagram, 'Instagram', 60), hours: opt(d.hours, 'Çalışma saatleri', 200),
+    kvkkText: opt(d.kvkkText, 'Aydınlatma metni', 20000),
+    pickupPrepMinutes: intIn(d.pickupPrepMinutes, 10, 1, 120, 'Hazırlanma süresi'),
+    acceptMinutes: intIn(d.acceptMinutes, 2, 1, 30, 'Onay süresi'),
+  };
+  await db.runTransaction(async (tx) => {
+    tx.set(db.doc('settings/app'), { ...data, updatedAt: FieldValue.serverTimestamp(), updatedBy: actor.uid });
+    audit(tx, { action: 'app_settings', actor: actor.uid, target: 'settings/app' });
+  });
+  return data;
 });
 
 // Kampanyalar (10. ekran): panelden (internet); kasa önbelleğe alır ve internetsiz uygular.

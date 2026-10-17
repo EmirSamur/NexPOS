@@ -407,7 +407,9 @@ Siparişi değiştiren her işlem bir **callable function** üzerinden yapılır
   paymentMethods: { cash, card, meal },
   tips: boolean,
   stock: { enabled, askOnVoid },
-  staff: { enabled, lateToleranceMinutes: 5 }            // 9. ekran
+  staff: { enabled, lateToleranceMinutes: 5 },           // 9. ekran
+  loyalty: { enabled }, campaigns: { enabled },          // 10. ekran
+  app: { enabled, tableOrders, pickup }                  // 11. ekran (sipariş seçenekleri 11b)
 }
 ```
 > Yazıcı seçimi bulutta değil, her bilgisayarda yereldir.
@@ -447,6 +449,21 @@ Siparişi değiştiren her işlem bir **callable function** üzerinden yapılır
   `orders.stamps` (kapanışta kazanılan), `orders.stampsRevoked` (iadede geri alınan). Ödüllü ürün damga vermez.
   Damga ödeme kapanınca sunucuda işlenir; kullanılmış/geçersiz ödül adisyonu bozmaz, `reward_conflict` kaydı düşer.
 - İade: geri alınan damga = ⌊kazanılan × iade / ödenen⌋ (daha önce alınanlar düşülür).
+
+### `settings/app`: müşteri uygulamasında görünen kafe bilgisi (11. ekran; `saveAppSettings`, yalnızca owner)
+```ts
+{ cafeName, address, phone, instagram, hours, kvkkText, pickupPrepMinutes, acceptMinutes }
+```
+> `settings/app`, `settings/loyalty` ve `settings/modules` herkese okunur (uygulama girişsiz menü gösterir).
+
+### Uygulamadan giriş (11. ekran)
+- Müşteri SMS ile girer (Firebase Auth telefon). `linkCustomer` telefonu `customerPhones` ile eşler: kasada
+  açılmış üyelik varsa bağlar, yoksa `needsProfile` döner; profil formu (ad, doğum günü, izin, **KVKK onayı**)
+  ile `source: "app"` üyelik açılır. Kullanıcıya `customerId` özel yetkisi (custom claim) yazılır,
+  `customers.authUid` tutulur.
+- Müşteri yalnızca kendi `customers/{id}`, `rewards` ve `loyaltyEvents` kayıtlarını okur; yazamaz.
+- Fonksiyonlar: `updateMyProfile`, `deleteMyAccount` (KVKK silme + Auth kullanıcısı silinir), `getLoyaltyQr`,
+  `myOrders` (son adisyonlar, özet).
 
 ### `loyaltyTokens/{token}`: kasada okutulan QR
 ```ts

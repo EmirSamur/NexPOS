@@ -736,6 +736,119 @@ class LoyaltySettingsPanel(QWidget):
         cloud_action(self, lambda api: api.save_loyalty_settings(data), "Sadakat ayarları kaydedildi.", saved)
 
 
+KVKK_TEMPLATE = """{cafe} — Kişisel Verilerin Korunması Aydınlatma Metni
+
+Veri sorumlusu: {cafe}{address}
+
+İşlenen veriler: ad, telefon numarası, isteğe bağlı doğum günü (gün/ay), siparişlerin ve sadakat damgalarının kaydı.
+
+Amaç: sadakat programının yürütülmesi (damga ve ödüller), siparişlerinin alınması ve hazırlanması, izin verdiysen
+kampanya bildirimleri.
+
+Hukuki sebep: üyelik sözleşmesinin kurulması ve ifası; kampanya bildirimleri için açık rızan.
+
+Aktarım: verilerin üçüncü kişilerle paylaşılmaz. Sistem bulut altyapısında (Google Firebase) saklanır.
+
+Saklama süresi: üyeliğin süresince; hesabını sildiğinde kişisel bilgilerin silinir, geçmiş satışlar anonim kalır.
+
+Hakların: KVKK 11. madde uyarınca verilerine erişme, düzeltme, silme ve itiraz hakkın vardır. Uygulamadaki
+Profil → Hesabımı sil ile ya da kasada bize başvurarak kullanabilirsin.{phone}
+"""
+
+
+class AppSettingsPanel(QWidget):
+    """Pazarlama → Mobil Uygulama: müşteri uygulamasında görünen kafe bilgisi ve aydınlatma metni (Yönetici)."""
+
+    def __init__(self, user, parent=None):
+        super().__init__(parent)
+        self.user = user
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        inner = QWidget()
+        inner.setMaximumWidth(900)
+        outer.addWidget(inner, 1)
+        outer.addStretch()
+        ly = QVBoxLayout(inner)
+        ly.setContentsMargins(28, 12, 28, 20)
+        ly.setSpacing(10)
+        ly.addWidget(QLabel("<b style='font-size:18px'>Mobil uygulama</b><br><span style='color:#64748b'>"
+                            "Müşteri uygulamasında görünen kafe bilgisi. Uygulamanın adı, logosu ve renkleri kafeye "
+                            "özel derlemede ayarlanır (KURULUM.md).</span>"))
+        form = QFormLayout()
+        self.cafe = QLineEdit()
+        self.address = QLineEdit()
+        self.phone = QLineEdit()
+        self.instagram = QLineEdit()
+        self.instagram.setPlaceholderText("@kafeadi")
+        self.hours = QLineEdit()
+        self.hours.setPlaceholderText("Her gün 08:00 – 24:00")
+        for w, n in ((self.cafe, 60), (self.address, 200), (self.phone, 30), (self.instagram, 60), (self.hours, 200)):
+            w.setMaxLength(n)
+        form.addRow("Kafe adı:", self.cafe)
+        form.addRow("Adres:", self.address)
+        form.addRow("Telefon:", self.phone)
+        form.addRow("Instagram:", self.instagram)
+        form.addRow("Çalışma saatleri:", self.hours)
+        ly.addLayout(form)
+        head = QHBoxLayout()
+        head.addWidget(QLabel("<b>Aydınlatma metni (KVKK)</b> — uygulamada üye olurken onaylanır"), 1)
+        tpl = _button("Hazır metni doldur", primary=False)
+        tpl.clicked.connect(self._template)
+        head.addWidget(tpl)
+        ly.addLayout(head)
+        from PySide6.QtWidgets import QPlainTextEdit
+        self.kvkk = QPlainTextEdit()
+        self.kvkk.setMinimumHeight(220)
+        ly.addWidget(self.kvkk, 1)
+        ly.addWidget(_muted("Hazır metin genel bir taslaktır; kafenin bilgileriyle kontrol edip gerekirse bir hukukçuya "
+                            "danışın."))
+        self.note = _muted("")
+        ly.addWidget(self.note)
+        row = QHBoxLayout()
+        row.addStretch()
+        self.save_btn = _button("Kaydet")
+        self.save_btn.clicked.connect(self._save)
+        row.addWidget(self.save_btn)
+        ly.addLayout(row)
+        self.refresh()
+
+    def refresh(self):
+        d = database.get_setting('app') or {}
+        self.cafe.setText(d.get('cafeName') or database.general_settings()['cafeName'])
+        self.address.setText(d.get('address', ''))
+        self.phone.setText(d.get('phone', ''))
+        self.instagram.setText(d.get('instagram', ''))
+        self.hours.setText(d.get('hours', ''))
+        self.kvkk.setPlainText(d.get('kvkkText', ''))
+        owner = self.user.get('role') == 'owner'
+        for w in (self.cafe, self.address, self.phone, self.instagram, self.hours, self.kvkk, self.save_btn):
+            w.setEnabled(owner)
+        self.note.setText("Kaydedince birkaç saniyede uygulamaya yansır (internet gerekir)." if owner
+                          else "Bu bilgileri yalnızca Yönetici değiştirebilir.")
+
+    def _template(self):
+        cafe = self.cafe.text().strip() or 'Kafe'
+        self.kvkk.setPlainText(KVKK_TEMPLATE.format(
+            cafe=cafe, address=f", {self.address.text().strip()}" if self.address.text().strip() else '',
+            phone=f"\nİletişim: {self.phone.text().strip()}" if self.phone.text().strip() else ''))
+
+    def data(self):
+        return {'cafeName': self.cafe.text().strip(), 'address': self.address.text().strip(),
+                'phone': self.phone.text().strip(), 'instagram': self.instagram.text().strip(),
+                'hours': self.hours.text().strip(), 'kvkkText': self.kvkk.toPlainText().strip()}
+
+    def _save(self):
+        data = self.data()
+        if len(data['kvkkText']) > 20000:
+            self.note.setText("⚠ Aydınlatma metni en fazla 20.000 karakter olabilir.")
+            return
+
+        def saved(result):
+            database.set_setting('app', result)
+            self.refresh()
+        cloud_action(self, lambda api: api.save_app_settings(data), "Uygulama bilgileri kaydedildi.", saved)
+
+
 class MarketingPage(QWidget):
     """Pazarlama: Müşteriler · Kampanyalar · Bildirimler · Sadakat Ayarları."""
 
@@ -759,6 +872,8 @@ class MarketingPage(QWidget):
         self.tabs.addTab(self.campaigns, "Kampanyalar")
         self.tabs.addTab(self.notifications, "Bildirimler")
         self.tabs.addTab(self.settings, "Sadakat Ayarları")
+        self.app_settings = AppSettingsPanel(user)
+        self.tabs.addTab(self.app_settings, "Mobil Uygulama")
         self.tabs.currentChanged.connect(lambda _: self.refresh())
         ly.addWidget(self.tabs)
 

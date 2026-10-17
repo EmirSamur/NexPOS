@@ -1399,6 +1399,7 @@ DEFAULT_MODULES = {
     'staff': {'enabled': False, 'lateToleranceMinutes': 5},
     'loyalty': {'enabled': False},
     'campaigns': {'enabled': False},
+    'app': {'enabled': False, 'tableOrders': False, 'pickup': False},
 }
 
 
