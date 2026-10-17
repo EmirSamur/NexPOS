@@ -107,8 +107,9 @@ class ModulesPanel(QWidget):
         ly.addWidget(box)
 
         box, bl, self.app = _section("Mobil uygulama",
-                                     "Müşteri uygulaması: sadakat kartı ve QR, menü, kampanyalar. Kafe bilgisi ve "
-                                     "aydınlatma metni: Pazarlama → Mobil Uygulama.")
+                                     "Müşteri uygulaması: sadakat kartı ve QR, menü, kampanyalar; masadan ve gel-al "
+                                     "siparişler kasada \"📲 Gelen siparişler\"e düşer (kasa internetsizken kapalı). "
+                                     "Kafe bilgisi ve aydınlatma metni: Pazarlama → Mobil Uygulama.")
         self.table_orders = QCheckBox("Masadan QR ile sipariş")
         self.pickup = QCheckBox("Gel-al sipariş")
         bl.addLayout(_row(self.table_orders, self.pickup))
@@ -152,10 +153,8 @@ class ModulesPanel(QWidget):
         self.kitchen_print.setEnabled(owner and self.printing.isChecked())
         self.ask_void.setEnabled(owner and self.stock.isChecked())
         self.tolerance.setEnabled(owner and self.staff.isChecked())
-        # Masadan sipariş ve gel-al 11b'de açılır
         for w in (self.table_orders, self.pickup):
-            w.setEnabled(False)
-            w.setToolTip("Sonraki sürümde (11b) açılacak.")
+            w.setEnabled(owner and self.app.isChecked())
 
     def refresh(self):
         m = database.modules()

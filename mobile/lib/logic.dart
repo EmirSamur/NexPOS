@@ -165,3 +165,36 @@ String greeting(DateTime now) => now.hour >= 5 && now.hour < 12
     : now.hour < 18
         ? 'İyi günler'
         : 'İyi akşamlar';
+
+// ---------------------------------------------------------------------------
+// Sipariş (11b)
+// ---------------------------------------------------------------------------
+
+/// Masadaki QR: `https://kafe/masa/MASA?t=ANAHTAR` → (masaId, anahtar); değilse null
+(String, String)? parseTableLink(Uri uri) {
+  final seg = uri.pathSegments.where((s) => s.isNotEmpty).toList();
+  final i = seg.indexOf('masa');
+  final t = uri.queryParameters['t'];
+  if (i < 0 || i + 1 >= seg.length || t == null || t.isEmpty) return null;
+  return (seg[i + 1], t);
+}
+
+/// Seçenek grubunda seçim eksik/fazla mı? Uygunsa null (sunucudaki priceCart ile aynı kural)
+String? optionProblem(OptionGroup g, int picked) {
+  if (picked < g.min) return '${g.name} seçin';
+  if (picked > g.max) return '${g.name}: en fazla ${g.max} seçim';
+  return null;
+}
+
+int cartTotal(List<CartItem> items) => items.fold(0, (s, i) => s + i.total);
+
+/// Sepete eklerken aynı satır varsa adet artar
+List<CartItem> addToCart(List<CartItem> cart, CartItem item) {
+  final i = cart.indexWhere((c) => c.key == item.key);
+  if (i < 0) return [...cart, item];
+  final out = [...cart];
+  out[i] = out[i].copyWith(qty: (out[i].qty + item.qty).clamp(1, 20));
+  return out;
+}
+
+String hm(DateTime t) => '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';

@@ -1,4 +1,4 @@
-# 11. Ekran: Müşteri Uygulaması (Flutter) (tarif, onay bekliyor)
+# 11. Ekran: Müşteri Uygulaması (Flutter) (onaylandı; 11a ve 11b tamam, 11c sırada)
 
 ## Amaç
 
@@ -190,9 +190,9 @@ Bu ekran büyük olduğu için üç parçada gelir; her biri ayrı test edilip g
 - [x] SMS ile giriş; kasada açılmış üyelik aynı numarayla uygulamaya geliyor; KVKK onayı ve hesabı silme
 - [x] Sadakat kartı canlı (damga, ödül, seviye); dönen QR kasada okunuyor
 - [x] Menü: fotoğraf, seçenek, alerjen, tükendi anında; favori ve "her zamankinden"
-- [ ] Masadan QR sipariş (uygulama ve tarayıcı): istek → NexPOS onayı → masanın adisyonu → KDS; garson çağır / hesap iste
-- [ ] Gel-al: saat seçimi, onay, hazırlanıyor, hazır bildirimi; kasa çevrimdışıyken kapanıyor
-- [ ] Fiyatlar sunucuda menüden hesaplanıyor; başka masanın QR'ı ve sahte istek reddediliyor
+- [x] Masadan QR sipariş (uygulama ve tarayıcı): istek → NexPOS onayı → masanın adisyonu → KDS; garson çağır / hesap iste
+- [x] Gel-al: saat seçimi, onay, hazırlanıyor, hazır bildirimi; kasa çevrimdışıyken kapanıyor
+- [x] Fiyatlar sunucuda menüden hesaplanıyor; başka masanın QR'ı ve sahte istek reddediliyor
 - [ ] Kahve önerisi: sorular, tat profili, tükenen ürün elenir, öneri sepete eklenir; tutma oranı raporu
 - [ ] Bildirimler: kampanya (izinli, günde 1), sipariş durumu, ödül ve doğum günü
 - [ ] Testler: Flutter birim/ekran, emülatörde uçtan uca; Android APK derleniyor
@@ -205,6 +205,19 @@ Bu ekran büyük olduğu için üç parçada gelir; her biri ayrı test edilip g
   **Pazarlama → Mobil Uygulama** (kafe bilgisi, KVKK metni) ve **Modüller → Mobil uygulama**.
 - Testler: Flutter birim/ekran (ortak vektörlerle), emülatörde `customer_app.test.js`, tarayıcıda
   `app.browser.js` (Flutter web + Playwright).
+
+- **11b tamam.** Masadaki QR (`/masa/<masa>?t=<anahtar>`) uygulamanın web sürümünü açar: giriş ekranı atlanır,
+  menü masanın adıyla gelir; ürün seçenekleri, adet, not → sepet → (giriş) → **Siparişi gönder**. Gel-al: ana
+  sayfadan, saat seçimi (hemen / 15 / 30 dk / saat seç). Sipariş durumu canlı (Onay bekliyor → Onaylandı →
+  Hazırlanıyor → Hazır); "hazır" bildirimi uygulamanın her ekranında görünür (telefon bildirimi 11c'de).
+  **Garson çağır / Hesap iste** girişsiz çalışır. Kasa 2 dakikadır görünmüyorsa sipariş alınmaz.
+- NexPOS: üst çubukta **📲 Gelen siparişler**: Onayla (masanın adisyonuna eklenir ya da açılır; gel-al masasız
+  adisyon; fişler bara/mutfağa; üye adisyona bağlanır), Reddet (gerekçe müşteriye gider), masa çağrıları (Tamam),
+  gel-al listesi (Adisyonu aç / Gelmedi). Yeni istekte ses ve bildirim; masada 🙋 / 🧾 işareti. Onay sunucuya
+  ulaşmazsa (müşteri iptal etti, süre doldu, internet yok) kasada hiçbir şey kaydedilmez.
+- Kötüye kullanıma karşı: fiyat sunucuda menüden; masadan bekleyen en fazla 2, müşteri başına en fazla 3 açık
+  istek; tek istekte en fazla 50 ürün / 3.000 ₺; başka masanın QR'ı geçmez; üst üste 2 kez gelmeyene gel-al
+  kapanır (Pazarlama → Müşteriler'den açılır).
 
 ### Kafeye özel (white-label)
 

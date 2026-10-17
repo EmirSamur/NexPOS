@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'brand.dart';
 import 'data/repo.dart';
+import 'logic.dart';
 import 'state.dart';
 import 'ui/shell.dart';
 
@@ -24,7 +25,11 @@ Future<void> main() async {
   );
   final repo = FirebaseRepo(brand);
   if (brand.useEmulator) await repo.useEmulators();
-  runApp(KafeApp(state: AppState(brand, repo)..start()));
+  final state = AppState(brand, repo);
+  // Masadaki QR web adresi: https://<kafe>/masa/<masaId>?t=<anahtar>
+  final link = parseTableLink(Uri.base);
+  if (link != null) await state.openTable(link.$1, link.$2);
+  runApp(KafeApp(state: state..start()));
 }
 
 class KafeApp extends StatelessWidget {

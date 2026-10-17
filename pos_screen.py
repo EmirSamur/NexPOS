@@ -71,6 +71,22 @@ def _ask_reason(parent, title, permission, required=True):
     return text if text or not required else None
 
 
+def print_new_tickets(parent, order_id):
+    """Yazıcı modülü açıksa adisyonun basılmamış yeni fişlerini basar."""
+    printing_cfg = database.modules()['printing']
+    if not (printing_cfg['enabled'] and printing_cfg['kitchenTickets']):
+        return
+    import printing
+    for t in pos.tickets(('new',)):
+        if t['orderId'] == order_id and not t.get('printed'):
+            try:
+                printing.print_html(printing.ticket_html(t), f"Fiş {t['orderNo']} {t['station']}")
+                pos.mark_ticket_printed(t['id'])
+            except Exception as e:
+                _show_error(parent, f"Fiş yazdırılamadı: {e}")
+                break
+
+
 def authorize(parent, user, permission, action_text, need_reason=True):
     """(onaylayan_id, gerekçe) ya da vazgeçildiyse (None, None)."""
     approver, reason = request_approval(parent, user, permission, action_text)
@@ -511,17 +527,7 @@ class POSScreen(QWidget):
             self.order, n = result
             self._refresh()
             ToastNotification(self.window(), f"{n} ürün bar/mutfağa gönderildi.", "success")
-            printing_cfg = database.modules()['printing']
-            if printing_cfg['enabled'] and printing_cfg['kitchenTickets']:
-                import printing
-                for t in pos.tickets(('new',)):
-                    if t['orderId'] == self.order['id'] and not t.get('printed'):
-                        try:
-                            printing.print_html(printing.ticket_html(t), f"Fiş {t['orderNo']} {t['station']}")
-                            pos.mark_ticket_printed(t['id'])
-                        except Exception as e:
-                            _show_error(self, f"Fiş yazdırılamadı: {e}")
-                            break
+            print_new_tickets(self, self.order['id'])
 
     def _discount(self):
         dlg = DiscountDialog(self.order, self)

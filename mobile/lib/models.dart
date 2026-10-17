@@ -31,8 +31,18 @@ class OptionGroup {
   final String name;
   final bool multi;
   final bool required;
+  final int min;
+  final int max;
   final List<OptionItem> options;
-  const OptionGroup({required this.id, required this.name, this.multi = false, this.required = false, this.options = const []});
+  const OptionGroup({
+    required this.id,
+    required this.name,
+    this.multi = false,
+    this.required = false,
+    this.min = 0,
+    this.max = 1,
+    this.options = const [],
+  });
 
   static OptionGroup? fromDoc(String id, Map<String, dynamic> d) {
     if (d['deleted'] == true) return null;
@@ -46,8 +56,17 @@ class OptionGroup {
               available: o['soldOut'] != true,
             ))
         .toList();
+    final multi = d['selection'] == 'multi';
+    final required = _bool(d['required']);
     return OptionGroup(
-        id: id, name: _str(d['name']), multi: d['selection'] == 'multi', required: _bool(d['required']), options: opts);
+      id: id,
+      name: _str(d['name']),
+      multi: multi,
+      required: required,
+      min: d['min'] is num ? _int(d['min']) : (required ? 1 : 0),
+      max: multi ? (d['max'] is num ? _int(d['max']) : opts.length) : 1,
+      options: opts,
+    );
   }
 }
 
@@ -379,4 +398,188 @@ class LinkResult {
   final LinkStatus status;
   final Customer? customer;
   const LinkResult(this.status, [this.customer]);
+}
+
+// ---------------------------------------------------------------------------
+// Sipariş (11b): sepet, masa, gel-al, uygulama siparişi
+// ---------------------------------------------------------------------------
+
+class PickedOption {
+  final String groupId;
+  final OptionItem option;
+  const PickedOption(this.groupId, this.option);
+}
+
+class CartItem {
+  final Product product;
+  final List<PickedOption> options;
+  final int qty;
+  final String note;
+  const CartItem(this.product, {this.options = const [], this.qty = 1, this.note = ''});
+
+  int get unitPrice => product.price + options.fold(0, (s, o) => s + o.option.priceDelta);
+  int get total => unitPrice * qty;
+  String get optionsText => options.map((o) => o.option.name).join(', ');
+
+  /// Aynı ürün + aynı seçenekler + aynı not tek satırda toplanır
+  String get key => [product.id, ...options.map((o) => '${o.groupId}/${o.option.id}'), note].join('|');
+
+  CartItem copyWith({int? qty}) => CartItem(product, options: options, qty: qty ?? this.qty, note: note);
+
+  Map<String, dynamic> toRequest() => {
+        'productId': product.id,
+        'qty': qty,
+        'options': [for (final o in options) {'groupId': o.groupId, 'optionId': o.option.id}],
+        if (note.isNotEmpty) 'note': note,
+      };
+}
+
+class TableRef {
+  final String id;
+  final String token;
+  final String name;
+  final String label;
+  const TableRef({required this.id, required this.token, this.name = '', this.label = ''});
+}
+
+class OrderingInfo {
+  final bool online;
+  final bool tableOrders;
+  final bool pickup;
+  final bool pickupBlocked;
+  final int prepMinutes;
+  final String cafeName;
+  final TableRef? table;
+  const OrderingInfo({
+    this.online = false,
+    this.tableOrders = false,
+    this.pickup = false,
+    this.pickupBlocked = false,
+    this.prepMinutes = 10,
+    this.cafeName = '',
+    this.table,
+  });
+
+  static OrderingInfo fromMap(Map<String, dynamic> d, {String? token}) {
+    final t = d['table'] is Map ? d['table'] as Map : null;
+    return OrderingInfo(
+      online: _bool(d['online']),
+      tableOrders: _bool(d['tableOrders']),
+      pickup: _bool(d['pickup']),
+      pickupBlocked: _bool(d['pickupBlocked']),
+      prepMinutes: _int(d['prepMinutes'], 10),
+      cafeName: _str(d['cafeName']),
+      table: t == null
+          ? null
+          : TableRef(id: _str(t['id']), token: token ?? '', name: _str(t['name']), label: _str(t['label'])),
+    );
+  }
+}
+
+/// Gel-al saati: hemen / dakika sonra / saat
+class PickupChoice {
+  final bool asap;
+  final int? inMinutes;
+  final DateTime? at;
+  const PickupChoice.asap() : asap = true, inMinutes = null, at = null;
+  const PickupChoice.inMinutes(int this.inMinutes) : asap = false, at = null;
+  const PickupChoice.at(DateTime this.at) : asap = false, inMinutes = null;
+
+  Map<String, dynamic> toRequest() => asap
+      ? {'asap': true}
+      : inMinutes != null
+          ? {'inMinutes': inMinutes}
+          : {'at': at!.toUtc().toIso8601String()};
+}
+
+const appOrderStatusLabels = {
+  'pending': 'Onay bekliyor',
+  'accepted': 'Onaylandı',
+  'preparing': 'Hazırlanıyor',
+  'ready': 'Hazır',
+  'completed': 'Teslim edildi',
+  'rejected': 'Reddedildi',
+  'expired': 'Kafe şu an yoğun',
+  'cancelled': 'İptal edildi',
+  'no_show': 'Gelinmedi',
+};
+
+class AppOrderItem {
+  final String name;
+  final int qty;
+  final List<String> options;
+  final int lineTotal;
+  const AppOrderItem(this.name, this.qty, this.options, this.lineTotal);
+}
+
+class AppOrder {
+  final String id;
+  final String kind; // table | pickup
+  final String status;
+  final String? reason;
+  final String tableName;
+  final List<AppOrderItem> items;
+  final int total;
+  final String? orderNo;
+  final DateTime? pickupAt;
+  final DateTime createdAt;
+  final DateTime? expiresAt;
+
+  const AppOrder({
+    required this.id,
+    required this.kind,
+    required this.status,
+    this.reason,
+    this.tableName = '',
+    this.items = const [],
+    this.total = 0,
+    this.orderNo,
+    this.pickupAt,
+    required this.createdAt,
+    this.expiresAt,
+  });
+
+  static DateTime? _time(Object? v) {
+    if (v is String) return DateTime.tryParse(v)?.toLocal();
+    if (v is DateTime) return v.toLocal();
+    try {
+      return (v as dynamic)?.toDate() as DateTime?; // Firestore Timestamp
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static AppOrder fromDoc(String id, Map<String, dynamic> d) => AppOrder(
+        id: id,
+        kind: _str(d['kind'], 'table'),
+        status: _str(d['status'], 'pending'),
+        reason: d['reason'] is String ? d['reason'] as String : null,
+        tableName: _str(d['tableName']),
+        items: (d['items'] is List ? d['items'] as List : const [])
+            .whereType<Map>()
+            .map((i) => AppOrderItem(
+                  _str(i['name']),
+                  _int(i['qty'], 1),
+                  (i['options'] is List ? i['options'] as List : const []).whereType<Map>().map((o) => _str(o['name'])).toList(),
+                  _int(i['lineTotal']),
+                ))
+            .toList(),
+        total: _int(d['total']),
+        orderNo: d['orderNo'] is String ? d['orderNo'] as String : null,
+        pickupAt: _time(d['pickupAt']),
+        createdAt: _time(d['createdAt']) ?? DateTime.fromMillisecondsSinceEpoch(0),
+        expiresAt: _time(d['expiresAt']),
+      );
+
+  /// Sunucu süresi dolanı dakikada bir kapatır; uygulama beklemeden "yoğun" gösterir
+  String statusAt(DateTime now) =>
+      status == 'pending' && expiresAt != null && now.isAfter(expiresAt!) ? 'expired' : status;
+
+  bool activeAt(DateTime now) => const ['pending', 'accepted', 'preparing', 'ready'].contains(statusAt(now));
+
+  String get place => kind == 'pickup'
+      ? 'Gel-al'
+      : (RegExp(r'^\d+$').hasMatch(tableName) || tableName.isEmpty ? 'Masa $tableName' : tableName);
+
+  String get itemsText => items.map((i) => '${i.qty}× ${i.name}${i.options.isEmpty ? '' : ' (${i.options.join(', ')})'}').join(', ');
 }

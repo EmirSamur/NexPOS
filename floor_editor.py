@@ -165,6 +165,9 @@ class PlanItem(QGraphicsObject):
             sub = f"👤 {self.info.get('capacity', 0)}"
         if not self.editable and self.status.get('ready'):
             sub = f"🔔 {sub}"  # mutfakta/barda hazır ürün var
+        if not self.editable and self.status.get('calls'):
+            # uygulamadan garson çağır / hesap iste
+            sub = "".join({'waiter': "🙋", 'bill': "🧾"}.get(k, '') for k in self.status['calls']) + f" {sub}"
         bottom = QRectF(rect.x() + 6, rect.y() + rect.height() * 0.52, rect.width() - 12, rect.height() * 0.36)
         # Yuvarlak/küçük masada "tutar · süre" sığmazsa iki satıra bölünür
         usable = bottom.width() * (0.75 if shape == 'round' else 1.0)

@@ -312,10 +312,17 @@ def get_tables_by_region(region_id):
     legacy = {r['masa_id']: r for r in conn.execute("""SELECT masa_id, toplam_tutar, tarih FROM orders
         WHERE durum IN ('hazirlaniyor','bekliyor')""")}
     ready = {r['order_id'] for r in conn.execute("SELECT DISTINCT order_id FROM pos_tickets WHERE status='ready'")}
+    # Uygulamadan garson çağır / hesap iste (11b): masada 🙋 / 🧾
+    calls = {}
+    for r in conn.execute("SELECT data FROM cloud_cache WHERE collection='tableCalls'"):
+        c = json.loads(r['data'])
+        if c.get('status') == 'open':
+            calls.setdefault(c.get('tableId'), []).append(c.get('kind'))
     conn.close()
     result = []
     for r in rows:
         t = dict(r)
+        t['calls'] = sorted(calls.get(t.get('cloud_id'), []), reverse=True)
         order = open_orders.get(t.get('cloud_id'))
         if order:
             t['toplam_tutar'] = order['total'] / 100

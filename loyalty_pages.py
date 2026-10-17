@@ -520,6 +520,10 @@ class CustomerEditDialog(QDialog):
         form.addRow("Telefon:", self.phone)
         form.addRow("Doğum günü:", self.birth)
         form.addRow("Kampanya bildirimi:", self.consent)
+        # Gel-al siparişine üst üste gelmeyen müşteriye gel-al kapanır (11b); buradan açılır
+        self.unblock = QCheckBox(f"Gel-al kapalı ({c.get('noShows', 0)} kez gelmedi) — yeniden aç")
+        self.unblock.setVisible(c.get('pickupBlocked') is True)
+        form.addRow(self.unblock)
         self.error = QLabel()
         self.error.setStyleSheet(f"color: {COLORS['danger']}; background: transparent;")
         form.addRow(self.error)
@@ -542,6 +546,8 @@ class CustomerEditDialog(QDialog):
             return
         self.data = {'name': self.name.text().strip(), 'phone': phone, 'birthDate': birth,
                      'marketingConsent': self.consent.value()}
+        if self.unblock.isVisible() and self.unblock.isChecked():
+            self.data['pickupBlocked'] = False
         self.accept()
 
 

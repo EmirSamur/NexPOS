@@ -28,6 +28,16 @@ class AppState extends ChangeNotifier {
   Set<String> favorites = {};
   String? error;
 
+  // Sipariş (11b)
+  List<CartItem> cart = const [];
+  TableRef? table; // masadaki QR ile açıldıysa
+  String? tableError;
+  OrderingInfo? ordering;
+  List<AppOrder> appOrders = const [];
+  VoidCallback? requestLogin; // misafir sipariş vermek isterse giriş ekranı (Root bağlar)
+  String? notice; // tek seferlik bildirim: "Siparişin hazır" gibi (ekran gösterip temizler)
+  final _lastStatus = <String, String>{};
+
   final _subs = <StreamSubscription>[];
   final _customerSubs = <StreamSubscription>[];
 
@@ -50,6 +60,7 @@ class AppState extends ChangeNotifier {
     _subs.add(repo.appInfo().listen((i) => _set(() => info = i), onError: _onError));
     _subs.add(repo.authChanges().listen(_onAuth, onError: _onError));
     repo.favorites().then((f) => _set(() => favorites = f));
+    if (table == null) refreshOrdering();
   }
 
   void _set(VoidCallback fn) {
@@ -95,7 +106,94 @@ class AppState extends ChangeNotifier {
       _set(() => customer = c);
     }, onError: _onError));
     _customerSubs.add(repo.rewards(id).listen((r) => _set(() => rewards = r), onError: _onError));
+    _customerSubs.add(repo.appOrders(id).listen(_onAppOrders, onError: _onError));
     notifyListeners();
+    refreshOrdering(); // gel-al bu müşteriye kapalı olabilir
+  }
+
+  void _onAppOrders(List<AppOrder> list) {
+    for (final o in list) {
+      final before = _lastStatus[o.id];
+      if (before != null && before != o.status) {
+        final no = o.orderNo != null ? ' (${o.orderNo})' : '';
+        notice = switch (o.status) {
+          'accepted' => '✓ ${o.place}: siparişin onaylandı, hazırlanıyor.',
+          'ready' => o.kind == 'pickup' ? '🔔 Siparişin hazır$no — gelip alabilirsin.' : '🔔 Siparişin hazır$no, birazdan masanda.',
+          'rejected' => 'Sipariş alınamadı: ${o.reason ?? ''}',
+          'expired' => 'Kafe şu an yoğun; siparişin onaylanamadı.',
+          _ => notice,
+        };
+      }
+      _lastStatus[o.id] = o.status;
+    }
+    _set(() => appOrders = list);
+  }
+
+  List<AppOrder> get activeOrders => appOrders.where((o) => o.activeAt(clock())).toList();
+
+  // ------------------------------------------------------------ sipariş
+  Future<void> refreshOrdering() async {
+    try {
+      final info = await repo.orderingInfo(tableId: table?.id, token: table?.token);
+      _set(() => ordering = info);
+    } catch (e) {
+      _set(() => ordering = null);
+    }
+  }
+
+  /// Masadaki QR okutuldu (web adresi ya da uygulama bağlantısı)
+  Future<void> openTable(String tableId, String token) async {
+    try {
+      final info = await repo.orderingInfo(tableId: tableId, token: token);
+      _set(() {
+        ordering = info;
+        table = info.table;
+        tableError = null;
+      });
+    } on AppError catch (e) {
+      _set(() => tableError = e.message);
+    }
+  }
+
+  void leaveTable() {
+    table = null;
+    refreshOrdering();
+  }
+
+  bool get canOrderAtTable => table != null && (ordering?.tableOrders ?? false);
+  bool get canPickup => ordering?.pickup ?? false;
+  bool get canOrder => canOrderAtTable || canPickup;
+  int get cartCount => cart.fold(0, (s, i) => s + i.qty);
+
+  void addItem(CartItem item) => _set(() => cart = addToCart(cart, item));
+
+  void setQty(String key, int qty) => _set(() => cart = [
+        for (final c in cart)
+          if (c.key != key) c else if (qty > 0) c.copyWith(qty: qty.clamp(1, 20)),
+      ]);
+
+  void clearCart() => _set(() => cart = const []);
+
+  /// Sepeti gönderir; isteğin kimliğini döndürür
+  Future<String> submitOrder({required String kind, PickupChoice? pickup, String note = ''}) async {
+    final id = await repo.createAppOrder(
+      kind: kind,
+      items: cart,
+      table: kind == 'table' ? table : null,
+      pickup: pickup,
+      note: note,
+      expectedTotal: cartTotal(cart),
+    );
+    _set(() => cart = const []);
+    return id;
+  }
+
+  Future<bool> callTable(String kind) => repo.callTable(table!, kind);
+
+  String? takeNotice() {
+    final n = notice;
+    notice = null;
+    return n;
   }
 
   Future<void> _dropCustomer() async {
@@ -105,6 +203,8 @@ class AppState extends ChangeNotifier {
     customerId = null;
     customer = null;
     rewards = const [];
+    appOrders = const [];
+    _lastStatus.clear();
     for (final s in subs) {
       await s.cancel();
     }

@@ -465,6 +465,33 @@ Siparişi değiştiren her işlem bir **callable function** üzerinden yapılır
 - Fonksiyonlar: `updateMyProfile`, `deleteMyAccount` (KVKK silme + Auth kullanıcısı silinir), `getLoyaltyQr`,
   `myOrders` (son adisyonlar, özet).
 
+### `appOrders/{id}`: uygulamadan gelen sipariş isteği (11b; yalnızca fonksiyonlar yazar)
+```ts
+{
+  kind: "table"|"pickup", tableId?, tableName?,
+  customerId, customerName, customerTier, uid,
+  items: [{ productId, name, qty, unitPrice, options: [{ groupId, optionId, name, priceDelta }], note, lineTotal }],
+  total,                       // sunucu menüden hesaplar (uygulamanın fiyatına güvenilmez)
+  note, pickupAt?: ISO,        // gel-al geliş saati
+  status: "pending"|"accepted"|"preparing"|"ready"|"completed"|"rejected"|"expired"|"cancelled"|"no_show",
+  reason?,                     // red gerekçesi / "Kafe şu an yoğun."
+  orderId?, orderNo?, ticketIds: [],   // kasa onaylayınca açılan adisyon ve fişler
+  createdAt: ISO, expiresAt: Timestamp (createdAt + acceptMinutes), acceptedAt?, readyAt?, completedAt?
+}
+```
+> Okuma: sahibi müşteri, manager+ ve terminal. Akış: `createAppOrder` (müşteri) → NexPOS adisyonu kuyrukla açar,
+> `acceptAppOrder` ile bildirir (ya da `rejectAppOrder`) → fiş Başla/Hazır → istek `preparing` / `ready` →
+> adisyon ödenince `completed`, iptal edilince `cancelled`. Süresi dolan istek `expired` (`expireAppOrders`,
+> dakikada bir). `cancelMyAppOrder` (yalnızca bekleyen), `appOrderNoShow` (gel-al; `customers.noShows`,
+> 2'de `pickupBlocked`). `appOrderingInfo`: kasa çevrimiçi mi, masadan/gel-al açık mı, masa adı (giriş gerekmez).
+
+### `tableCalls/{tableId}_{waiter|bill}`: masadan garson çağır / hesap iste (11b)
+```ts
+{ tableId, tableName, kind: "waiter"|"bill", status: "open"|"done", at: ISO, by?: customerId, doneBy?, doneAt? }
+```
+> `callTable` (masa QR'ı ile, giriş gerekmez; açık çağrı tekrar açılmaz). Garson "Tamam" → kuyruk işlemi
+> `ackTableCall { callId, at }` (sonradan yeniden açılan çağrıyı kapatmaz). Okuma: personel ve terminal.
+
 ### `loyaltyTokens/{token}`: kasada okutulan QR
 ```ts
 { uid, expiresAt }                 // 60 saniye geçerli; uygulama sürekli yeniler

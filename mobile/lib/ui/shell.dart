@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../state.dart';
+import 'common.dart';
 import 'home.dart';
 import 'login.dart';
 import 'menu.dart';
+import 'order.dart';
 import 'profile.dart';
 
 /// Giriş durumuna göre ekran: yükleniyor · giriş · profil formu · uygulama (misafir de menüyü görür)
@@ -15,11 +17,13 @@ class Root extends StatefulWidget {
 }
 
 class _RootState extends State<Root> {
-  bool _guest = false;
+  // Masadaki QR ile gelen müşteri önce menüyü görür; giriş sipariş gönderirken istenir
+  late bool _guest = AppScope.read(context).table != null;
 
   @override
   Widget build(BuildContext context) {
     final s = AppScope.of(context);
+    s.requestLogin = () => setState(() => _guest = false);
     switch (s.phase) {
       case Phase.loading:
         return const Scaffold(body: Center(child: CircularProgressIndicator()));
@@ -43,7 +47,40 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
-  int _tab = 0;
+  late int _tab;
+  AppState? _state;
+
+  @override
+  void initState() {
+    super.initState();
+    _tab = AppScope.read(context).table != null ? 1 : 0; // masadaki QR ile açılınca menüden başlar
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final s = AppScope.of(context);
+    if (!identical(s, _state)) {
+      _state?.removeListener(_showNotice);
+      _state = s..addListener(_showNotice);
+    }
+  }
+
+  @override
+  void dispose() {
+    _state?.removeListener(_showNotice);
+    super.dispose();
+  }
+
+  // "Siparişin hazır" gibi bildirimler hangi ekranda olunursa olsun görünür
+  void _showNotice() {
+    final n = _state?.notice;
+    if (n == null || !mounted) return;
+    _state!.takeNotice();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) showMessage(context, n);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -53,7 +90,11 @@ class _HomeShellState extends State<HomeShell> {
       ProfileTab(onLogin: widget.onLogin),
     ];
     return Scaffold(
-      body: IndexedStack(index: _tab, children: pages),
+      body: Column(children: [
+        const TableBanner(),
+        Expanded(child: IndexedStack(index: _tab, children: pages)),
+        const CartBar(),
+      ]),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
         onDestinationSelected: (i) => setState(() => _tab = i),

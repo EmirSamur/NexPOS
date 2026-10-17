@@ -87,4 +87,35 @@ void main() {
     expect(r.usableOn('2026-10-17'), isFalse);
     expect(birthdayLabel('10-18'), '18 Ekim');
   });
+
+  test('masa QR adresi', () {
+    expect(parseTableLink(Uri.parse('https://kafe.web.app/masa/t4?t=abc')), ('t4', 'abc'));
+    expect(parseTableLink(Uri.parse('https://kafe.web.app/masa/t4')), isNull);
+    expect(parseTableLink(Uri.parse('https://kafe.web.app/')), isNull);
+  });
+
+  test('seçenek kuralı ve sepet birleştirme', () {
+    const g = OptionGroup(id: 'e', name: 'Ekstra', multi: true, max: 2);
+    const size = OptionGroup(id: 's', name: 'Boy', required: true, min: 1);
+    expect(optionProblem(size, 0), 'Boy seçin');
+    expect(optionProblem(g, 3), 'Ekstra: en fazla 2 seçim');
+    expect(optionProblem(g, 0), isNull);
+    const p = Product(id: 'latte', categoryId: 'k', name: 'Latte', price: 9500);
+    const oat = PickedOption('sut', OptionItem(id: 'oat', name: 'Yulaf', priceDelta: 1500));
+    var cart = addToCart(const [], const CartItem(p, options: [oat]));
+    cart = addToCart(cart, const CartItem(p, options: [oat], qty: 2));
+    cart = addToCart(cart, const CartItem(p));
+    expect(cart.map((c) => c.qty), [3, 1]);
+    expect(cartTotal(cart), 3 * 11000 + 9500);
+    expect(cart.first.toRequest(), {'productId': 'latte', 'qty': 3, 'options': [{'groupId': 'sut', 'optionId': 'oat'}]});
+  });
+
+  test('onay süresi dolan istek "yoğun" görünür', () {
+    final o = AppOrder(id: 'a', kind: 'table', status: 'pending', tableName: '4',
+        createdAt: DateTime(2026, 10, 16, 15), expiresAt: DateTime(2026, 10, 16, 15, 2));
+    expect(o.statusAt(DateTime(2026, 10, 16, 15, 1)), 'pending');
+    expect(o.statusAt(DateTime(2026, 10, 16, 15, 3)), 'expired');
+    expect(o.activeAt(DateTime(2026, 10, 16, 15, 3)), isFalse);
+    expect(o.place, 'Masa 4');
+  });
 }

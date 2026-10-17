@@ -743,3 +743,84 @@ def test_kampanya_panelden_kasada_internetsiz_bulutla_ayni(db, client):
     local = reports.contribution(o)
     assert stats['campaign'] == local['campaign'] == 6750
     assert stats['byCampaign'][nth]['amount'] == local['byCampaign'][nth]['amount'] == 4750
+
+
+def _phone_session(client, phone):
+    """Müşteri uygulamasının SMS girişi (emülatörde kod REST ile okunur)."""
+    import requests
+    from cloud.firebase_client import Session
+    base = client.config.auth_base
+    key = {'key': client.config.api_key}
+    sent = requests.post(f'{base}/accounts:sendVerificationCode', params=key, json={'phoneNumber': phone}, timeout=10).json()
+    codes = requests.get('http://127.0.0.1:9099/emulator/v1/projects/demo-nexpos/verificationCodes', timeout=10).json()
+    code = [c for c in codes['verificationCodes'] if c['phoneNumber'] == phone][-1]['code']
+    t = requests.post(f'{base}/accounts:signInWithPhoneNumber', params=key,
+                      json={'sessionInfo': sent['sessionInfo'], 'code': code}, timeout=10).json()
+    return Session(uid=t['localId'], id_token=t['idToken'], refresh_token=t['refreshToken'], expires_at=0)
+
+
+def test_uygulama_siparisi_kasada_onay_adisyon_fis_hazir_kapanis(db, client):
+    import requests
+    import app_orders
+    import pos
+    from cloud.admin_api import AdminApi
+    from cloud.context import ctx
+    from cloud.pairing import pair_terminal
+    from cloud.sync import SyncEngine
+
+    requests.delete('http://127.0.0.1:8080/emulator/v1/projects/demo-nexpos/databases/(default)/documents',
+                    timeout=10).raise_for_status()
+    email = f'uygulama-{uuid.uuid4().hex[:6]}@kafe.test'
+    owner_id = create_owner(email)
+    creds, _ = pair_terminal(client, email, 'sahip-sifre-1', 'Kasa 1')
+    api = AdminApi(client, client.sign_in_with_password(email, 'sahip-sifre-1'))
+    engine = SyncEngine(client, creds)
+    api.save_modules({'loyalty': {'enabled': True}, 'app': {'enabled': True, 'tableOrders': True, 'pickup': True}})
+    cat = api.save_category({'name': 'Kahve', 'station': 'bar', 'stampEligible': True})['id']
+    latte = api.save_product({'categoryId': cat, 'name': 'Latte', 'price': 9500})['id']
+    area = api.save_area('Salon')['id']
+    plan = api.save_floor_plan(area, 0, [{'tempId': 'm4', 'name': '4', 'shape': 'square', 'capacity': 4, 'x': 60, 'y': 60,
+                                          'w': 120, 'h': 120, 'rotation': 0}], [])
+    table_id = plan['created']['m4']
+    engine.run_once()
+    token = db.menu_item('tables', table_id)['qrToken']
+    user = db.login_with_pin(owner_id, '482913')
+
+    # Müşteri: telefonla giriş, üyelik, masadan sipariş ve garson çağır
+    s = _phone_session(client, '+905321119900')
+    client.call('linkCustomer', {'name': 'Ayşe K.', 'marketingConsent': False, 'kvkkAccepted': True}, s)
+    s = client.ensure_fresh(s)
+    r = client.call('createAppOrder', {'kind': 'table', 'tableId': table_id, 't': token,
+                                       'items': [{'productId': latte, 'qty': 2}]}, s)
+    client.call('callTable', {'tableId': table_id, 't': token, 'kind': 'waiter'}, None)
+
+    # Kasa: senkronla iner, onaylanınca masanın adisyonu ve bar fişi açılır, üye bağlanır
+    ctx.engine = engine
+    try:
+        status = engine.run_once()
+        assert {'appOrders', 'tableCalls'} <= status.changed
+        req = app_orders.pending()[0]
+        assert (req['id'], req['total'], req['customerName']) == (r['id'], 19000, 'Ayşe K.')
+        assert app_orders.calls_by_table() == {table_id: ['waiter']}
+        order = app_orders.accept(user, req)
+        app_orders.ack_call(user, app_orders.open_calls()[0])
+    finally:
+        ctx.engine = None
+    assert order['tableId'] == table_id and order['total'] == 19000 and order['customer']['name'] == 'Ayşe K.'
+    status = engine.run_once()
+    assert status.online and db.outbox_counts() == (0, 0), db.get_failed_ops()
+    cloud_order = client.get_doc(f"orders/{order['id']}", api.session)[1]
+    assert cloud_order['total'] == 19000 and cloud_order['customer']['name'] == 'Ayşe K.'
+    cloud_req = client.get_doc(f"appOrders/{r['id']}", api.session)[1]
+    assert (cloud_req['status'], cloud_req['orderId'], cloud_req['orderNo']) == ('accepted', order['id'], order['no'])
+    assert client.get_doc(f'tableCalls/{table_id}_waiter', api.session)[1]['status'] == 'done'
+
+    # Fiş Panosu'ndan Hazır → müşteriye "hazır"; ödeme → tamamlandı
+    ticket = next(t for t in pos.tickets(('new',)) if t['orderId'] == order['id'])
+    pos.set_ticket_status(user, ticket['id'], 'ready')
+    engine.run_once()
+    assert client.get_doc(f"appOrders/{r['id']}", api.session)[1]['status'] == 'ready'
+    pos.take_payment(user, order['id'], 'card', 19000)
+    engine.run_once()
+    assert client.get_doc(f"appOrders/{r['id']}", api.session)[1]['status'] == 'completed'
+    assert db.outbox_counts() == (0, 0)

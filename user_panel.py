@@ -29,6 +29,10 @@ class UserPanel(QWidget):
         super().__init__(parent)
         self.user = user_data
         self._setup_ui()
+        # Onay süresi dolan istekler düğmeden düşsün
+        self._incoming_timer = QTimer(self)
+        self._incoming_timer.timeout.connect(self._update_incoming_button)
+        self._incoming_timer.start(15000)
 
     def _setup_ui(self):
         main = QVBoxLayout(self)
@@ -116,6 +120,15 @@ class UserPanel(QWidget):
         btn_yenile.clicked.connect(lambda: self._switch_tab(self.pages.currentIndex()))
         ly.addWidget(btn_yenile)
 
+        # Uygulamadan gelen siparişler ve masa çağrıları (11b)
+        self.btn_incoming = QPushButton()
+        self.btn_incoming.setCursor(Qt.PointingHandCursor)
+        self.btn_incoming.clicked.connect(self._show_incoming)
+        ly.addWidget(self.btn_incoming)
+        self._incoming_dialog = None
+        self._seen_incoming = None
+        self._update_incoming_button()
+
         btn_duyuru = QPushButton(f"{ICONS['bell']} Duyurular")
         btn_duyuru.setObjectName("ghostBtn")
         btn_duyuru.clicked.connect(lambda: InfoDialog("Bildirim Merkezi", "Şu an için yeni bir duyuru bulunmamaktadır.\n(Yakında: Mutfağın ilettiği uyarılar burada listelenecektir)", COLORS['info'], self).exec())
@@ -179,6 +192,50 @@ class UserPanel(QWidget):
             self._refresh_bolgeler()
         elif self.pages.currentIndex() == 1:
             self.ticket_board.refresh()
+
+    # ------------------------------------------------ uygulama siparişleri (11b)
+    def _update_incoming_button(self):
+        import app_orders
+        from app_order_pages import incoming_count
+        self.btn_incoming.setVisible(app_orders.enabled())
+        n = incoming_count()
+        self.btn_incoming.setText(f"📲 Gelen siparişler ({n})" if n else "📲 Gelen siparişler")
+        hot = f"background: {COLORS['warning']}; color: white; border: none;" if n else \
+            f"background: white; color: {COLORS['text_dark']}; border: 1px solid {COLORS['border']};"
+        self.btn_incoming.setStyleSheet(f"QPushButton {{ {hot} border-radius: 8px; padding: 10px 14px; "
+                                        f"font-size: 13px; font-weight: bold; }}")
+
+    def on_app_orders_changed(self):
+        """Yeni istek ya da masa çağrısı indi: ses, bildirim, düğme ve masalar tazelenir."""
+        from PySide6.QtWidgets import QApplication
+
+        import app_orders
+        current = {r['id'] for r in app_orders.pending()} | {c['id'] + c.get('at', '') for c in app_orders.open_calls()}
+        new = current - (self._seen_incoming or set())
+        if self._seen_incoming is not None and new and app_orders.enabled():
+            QApplication.beep()
+            ToastNotification(self, f"📲 Uygulamadan {len(new)} yeni istek var.", "info")
+        self._seen_incoming = current
+        self._update_incoming_button()
+        if self._incoming_dialog and self._incoming_dialog.isVisible():
+            self._incoming_dialog.refresh()
+        if self.pages.currentIndex() == 0:
+            self._refresh_bolgeler()
+
+    def _show_incoming(self):
+        from app_order_pages import IncomingOrdersDialog
+        if self._incoming_dialog is None:
+            self._incoming_dialog = IncomingOrdersDialog(self.user, self)
+            self._incoming_dialog.open_order.connect(self._open_takeaway)
+            self._incoming_dialog.changed.connect(self._after_incoming_action)
+        self._incoming_dialog.refresh()
+        self._incoming_dialog.show()
+        self._incoming_dialog.raise_()
+
+    def _after_incoming_action(self):
+        self._update_incoming_button()
+        if self.pages.currentIndex() == 0:
+            self._refresh_bolgeler()
 
     def on_menu_changed(self):
         """Menü buluttan güncellendiğinde (fiyat, tükendi) açık ekranları tazeler."""

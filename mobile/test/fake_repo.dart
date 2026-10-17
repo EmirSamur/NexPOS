@@ -8,6 +8,7 @@ class FakeRepo implements Repo {
   final _auth = StreamController<AuthUser?>.broadcast();
   final _customer = StreamController<Customer?>.broadcast();
   final _rewards = StreamController<List<Reward>>.broadcast();
+  final _orders = StreamController<List<AppOrder>>.broadcast();
   AuthUser? user;
   String? claim;
   String? sentTo;
@@ -22,6 +23,11 @@ class FakeRepo implements Repo {
   final Set<String> favs = {};
   bool deleted = false;
   int qrCount = 0;
+  OrderingInfo ordering = const OrderingInfo(online: true, tableOrders: true, pickup: true, cafeName: 'Velvet Kafe');
+  final tables = {'t4': 'tok4'};
+  final sent = <Map<String, dynamic>>[];
+  final calls = <String>[];
+  List<AppOrder> orderList = [];
 
   FakeRepo({
     this.menuData = const MenuData(),
@@ -132,6 +138,71 @@ class FakeRepo implements Repo {
     deleted = true;
     await signOut();
   }
+
+  @override
+  Future<OrderingInfo> orderingInfo({String? tableId, String? token}) async {
+    if (tableId != null && tables[tableId] != token) throw const AppError("Masa QR'ı geçersiz.");
+    return OrderingInfo(
+      online: ordering.online,
+      tableOrders: ordering.tableOrders,
+      pickup: ordering.pickup,
+      prepMinutes: ordering.prepMinutes,
+      cafeName: ordering.cafeName,
+      table: tableId == null ? null : TableRef(id: tableId, token: token!, name: '4', label: 'Masa 4'),
+    );
+  }
+
+  @override
+  Future<String> createAppOrder({
+    required String kind,
+    required List<CartItem> items,
+    TableRef? table,
+    PickupChoice? pickup,
+    String note = '',
+    int? expectedTotal,
+  }) async {
+    final id = 'ao${sent.length + 1}';
+    sent.add({
+      'kind': kind,
+      'items': [for (final i in items) i.toRequest()],
+      'tableId': table?.id,
+      'pickup': pickup?.toRequest(),
+      'note': note,
+      'expectedTotal': expectedTotal,
+    });
+    pushOrders([
+      AppOrder(
+        id: id,
+        kind: kind,
+        status: 'pending',
+        tableName: table?.name ?? '',
+        total: expectedTotal ?? 0,
+        items: [for (final i in items) AppOrderItem(i.product.name, i.qty, [i.optionsText], i.total)],
+        createdAt: DateTime.now(),
+        expiresAt: DateTime.now().add(const Duration(minutes: 2)),
+      ),
+      ...orderList,
+    ]);
+    return id;
+  }
+
+  void pushOrders(List<AppOrder> list) {
+    orderList = list;
+    _orders.add(list);
+  }
+
+  @override
+  Future<void> cancelAppOrder(String id) async {}
+
+  @override
+  Future<bool> callTable(TableRef table, String kind) async {
+    final fresh = !calls.contains(kind);
+    calls.add(kind);
+    return fresh;
+  }
+
+  @override
+  Stream<List<AppOrder>> appOrders(String customerId) => _seeded(() => orderList, _orders);
 
   @override
   Future<Set<String>> favorites() async => {...favs};

@@ -63,6 +63,8 @@ Kafe ve restoran işletmelerinin masa takibi, sipariş yönetimi, finansal rapor
 ### Müşteri Uygulaması (Flutter — Android + web)
 - SMS ile giriş, KVKK onayı; kasada açılmış üyelik aynı numarayla gelir
 - Dijital sadakat kartı, ödüller, 60 sn'de dönen QR, kampanyalar, menü (alerjen, kafein, tükendi), favoriler
+- Masadaki QR ile sipariş (uygulama indirmeden tarayıcıda), gel-al, canlı sipariş durumu, garson çağır / hesap iste;
+  siparişler NexPOS'ta "📲 Gelen siparişler"e düşer, onaylanınca normal adisyon olur
 - Kafeye özel derlenir: ad, logo, renkler `mobile/assets/brand.json`'dan ([KURULUM.md](KURULUM.md))
 
 ### Teknik
@@ -102,6 +104,7 @@ nexpos/
 ├── cloud/             # Firebase REST istemcisi, senkron motoru, terminal eşleme
 ├── firebase/          # Firestore kuralları, Cloud Functions ve emülatör testleri
 ├── mobile/            # Müşteri uygulaması (Flutter; kafeye özel ayar: assets/brand.json)
+├── app_orders.py      # Uygulamadan gelen siparişler: onay → adisyon + fişler, red, gelmedi, masa çağrıları
 ├── docs/              # Mimari ve veri modeli
 ├── tests/             # pytest testleri
 ├── admin_panel.py     # Yönetici paneli (dashboard, ürün, masa, kullanıcı, raporlar)

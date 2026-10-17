@@ -137,6 +137,8 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("Yetki matrisi güncellendi.", 5000)
         if 'kitchenTickets' in status.changed:
             self._on_tickets_changed()
+        if self.user_panel and status.changed & {'appOrders', 'tableCalls', 'modules'}:
+            self.user_panel.on_app_orders_changed()
         # Mutfak ekranı internetten çalışır: bağlantı koparsa kasaya bir kez uyarı düşer
         was_online, self._was_online = getattr(self, '_was_online', True), status.online
         if was_online and not status.online and self._current_user and database.modules()['kds']['enabled']:

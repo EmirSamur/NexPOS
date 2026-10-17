@@ -17,6 +17,7 @@ const { getAuth } = require('firebase-admin/auth');
 const { getFirestore, FieldValue, Timestamp } = require('firebase-admin/firestore');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { onSchedule } = require('firebase-functions/v2/scheduler');
 
 const {
   ROLES,
@@ -62,6 +63,7 @@ const shiftCalc = require('./src/shifts');
 const { OrderError, applyOrderOp, mergeOrders, tableStatusFor, stampCount, computeTotals } = require('./src/orders');
 const loyaltyCalc = require('./src/loyalty');
 const campaignCalc = require('./src/campaigns');
+const appOrderCalc = require('./src/appOrders');
 const { businessDayOf, contribution, refundContribution, merge } = require('./src/stats');
 
 initializeApp();
@@ -719,6 +721,13 @@ function orderHandler(op) {
       products = ids.length ? await tx.getAll(...ids.map((x) => db.doc(`products/${x}`))) : [];
     }
 
+    // Uygulama siparişleri (11b): adisyon kapanınca / iptal edilince bağlı istekler tamamlanır
+    let appOrderSnaps = [];
+    if ((op === 'takePayment' || op === 'cancelOrder') && order?.status === 'open') {
+      appOrderSnaps = (await tx.get(db.collection('appOrders').where('orderId', '==', order.id))).docs
+        .filter((d) => ['accepted', 'preparing', 'ready'].includes(d.data().status));
+    }
+
     // Sadakat (10. ekran): kapanışta damga ve ödül, iadede damga geri alma
     let loyalty = null;
     if (order?.customer && ((op === 'takePayment' && order.status === 'open') || op === 'refundPayment')) {
@@ -816,6 +825,14 @@ function orderHandler(op) {
       }
     }
 
+    if (appOrderSnaps.length && (next.status === 'paid' || next.status === 'cancelled')) {
+      const status = next.status === 'paid' ? 'completed' : 'cancelled';
+      for (const d of appOrderSnaps) {
+        tx.update(d.ref, { status, ...(status === 'cancelled' ? { reason: 'Kasada iptal edildi.' } : { completedAt: at }),
+          updatedAt: now });
+      }
+    }
+
     // Ödeme kaydı (kasa ve raporlar için ayrı koleksiyon)
     if (op === 'takePayment') {
       const pay = next.payments[next.payments.length - 1];
@@ -877,6 +894,7 @@ OP_HANDLERS.updateTicket = async (tx, { op, staff }) => {
   const ref = db.doc(`kitchenTickets/${p.ticketId}`);
   const snap = await tx.get(ref);
   if (!snap.exists) return { status: 'rejected', error: 'Fiş bulunamadı.' };
+  writeAppOrderProgress(tx, await readAppOrderProgress(tx, p.ticketId, p.status));
   tx.update(ref, { status: p.status, [`${p.status}At`]: op.createdAt, updatedAt: FieldValue.serverTimestamp() });
   return { status: 'ok' };
 };
@@ -1395,6 +1413,8 @@ exports.updateKitchenTicket = onCall(async (request) => {
     const t = snap.data();
     if (station !== 'all' && t.station !== station) throw new HttpsError('permission-denied', 'Bu fiş başka istasyonun.');
     if (t.status === 'served') throw new HttpsError('failed-precondition', 'Fiş teslim edilmiş.');
+    const progress = status !== undefined && status !== t.status ? await readAppOrderProgress(tx, ticketId, status) : [];
+    writeAppOrderProgress(tx, progress);
     const update = { updatedAt: FieldValue.serverTimestamp(), updatedByKds: terminalId };
     if (status !== undefined && status !== t.status) {
       update.status = status;
@@ -2053,7 +2073,9 @@ exports.saveCustomer = onCall(async (request) => {
     const now = FieldValue.serverTimestamp();
     if (before && before.phone !== data.phone) tx.delete(db.doc(`customerPhones/${before.phone}`));
     const consentAt = data.marketingConsent ? (before?.marketingConsent ? before.consentAt : new Date().toISOString()) : null;
-    if (before) tx.update(ref, { ...data, consentAt, updatedAt: now });
+    // Gelmediği için kapanan gel-al (11b) panelden yeniden açılır
+    const unblock = before?.pickupBlocked === true && request.data?.pickupBlocked === false ? { pickupBlocked: false, noShows: 0 } : {};
+    if (before) tx.update(ref, { ...data, ...unblock, consentAt, updatedAt: now });
     else {
       tx.set(ref, { ...data, consentAt, stamps: 0, lifetimeStamps: 0, tier: 'bronze', totalSpent: 0, visitCount: 0,
         lastVisitAt: null, source: 'panel', createdBy: actor.uid, deleted: false, createdAt: now, updatedAt: now });
@@ -2275,6 +2297,283 @@ exports.saveAppSettings = onCall(async (request) => {
     audit(tx, { action: 'app_settings', actor: actor.uid, target: 'settings/app' });
   });
   return data;
+});
+
+// ---------------------------------------------------------------------------
+// Uygulama siparişleri (11b): masadan QR sipariş, gel-al, garson çağır / hesap iste.
+//
+// Müşterinin sepeti appOrders/{id} isteği olur; fiyatı burada menüden hesaplanır. Kasa (NexPOS)
+// isteği onaylarken adisyonu ve fişleri kendisi açar (internetsiz düzen bozulmaz), onayı buraya
+// bildirir. Fişler hazırlandıkça istek "hazırlanıyor / hazır" olur; adisyon kapanınca tamamlanır.
+// ---------------------------------------------------------------------------
+
+const msOf = (v) => (v instanceof Timestamp ? v.toMillis() : typeof v === 'string' ? Date.parse(v) || 0 : 0);
+
+async function appSettings() {
+  const [modulesSnap, appSnap] = await Promise.all([db.doc('settings/modules').get(), db.doc('settings/app').get()]);
+  const app = appSnap.exists ? appSnap.data() : {};
+  return { modules: normalizeModules(modulesSnap.data()).app, cafeName: app.cafeName || '',
+    prepMinutes: app.pickupPrepMinutes || 10, acceptMinutes: app.acceptMinutes || 2 };
+}
+
+async function isKasaOnline() {
+  const snap = await db.collection('terminals').where('revoked', '==', false).get();
+  return appOrderCalc.kasaOnline(snap.docs.map((d) => ({ kind: d.data().kind, revoked: d.data().revoked,
+    lastSeenMs: msOf(d.data().lastSeenAt) })), Date.now());
+}
+
+// Masadaki QR: tables/{id}.qrToken ile eşleşmeli (başka masanın QR'ı tahmin edilemez)
+async function requireTable(tableId, token) {
+  if (typeof tableId !== 'string' || !/^[\w-]{1,128}$/.test(tableId) || typeof token !== 'string' || !token) {
+    throw new HttpsError('not-found', 'Masa QR\'ı geçersiz.');
+  }
+  const snap = await db.doc(`tables/${tableId}`).get();
+  if (!snap.exists || snap.data().deleted === true || snap.data().qrToken !== token) {
+    throw new HttpsError('not-found', 'Masa QR\'ı geçersiz ya da yenilenmiş; masadaki güncel QR\'ı okutun.');
+  }
+  return { id: tableId, name: snap.data().name || '' };
+}
+
+const tableLabel = (name) => (/^\d+$/.test(name) || !name ? `Masa ${name}` : name);
+
+// Uygulama açılınca / masa QR'ı okutulunca: sipariş alınıyor mu? (giriş gerekmez)
+exports.appOrderingInfo = onCall(async (request) => {
+  const d = request.data || {};
+  const s = await appSettings();
+  const table = d.tableId !== undefined ? await requireTable(d.tableId, d.t) : null;
+  const online = await isKasaOnline();
+  let pickupBlocked = false;
+  const cid = request.auth?.token?.customerId;
+  if (typeof cid === 'string' && cid) {
+    const c = await db.doc(`customers/${cid}`).get();
+    pickupBlocked = c.exists && c.data().pickupBlocked === true;
+  }
+  return {
+    online,
+    tableOrders: s.modules.enabled && s.modules.tableOrders,
+    pickup: s.modules.enabled && s.modules.pickup && !pickupBlocked,
+    pickupBlocked,
+    prepMinutes: s.prepMinutes,
+    cafeName: s.cafeName,
+    table: table ? { id: table.id, name: table.name, label: tableLabel(table.name) } : null,
+  };
+});
+
+exports.createAppOrder = onCall(async (request) => {
+  const c = await requireCustomer(request);
+  const d = request.data || {};
+  if (!['table', 'pickup'].includes(d.kind)) throw new HttpsError('invalid-argument', 'Sipariş türü geçersiz.');
+  const s = await appSettings();
+  const open = s.modules.enabled && (d.kind === 'table' ? s.modules.tableOrders : s.modules.pickup);
+  if (!open) throw new HttpsError('failed-precondition', d.kind === 'table' ? 'Masadan sipariş şu an kapalı.' : 'Gel-al şu an kapalı.');
+  if (!(await isKasaOnline())) throw new HttpsError('failed-precondition', 'Şu an çevrimiçi sipariş alınmıyor; lütfen kasaya başvurun.');
+  if (d.kind === 'pickup' && c.data.pickupBlocked === true) {
+    throw new HttpsError('failed-precondition', 'Gel-al siparişi hesabınıza kapalı; lütfen kafeyle görüşün.');
+  }
+  const table = d.kind === 'table' ? await requireTable(d.tableId, d.t) : null;
+
+  const ids = [...new Set((Array.isArray(d.items) ? d.items : []).map((i) => i?.productId).filter((x) => typeof x === 'string' && /^[\w-]{1,128}$/.test(x)))];
+  const products = ids.length ? await db.getAll(...ids.map((x) => db.doc(`products/${x}`))) : [];
+  const catIds = [...new Set(products.filter((x) => x.exists).map((x) => x.data().categoryId).filter(Boolean))];
+  const groupIds = [...new Set(products.filter((x) => x.exists).flatMap((x) => x.data().optionGroupIds || []))];
+  const [cats, groups] = await Promise.all([
+    catIds.length ? db.getAll(...catIds.map((x) => db.doc(`categories/${x}`))) : [],
+    groupIds.length ? db.getAll(...groupIds.map((x) => db.doc(`optionGroups/${x}`))) : [],
+  ]);
+  const toMap = (snaps) => new Map(snaps.filter((x) => x.exists).map((x) => [x.id, x.data()]));
+  let priced;
+  let pickupAt = null;
+  try {
+    priced = appOrderCalc.priceCart(d.items, { products: toMap(products), categories: toMap(cats), groups: toMap(groups) });
+    if (d.kind === 'pickup') pickupAt = new Date(appOrderCalc.pickupAt(d.pickup, Date.now(), s.prepMinutes)).toISOString();
+  } catch (e) {
+    if (e instanceof appOrderCalc.AppOrderError) throw new HttpsError('invalid-argument', e.message);
+    throw e;
+  }
+  const note = d.note === undefined || d.note === null ? '' : d.note;
+  if (typeof note !== 'string' || note.length > 200) throw new HttpsError('invalid-argument', 'Not en fazla 200 karakter olabilir.');
+  if (d.expectedTotal !== undefined && d.expectedTotal !== priced.total) {
+    throw new HttpsError('aborted', 'Menüde fiyat değişti; sepeti kontrol edip tekrar gönderin.');
+  }
+
+  const ref = db.collection('appOrders').doc();
+  const now = Date.now();
+  await db.runTransaction(async (tx) => {
+    const mine = await tx.get(db.collection('appOrders').where('customerId', '==', c.id));
+    const live = (doc) => appOrderCalc.ACTIVE.includes(doc.status) && !(doc.status === 'pending' && msOf(doc.expiresAt) < now);
+    if (mine.docs.filter((x) => live(x.data())).length >= appOrderCalc.MAX_ACTIVE_PER_CUSTOMER) {
+      throw new HttpsError('resource-exhausted', 'Bekleyen siparişleriniz var; hazırlanınca yenisini verebilirsiniz.');
+    }
+    if (table) {
+      const atTable = await tx.get(db.collection('appOrders').where('tableId', '==', table.id).where('status', '==', 'pending'));
+      if (atTable.docs.filter((x) => live(x.data())).length >= appOrderCalc.MAX_PENDING_PER_TABLE) {
+        throw new HttpsError('resource-exhausted', 'Bu masadan onay bekleyen siparişler var; biraz sonra tekrar deneyin.');
+      }
+    }
+    tx.set(ref, {
+      kind: d.kind, tableId: table?.id || null, tableName: table?.name || null,
+      customerId: c.id, customerName: c.data.name, customerTier: c.data.tier || 'bronze', uid: request.auth.uid,
+      items: priced.items, total: priced.total, note: note.trim(), pickupAt,
+      status: 'pending', reason: null, orderId: null, orderNo: null, ticketIds: [],
+      createdAt: new Date(now).toISOString(), expiresAt: Timestamp.fromMillis(now + s.acceptMinutes * 60_000),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  });
+  return { id: ref.id, total: priced.total, pickupAt };
+});
+
+// Müşteri onaylanmamış isteğini geri çeker
+exports.cancelMyAppOrder = onCall(async (request) => {
+  const c = await requireCustomer(request);
+  const ref = db.doc(`appOrders/${requireString(request.data?.id, 'Sipariş', { max: 64 })}`);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists || snap.data().customerId !== c.id) throw new HttpsError('not-found', 'Sipariş bulunamadı.');
+    if (snap.data().status !== 'pending') throw new HttpsError('failed-precondition', 'Onaylanmış sipariş uygulamadan iptal edilemez; kasaya başvurun.');
+    tx.update(ref, { status: 'cancelled', reason: 'Müşteri iptal etti.', updatedAt: FieldValue.serverTimestamp() });
+    return { status: 'cancelled' };
+  });
+});
+
+// Kasa onayı: NexPOS adisyonu ve fişleri kendisi açar; kimlikleri buraya bildirir
+exports.acceptAppOrder = onCall(async (request) => {
+  const { terminalId } = await requireTerminal(request);
+  const d = request.data || {};
+  const ref = db.doc(`appOrders/${requireString(d.id, 'Sipariş', { max: 64 })}`);
+  const orderId = requireString(d.orderId, 'Adisyon', { max: 64 });
+  const orderNo = requireString(d.orderNo, 'Adisyon numarası', { max: 12 });
+  const ticketIds = Array.isArray(d.ticketIds) ? d.ticketIds.filter((x) => typeof x === 'string' && x && x.length <= 64).slice(0, 4) : [];
+  const result = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new HttpsError('not-found', 'Sipariş bulunamadı.');
+    const a = snap.data();
+    if (a.status === 'accepted' && a.orderId === orderId) return { status: 'accepted' }; // tekrar deneme
+    if (a.status === 'cancelled') throw new HttpsError('failed-precondition', 'Müşteri siparişi iptal etti.');
+    if (a.status === 'pending' && msOf(a.expiresAt) < Date.now()) {
+      // Hata fırlatılırsa yazma geri alınır; süresi dolan istek önce kaydedilir, hata sonra döner
+      tx.update(ref, { status: 'expired', reason: 'Kafe şu an yoğun.', updatedAt: FieldValue.serverTimestamp() });
+      return { status: 'expired' };
+    }
+    if (a.status !== 'pending') throw new HttpsError('failed-precondition', 'Sipariş zaten işlenmiş.');
+    const at = new Date().toISOString();
+    tx.update(ref, { status: 'accepted', orderId, orderNo, ticketIds, acceptedAt: at, acceptedBy: d.staffId || null,
+      terminalId, updatedAt: FieldValue.serverTimestamp() });
+    return { status: 'accepted' };
+  });
+  if (result.status === 'expired') {
+    throw new HttpsError('failed-precondition', 'Onay süresi doldu; müşteriye "kafe şu an yoğun" denildi.');
+  }
+  return result;
+});
+
+exports.rejectAppOrder = onCall(async (request) => {
+  const { terminalId } = await requireTerminal(request);
+  const d = request.data || {};
+  const ref = db.doc(`appOrders/${requireString(d.id, 'Sipariş', { max: 64 })}`);
+  const reason = requireString(d.reason, 'Gerekçe', { max: 120 });
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new HttpsError('not-found', 'Sipariş bulunamadı.');
+    if (!['pending', 'expired'].includes(snap.data().status)) throw new HttpsError('failed-precondition', 'Sipariş zaten işlenmiş.');
+    tx.update(ref, { status: 'rejected', reason, rejectedBy: d.staffId || null, terminalId, updatedAt: FieldValue.serverTimestamp() });
+    return { status: 'rejected' };
+  });
+});
+
+// Gel-al siparişine gelinmedi: üst üste NO_SHOW_LIMIT kez olursa gel-al o müşteriye kapanır (panelden açılır)
+exports.appOrderNoShow = onCall(async (request) => {
+  const { terminalId } = await requireTerminal(request);
+  const d = request.data || {};
+  const ref = db.doc(`appOrders/${requireString(d.id, 'Sipariş', { max: 64 })}`);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists || snap.data().kind !== 'pickup') throw new HttpsError('not-found', 'Gel-al siparişi bulunamadı.');
+    const a = snap.data();
+    if (!['accepted', 'preparing', 'ready'].includes(a.status)) throw new HttpsError('failed-precondition', 'Sipariş açık değil.');
+    const cust = await tx.get(db.doc(`customers/${a.customerId}`));
+    const noShows = (cust.exists ? cust.data().noShows || 0 : 0) + 1;
+    const blocked = noShows >= appOrderCalc.NO_SHOW_LIMIT;
+    tx.update(ref, { status: 'no_show', reason: 'Gelinmedi.', terminalId, updatedAt: FieldValue.serverTimestamp() });
+    if (cust.exists) tx.update(cust.ref, { noShows, ...(blocked ? { pickupBlocked: true } : {}), updatedAt: FieldValue.serverTimestamp() });
+    audit(tx, { action: 'app_no_show', actor: d.staffId || terminalId, target: `appOrders/${ref.id}`, detail: a.customerId, terminalId });
+    return { status: 'no_show', pickupBlocked: blocked };
+  });
+});
+
+// Masadan "Garson çağır" / "Hesap iste" (giriş gerekmez; masa QR'ı yeter). Masa ve tür başına tek açık çağrı.
+exports.callTable = onCall(async (request) => {
+  const d = request.data || {};
+  if (!['waiter', 'bill'].includes(d.kind)) throw new HttpsError('invalid-argument', 'Çağrı türü geçersiz.');
+  const s = await appSettings();
+  if (!s.modules.enabled || !s.modules.tableOrders) throw new HttpsError('failed-precondition', 'Masadan çağrı şu an kapalı.');
+  const table = await requireTable(d.tableId, d.t);
+  if (!(await isKasaOnline())) throw new HttpsError('failed-precondition', 'Kasa şu an çevrimdışı; lütfen garsona seslenin.');
+  const ref = db.doc(`tableCalls/${table.id}_${d.kind}`);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists && snap.data().status === 'open') return { status: 'open', already: true };
+    tx.set(ref, { tableId: table.id, tableName: table.name, kind: d.kind, status: 'open', at: new Date().toISOString(),
+      by: request.auth?.token?.customerId || null, updatedAt: FieldValue.serverTimestamp() });
+    return { status: 'open', already: false };
+  });
+});
+
+// Garson çağrıyı gördü (kuyruktan; internetsiz de basılır)
+OP_HANDLERS.ackTableCall = async (tx, { op, staff }) => {
+  if (!staff) return { status: 'rejected', error: 'Personel bulunamadı.' };
+  const id = op.payload?.callId;
+  if (typeof id !== 'string' || !/^[\w-]{1,140}$/.test(id)) return { status: 'rejected', error: 'Çağrı geçersiz.' };
+  const ref = db.doc(`tableCalls/${id}`);
+  const snap = await tx.get(ref);
+  if (!snap.exists) return { status: 'ok' };
+  // Çağrı onaydan sonra yeniden açıldıysa (müşteri tekrar bastı) yenisini kapatma
+  if (snap.data().status === 'open' && (!op.payload.at || snap.data().at <= op.payload.at)) {
+    tx.update(ref, { status: 'done', doneBy: op.staffId, doneAt: op.createdAt, updatedAt: FieldValue.serverTimestamp() });
+  }
+  return { status: 'ok' };
+};
+
+// Fiş durumu değişince bağlı uygulama siparişinin durumu (okumalar; yazmadan önce çağrılır)
+async function readAppOrderProgress(tx, ticketId, newStatus) {
+  const q = await tx.get(db.collection('appOrders').where('ticketIds', 'array-contains', ticketId));
+  const out = [];
+  for (const doc of q.docs) {
+    const a = doc.data();
+    if (!['accepted', 'preparing', 'ready'].includes(a.status)) continue;
+    const statuses = [];
+    for (const id of a.ticketIds) {
+      if (id === ticketId) statuses.push(newStatus);
+      else {
+        const t = await tx.get(db.doc(`kitchenTickets/${id}`));
+        statuses.push(t.exists ? t.data().status : 'new');
+      }
+    }
+    const status = appOrderCalc.progressFrom(statuses);
+    if (status !== a.status) out.push([doc.ref, status]);
+  }
+  return out;
+}
+
+function writeAppOrderProgress(tx, changes) {
+  const at = new Date().toISOString();
+  for (const [ref, status] of changes) {
+    tx.update(ref, { status, [`${status}At`]: at, updatedAt: FieldValue.serverTimestamp() });
+  }
+}
+
+// Onaylanmamış istekler süresi dolunca "kafe şu an yoğun" olur (canlıda dakikada bir)
+exports.expireAppOrders = onSchedule('every 1 minutes', async () => {
+  const snap = await db.collection('appOrders').where('status', '==', 'pending').get();
+  const now = Date.now();
+  const batch = db.batch();
+  let n = 0;
+  for (const d of snap.docs) {
+    if (msOf(d.data().expiresAt) < now) {
+      batch.update(d.ref, { status: 'expired', reason: 'Kafe şu an yoğun.', updatedAt: FieldValue.serverTimestamp() });
+      n += 1;
+    }
+  }
+  if (n) await batch.commit();
 });
 
 // Kampanyalar (10. ekran): panelden (internet); kasa önbelleğe alır ve internetsiz uygular.

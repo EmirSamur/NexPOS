@@ -53,11 +53,24 @@
       {
         "source": "/mutfak",
         "destination": "/mutfak/index.html"
+      },
+      {
+        "source": "/masa/**",
+        "destination": "/index.html"
       }
     ],
     "headers": [
       {
         "source": "/mutfak/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      },
+      {
+        "source": "/index.html",
         "headers": [
           {
             "key": "Cache-Control",

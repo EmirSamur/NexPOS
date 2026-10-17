@@ -46,6 +46,20 @@ abstract class Repo {
 
   Future<Set<String>> favorites();
   Future<void> setFavorite(String productId, bool on);
+
+  // Sipariş (11b)
+  Future<OrderingInfo> orderingInfo({String? tableId, String? token});
+  Future<String> createAppOrder({
+    required String kind,
+    required List<CartItem> items,
+    TableRef? table,
+    PickupChoice? pickup,
+    String note = '',
+    int? expectedTotal,
+  });
+  Future<void> cancelAppOrder(String id);
+  Future<bool> callTable(TableRef table, String kind); // true: yeni çağrı, false: zaten çağrılmış
+  Stream<List<AppOrder>> appOrders(String customerId);
 }
 
 // =====================================================================
@@ -251,6 +265,50 @@ class FirebaseRepo implements Repo {
     await _call<Map>('deleteMyAccount');
     await auth.signOut();
   }
+
+  @override
+  Future<OrderingInfo> orderingInfo({String? tableId, String? token}) async {
+    final r = await _call<Map>('appOrderingInfo', {'tableId': ?tableId, 't': ?token});
+    return OrderingInfo.fromMap(Map<String, dynamic>.from(r), token: token);
+  }
+
+  @override
+  Future<String> createAppOrder({
+    required String kind,
+    required List<CartItem> items,
+    TableRef? table,
+    PickupChoice? pickup,
+    String note = '',
+    int? expectedTotal,
+  }) async {
+    final r = await _call<Map>('createAppOrder', {
+      'kind': kind,
+      'items': [for (final i in items) i.toRequest()],
+      if (table != null) 'tableId': table.id,
+      if (table != null) 't': table.token,
+      if (pickup != null) 'pickup': pickup.toRequest(),
+      if (note.isNotEmpty) 'note': note,
+      'expectedTotal': ?expectedTotal,
+    });
+    return r['id'] as String;
+  }
+
+  @override
+  Future<void> cancelAppOrder(String id) => _call<Map>('cancelMyAppOrder', {'id': id});
+
+  @override
+  Future<bool> callTable(TableRef table, String kind) async {
+    final r = await _call<Map>('callTable', {'tableId': table.id, 't': table.token, 'kind': kind});
+    return r['already'] != true;
+  }
+
+  @override
+  Stream<List<AppOrder>> appOrders(String customerId) => db
+      .collection('appOrders')
+      .where('customerId', isEqualTo: customerId)
+      .snapshots()
+      .map((q) => q.docs.map((d) => AppOrder.fromDoc(d.id, d.data())).toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt)));
 
   @override
   Future<Set<String>> favorites() async =>

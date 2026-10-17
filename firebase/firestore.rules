@@ -161,6 +161,17 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Uygulama siparişleri (11b): müşteri kendi isteklerini izler; kasa gelenleri görür. Yazma fonksiyonlardan.
+    match /appOrders/{id} {
+      allow read: if isManagerPlus() || isActiveTerminal()
+        || (customerId() != '' && resource.data.customerId == customerId());
+      allow write: if false;
+    }
+    match /tableCalls/{id} {
+      allow read: if isStaff() || isActiveTerminal();
+      allow write: if false;
+    }
+
     // Günlük özet (7. ekran): yalnızca yönetici ve müdür okur (telefondan rapor için hazırlık).
     match /dailyStats/{day} {
       allow read: if isManagerPlus();

@@ -31,14 +31,17 @@ const happyHour = Campaign(id: 'hh', name: 'Happy Hour', type: 'percent', value:
     from: '14:00', to: '17:00', description: 'Bütün kahvelerde');
 
 Future<(FakeRepo, AppState)> pump(WidgetTester tester, {Customer? existing, List<Reward> rewards = const [],
-    List<PastOrder> orders = const []}) async {
+    List<PastOrder> orders = const [], (String, String)? table, OrderingInfo? ordering}) async {
   tester.view.physicalSize = const Size(1170, 2532);
   tester.view.devicePixelRatio = 3;
   addTearDown(tester.view.reset);
   final repo = FakeRepo(menuData: menu, campaignList: const [happyHour], existing: existing)
     ..rewardList = rewards
     ..orders = orders;
-  final state = AppState(brand, repo, clock: () => DateTime(2026, 10, 16, 15, 0))..start();
+  if (ordering != null) repo.ordering = ordering;
+  final state = AppState(brand, repo, clock: () => DateTime(2026, 10, 16, 15, 0));
+  if (table != null) await state.openTable(table.$1, table.$2);
+  state.start();
   await tester.pumpWidget(KafeApp(state: state));
   await tester.pumpAndSettle();
   return (repo, state);
@@ -144,6 +147,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Yulaf sütü (+15,00 ₺)'), findsOneWidget);
     expect(find.text('Süt'), findsWidgets);
+    await tester.dragUntilVisible(find.text('190 kcal'), find.byType(ListView).last, const Offset(0, -200));
     expect(find.text('190 kcal'), findsOneWidget);
     expect(find.text('75 mg kafein'), findsOneWidget);
     expect(find.text('☕ Bu ürün sadakat kartına damga kazandırır.'), findsOneWidget);
@@ -172,5 +176,120 @@ void main() {
     expect(state.phase, Phase.signedOut);
     expect(state.customerId, isNull);
     expect(find.byKey(const Key('phone')), findsOneWidget); // giriş ekranına döndü
+  });
+
+  testWidgets('masadaki QR: menüden başlar, seçenekli ürün sepete, giriş, siparişi gönder, durum ve hazır bildirimi',
+      (tester) async {
+    final (repo, state) = await pump(tester, table: ('t4', 'tok4'));
+    // Giriş ekranı atlanır: misafir doğrudan menüyü görür
+    expect(find.text('Masa 4 · Velvet Kafe'), findsOneWidget);
+    expect(find.text('Latte'), findsOneWidget); // menü sekmesi açık
+    // Garson çağır: girişsiz de olur, tekrar basınca çoğalmaz
+    await tester.tap(find.text('Garson çağır'));
+    await tester.pumpAndSettle();
+    expect(find.text('Çağrın iletildi, garson geliyor.'), findsOneWidget);
+    await tester.tap(find.text('Garson çağır'));
+    await tester.pumpAndSettle();
+    expect(find.text('Çağrın zaten iletildi, garson geliyor.'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 5)); // bildirim kapansın
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Latte'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sepete ekle · 95,00 ₺'), findsOneWidget);
+    await tester.tap(find.text('Yulaf sütü (+15,00 ₺)'));
+    await tester.tap(find.byTooltip('Artır'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('addToCart')));
+    await tester.pumpAndSettle();
+    expect(find.text('Sepet · 2 ürün'), findsOneWidget);
+    expect(find.text('220,00 ₺'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('cartBar')));
+    await tester.pumpAndSettle();
+    expect(find.text('Yulaf sütü'), findsOneWidget);
+    expect(find.text('Siparişi gönder · Masa 4'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('sendOrder')));
+    await tester.pumpAndSettle();
+    // Misafir: giriş ekranı açılır, sepet korunur
+    expect(find.byKey(const Key('phone')), findsOneWidget);
+    expect(state.cartCount, 2);
+    repo.existing = const Customer(id: 'c1', name: 'Ayşe Kaya');
+    await login(tester);
+    await tester.pump(const Duration(seconds: 5)); // "giriş yap" bildirimi kapansın
+    await tester.pumpAndSettle();
+    expect(find.text('Sepet · 2 ürün'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('cartBar')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'pencere kenarı');
+    await tester.tap(find.byKey(const Key('sendOrder')));
+    await tester.pumpAndSettle();
+    expect(repo.sent.single, {
+      'kind': 'table',
+      'items': [
+        {'productId': 'latte', 'qty': 2, 'options': [{'groupId': 'sut', 'optionId': 'oat'}]},
+      ],
+      'tableId': 't4',
+      'pickup': null,
+      'note': 'pencere kenarı',
+      'expectedTotal': 22000,
+    });
+    expect(state.cart, isEmpty);
+    expect(find.text('Siparişin alındı ☕'), findsOneWidget);
+
+    // Kasa onaylar → hazırlanıyor → hazır: bildirim her ekranda
+    AppOrder at(String status) => AppOrder(id: 'ao1', kind: 'table', status: status, tableName: '4', orderNo: 'A71',
+        total: 22000, createdAt: DateTime(2026, 10, 16, 15), items: const [AppOrderItem('Latte', 2, ['Yulaf sütü'], 22000)]);
+    repo.pushOrders([at('preparing')]);
+    await tester.pumpAndSettle();
+    expect(find.text('Hazırlanıyor ☕'), findsOneWidget);
+    expect(find.text('Sipariş no: A71'), findsOneWidget);
+    repo.pushOrders([at('ready')]);
+    await tester.pumpAndSettle();
+    expect(find.text('Hazır 🔔 Birazdan masanda'), findsOneWidget);
+    expect(find.text('🔔 Siparişin hazır (A71), birazdan masanda.'), findsOneWidget);
+  });
+
+  testWidgets('gel-al: ana sayfadan, saat seçimi; kasa çevrimdışıyken gönderilemez; geçersiz masa QR\'ı', (tester) async {
+    final (repo, state) = await pump(tester, existing: const Customer(id: 'c1', name: 'Mert Tan'), table: ('t4', 'yanlis'));
+    await login(tester);
+    expect(find.text("Masa QR'ı geçersiz."), findsOneWidget);
+    await tester.tap(find.text('Tamam'));
+    await tester.pumpAndSettle();
+    expect(state.table, isNull);
+    await tester.tap(find.byKey(const Key('orderPickup')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Tatlılar'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Kek'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('addToCart')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('cartBar')));
+    await tester.pumpAndSettle();
+    expect(find.text('Gel-al siparişini gönder'), findsOneWidget);
+    await tester.tap(find.text('15 dk sonra'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('sendOrder')));
+    await tester.pumpAndSettle();
+    expect(repo.sent.single['kind'], 'pickup');
+    expect(repo.sent.single['pickup'], {'inMinutes': 15});
+    expect(repo.sent.single['expectedTotal'], 7000);
+    Navigator.of(tester.element(find.byKey(const Key('orderHeadline')))).pop();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ana sayfa'));
+    await tester.pumpAndSettle();
+    expect(find.text('Siparişlerim'), findsOneWidget);
+    expect(find.text('Gel-al · Onay bekliyor'), findsOneWidget);
+
+    // Kasa çevrimdışı: sepet açılır ama gönderilemez
+    repo.ordering = const OrderingInfo(online: false, pickup: true);
+    await state.refreshOrdering();
+    state.addItem(CartItem(menu.products[2]));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('cartBar')));
+    await tester.pumpAndSettle();
+    expect(find.text('Şu an çevrimiçi sipariş alınmıyor.'), findsOneWidget);
+    expect(find.byKey(const Key('sendOrder')), findsNothing);
   });
 }

@@ -220,17 +220,23 @@ def _apply_campaigns(conn, order, user):
     return after
 
 
+def _apply(conn, op, payload, user, extra=None):
+    """İşlemi açık transaction'da uygular (commit çağırana kalır)."""
+    before = _load(conn, payload['orderId'])
+    after = apply_order_op(before, op, payload, user['cloud_id'], now_iso())
+    if extra:
+        extra(conn, before, after)
+    _commit_op(conn, before, after, op, payload, user['cloud_id'])
+    if op in CAMPAIGN_TRIGGERS:
+        after = _apply_campaigns(conn, after, user)
+    return after
+
+
 def _run(op, payload, user, extra=None):
     """Tek bir adisyon işlemini uygular ve kaydeder. extra(conn, before, after) yan işler içindir."""
     conn = database.get_connection()
     try:
-        before = _load(conn, payload['orderId'])
-        after = apply_order_op(before, op, payload, user['cloud_id'], now_iso())
-        if extra:
-            extra(conn, before, after)
-        _commit_op(conn, before, after, op, payload, user['cloud_id'])
-        if op in CAMPAIGN_TRIGGERS:
-            after = _apply_campaigns(conn, after, user)
+        after = _apply(conn, op, payload, user, extra)
         conn.commit()
         return after
     finally:
@@ -251,20 +257,25 @@ def _next_order_no(conn, day):
     return f"{letter}{seq}"
 
 
+def _open(conn, user, table=None):
+    if table and conn.execute("SELECT 1 FROM pos_orders WHERE status='open' AND table_id=?",
+                              (table['id'],)).fetchone():
+        raise OrderError("Bu masada zaten açık bir adisyon var.")
+    day = business_day()
+    payload = {'orderId': _new_id('O'), 'no': _next_order_no(conn, day), 'businessDay': day,
+               'type': 'dine_in' if table else 'takeaway', 'openedAt': now_iso()}
+    if table:
+        payload.update(tableId=table['id'], tableName=table['name'])
+    order = apply_order_op(None, 'openOrder', payload, user['cloud_id'], now_iso())
+    _commit_op(conn, None, order, 'openOrder', payload, user['cloud_id'])
+    return order
+
+
 def open_order(user, table=None):
     """table: {'id': masa bulut kimliği, 'name': ad} ya da None (masasız sipariş)."""
     conn = database.get_connection()
     try:
-        if table and conn.execute("SELECT 1 FROM pos_orders WHERE status='open' AND table_id=?",
-                                  (table['id'],)).fetchone():
-            raise OrderError("Bu masada zaten açık bir adisyon var.")
-        day = business_day()
-        payload = {'orderId': _new_id('O'), 'no': _next_order_no(conn, day), 'businessDay': day,
-                   'type': 'dine_in' if table else 'takeaway', 'openedAt': now_iso()}
-        if table:
-            payload.update(tableId=table['id'], tableName=table['name'])
-        order = apply_order_op(None, 'openOrder', payload, user['cloud_id'], now_iso())
-        _commit_op(conn, None, order, 'openOrder', payload, user['cloud_id'])
+        order = _open(conn, user, table)
         conn.commit()
         return order
     finally:
@@ -317,31 +328,45 @@ def remove_line(user, order_id, line_id):
     return _run('removeItem', {'orderId': order_id, 'lineId': line_id}, user)
 
 
+def _send_lines(conn, user, order, lines, ticket_ids=None):
+    """Satırları bar ve mutfak fişlerine bölüp gönderir (açık transaction'da). → (adisyon, {istasyon: fiş})"""
+    ticket_ids = ticket_ids or {'bar': _new_id('TB'), 'kitchen': _new_id('TK')}
+    order_id = order['id']
+    payload = {'orderId': order_id, 'lineIds': [l['lineId'] for l in lines], 'ticketIds': ticket_ids}
+    used = {}
+
+    def write_tickets(conn, before, after):
+        at = now_iso()
+        for station, tid in ticket_ids.items():
+            rows = [{'lineId': l['lineId'], 'name': l['name'], 'qty': l['qty'], 'note': l.get('note', ''),
+                     'options': [o['name'] for o in l['options']]} for l in lines if l['station'] == station]
+            if not rows:
+                continue
+            used[station] = tid
+            ticket = {'id': tid, 'orderId': order_id, 'orderNo': after['no'], 'tableName': after.get('tableName') or '',
+                      'type': after['type'], 'station': station, 'lines': rows, 'status': 'new', 'createdAt': at}
+            conn.execute("INSERT INTO pos_tickets (id,order_id,data,status,station,created_at) VALUES (?,?,?,?,?,?)",
+                         (tid, order_id, json.dumps(ticket, ensure_ascii=False), 'new', station, at))
+        # Stok (8. ekran): gönderilen ürünlerin reçetesi düşer
+        sent_ids = {l['lineId'] for l in lines}
+        stock.record_sale(conn, after, [l for l in after['items'] if l['lineId'] in sent_ids], user['cloud_id'])
+
+    return _apply(conn, 'sendItems', payload, user, extra=write_tickets), used
+
+
 def send_pending(user, order_id):
     """Bekleyen satırları bar ve mutfak fişlerine bölüp gönderir. Gönderilen satır sayısını döndürür."""
     order = get_order(order_id)
     pending = [l for l in order['items'] if l['state'] == 'pending' and l['status'] == 'active']
     if not pending:
         return order, 0
-    ticket_ids = {'bar': _new_id('TB'), 'kitchen': _new_id('TK')}
-    payload = {'orderId': order_id, 'lineIds': [l['lineId'] for l in pending], 'ticketIds': ticket_ids}
-
-    def write_tickets(conn, before, after):
-        at = now_iso()
-        for station, tid in ticket_ids.items():
-            lines = [{'lineId': l['lineId'], 'name': l['name'], 'qty': l['qty'], 'note': l.get('note', ''),
-                      'options': [o['name'] for o in l['options']]} for l in pending if l['station'] == station]
-            if not lines:
-                continue
-            ticket = {'id': tid, 'orderId': order_id, 'orderNo': after['no'], 'tableName': after.get('tableName') or '',
-                      'type': after['type'], 'station': station, 'lines': lines, 'status': 'new', 'createdAt': at}
-            conn.execute("INSERT INTO pos_tickets (id,order_id,data,status,station,created_at) VALUES (?,?,?,?,?,?)",
-                         (tid, order_id, json.dumps(ticket, ensure_ascii=False), 'new', station, at))
-        # Stok (8. ekran): gönderilen ürünlerin reçetesi düşer
-        sent_ids = {l['lineId'] for l in pending}
-        stock.record_sale(conn, after, [l for l in after['items'] if l['lineId'] in sent_ids], user['cloud_id'])
-
-    return _run('sendItems', payload, user, extra=write_tickets), len(pending)
+    conn = database.get_connection()
+    try:
+        after, _ = _send_lines(conn, user, order, pending)
+        conn.commit()
+        return after, len(pending)
+    finally:
+        conn.close()
 
 
 def void_line(user, order_id, line_id, reason, approver_id=None, prepared=True):

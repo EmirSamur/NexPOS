@@ -208,11 +208,14 @@ class TableCard(QFrame):
         if is_occupied:
             # Üst: Masa adı + durum badge
             top = QHBoxLayout()
-            nm = QLabel(("🔔 " if table_data.get('ready') else "") + table_data.get('ad', ''))
+            calls = "".join({'waiter': "🙋", 'bill': "🧾"}.get(k, '') for k in table_data.get('calls') or [])
+            nm = QLabel((f"{calls} " if calls else "") + ("🔔 " if table_data.get('ready') else "") + table_data.get('ad', ''))
             nm.setFont(QFont(FONTS['family'], FONTS['size_md'], QFont.Bold))
             nm.setStyleSheet(f"color: {COLORS['text_dark']}; background: transparent;")
             if table_data.get('ready'):
                 nm.setToolTip("Mutfakta/barda hazır ürün var")
+            if calls:
+                nm.setToolTip("Müşteri uygulamadan garson çağırıyor / hesap istiyor")
 
             badge = QLabel("HESAP" if bill else "DOLU")
             badge.setFont(QFont(FONTS['family'], 8, QFont.Bold))
@@ -272,7 +275,8 @@ class TableCard(QFrame):
             icon.setStyleSheet(f"color: {COLORS['text_muted']}; background: transparent;")
             layout.addWidget(icon)
 
-            nm = QLabel(table_data.get('ad', ''))
+            calls = "".join({'waiter': "🙋", 'bill': "🧾"}.get(k, '') for k in table_data.get('calls') or [])
+            nm = QLabel((f"{calls} " if calls else "") + table_data.get('ad', ''))
             nm.setFont(QFont(FONTS['family'], FONTS['size_md'], QFont.Bold))
             nm.setAlignment(Qt.AlignCenter)
             nm.setStyleSheet(f"color: {COLORS['text_dark']}; background: transparent;")

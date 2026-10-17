@@ -47,7 +47,12 @@ async function seed() {
   createOwner(OWNER);
   const owner = await signedInAs(OWNER.email, OWNER.password);
   const { staffId: cashier } = await owner.call('manageStaff', { action: 'create', name: 'Kasa A', role: 'cashier', pin: '640231' });
-  await owner.call('saveModules', { loyalty: { enabled: true }, campaigns: { enabled: true }, app: { enabled: true } });
+  await owner.call('saveModules', { loyalty: { enabled: true }, campaigns: { enabled: true },
+    app: { enabled: true, tableOrders: true, pickup: true } });
+  const { id: areaId } = await owner.call('saveArea', { name: 'Tarayıcı Salonu' });
+  const plan = await owner.call('saveFloorPlan', { areaId, expectedVersion: 0, fixtures: [], tables: [{ tempId: 'w4', name: '4',
+    shape: 'square', capacity: 4, x: 60, y: 60, w: 120, h: 120, rotation: 0 }] });
+  const table = { id: plan.created.w4, t: (await adminDb.doc(`tables/${plan.created.w4}`).get()).data().qrToken };
   await owner.call('saveAppSettings', { cafeName: 'Velvet Kafe', address: 'Moda Cad. 12, Kadıköy', phone: '0216 000 00 00',
     instagram: '@velvetkafe', hours: 'Her gün 08:00 – 24:00', kvkkText: 'Velvet Kafe olarak kişisel verilerinizi…' });
   await owner.call('saveLoyaltySettings', { stampsForReward: 10, rewardMaxValue: 9000,
@@ -92,7 +97,7 @@ async function seed() {
   ] })).results;
   assert.ok(r.every((x) => x.status === 'ok'), JSON.stringify(r));
   await adminDb.doc('customers/WEB1').update({ stamps: 7, lifetimeStamps: 57, tier: 'silver' });
-  return { term };
+  return { term, table, cashier, products };
 }
 
 async function smsCode() {
@@ -102,20 +107,25 @@ async function smsCode() {
 }
 
 async function main() {
-  const { term } = await seed();
+  const { term, table, cashier, products } = await seed();
   const server = serve();
   const browser = await playwright.chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, ignoreHTTPSErrors: true, locale: 'tr-TR' });
-  if (process.env.FIREBASE_JS_DIR) {
-    await page.route('https://www.gstatic.com/firebasejs/**', (route) => {
-      const file = path.join(process.env.FIREBASE_JS_DIR, path.basename(new URL(route.request().url()).pathname));
-      if (!fs.existsSync(file)) return route.abort();
-      return route.fulfill({ status: 200, contentType: 'text/javascript', body: fs.readFileSync(file) });
-    });
-  }
   const logs = [];
-  page.on('console', (m) => logs.push(`${m.type()}: ${m.text()}`));
-  page.on('pageerror', (e) => logs.push(`pageerror: ${e.message}`));
+  // Her müşteri ayrı bir telefon/tarayıcı: yeni bağlam (oturum ve depolama boş)
+  const openPage = async () => {
+    const p = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, ignoreHTTPSErrors: true, locale: 'tr-TR' });
+    if (process.env.FIREBASE_JS_DIR) {
+      await p.route('https://www.gstatic.com/firebasejs/**', (route) => {
+        const file = path.join(process.env.FIREBASE_JS_DIR, path.basename(new URL(route.request().url()).pathname));
+        if (!fs.existsSync(file)) return route.abort();
+        return route.fulfill({ status: 200, contentType: 'text/javascript', body: fs.readFileSync(file) });
+      });
+    }
+    p.on('console', (m) => logs.push(`${m.type()}: ${m.text()}`));
+    p.on('pageerror', (e) => logs.push(`pageerror: ${e.message}`));
+    return p;
+  };
+  let page = await openPage();
   const shot = async (name) => SHOTS && page.screenshot({ path: path.join(SHOTS, `${name}.png`) });
   const settle = (ms = 800) => page.waitForTimeout(ms);
   try {
@@ -195,6 +205,79 @@ async function main() {
     await seen('Geçmiş siparişler');
     await settle(1500);
     await shot('07_profil');
+
+    // ---- Masadaki QR (11b): telefonun kamerası masa adresini tarayıcıda açar → menü (girişsiz), garson çağır,
+    // sepet; sipariş gönderirken telefonla giriş istenir
+    await page.close();
+    page = await openPage();
+    await page.goto(`http://127.0.0.1:${PORT}/masa/${table.id}?t=${table.t}`);
+    await page.waitForSelector('flt-semantics-placeholder, flt-glass-pane, flutter-view', { timeout: 60000, state: 'attached' });
+    await settle(4000);
+    await page.evaluate(() => document.querySelector('flt-semantics-placeholder')?.click());
+    await settle(1500);
+    await seen('Masa 4 · Velvet Kafe', 40000);
+    // Emülatörün alttaki uyarı şeridi düğmelerin üstüne biniyor (canlıda yok)
+    await page.addStyleTag({ content: '.firebase-emulator-warning { display: none !important; }' });
+    await seen('Çift shot espresso');
+    await button('Garson çağır').click();
+    await seen('Çağrın iletildi');
+    const call = (await adminDb.doc(`tableCalls/${table.id}_waiter`).get()).data();
+    assert.deepEqual([call.status, call.tableName], ['open', '4']);
+    await settle(1000);
+    await shot('08_masa_menu');
+    await page.waitForTimeout(4500); // bildirim kapansın
+    await tapText('Çift shot espresso');
+    await seen('Sepete ekle');
+    await tapText('Yulaf sütü');
+    await seen('Sepete ekle · 110,00 ₺');
+    await button('Sepete ekle').click();
+    await seen('Sepet · 1 ürün');
+    await settle(800);
+    await tapText('Sepet · 1 ürün');
+    await seen('Siparişi gönder · Masa 4');
+    await settle(800);
+    await shot('09_sepet');
+    await button('Siparişi gönder').click();
+    // Misafir: sipariş gönderirken giriş istenir; sepet korunur
+    await seen('Telefon numaran');
+    {
+      await page.waitForTimeout(4500);
+      await type(0, PHONE);
+      await button('Kod gönder').click();
+      await seen('numarasına gelen kod');
+      await type(0, await smsCode());
+      await button('Giriş yap', true).click();
+      await seen('Sepet · 1 ürün', 40000);
+      await settle(800);
+      await tapText('Sepet · 1 ürün');
+      await seen('Siparişi gönder · Masa 4');
+      await button('Siparişi gönder').click();
+    }
+    await seen('Siparişin alındı', 30000);
+    await settle(1000);
+    await shot('10_gonderildi');
+    const reqs = await adminDb.collection('appOrders').where('customerId', '==', 'WEB1').get();
+    assert.equal(reqs.size, 1);
+    const req = reqs.docs[0];
+    assert.deepEqual([req.data().status, req.data().total, req.data().tableId, req.data().items[0].options[0].name],
+      ['pending', 11000, table.id, 'Yulaf sütü']);
+    // Kasa (NexPOS) onaylar: adisyonu kuyruktan açar, fişi gönderir; bar "Hazır" der
+    const at = new Date().toISOString();
+    const op = (name, payload) => ({ opId: `ab-${String(++seq).padStart(6, '0')}`, op: name, payload, staffId: cashier, createdAt: at });
+    const it = req.data().items[0];
+    await term.call('syncOps', { ops: [
+      op('openOrder', { orderId: 'WO2', no: 'A13', businessDay: at.slice(0, 10), type: 'dine_in', tableId: table.id, tableName: '4' }),
+      op('addItems', { orderId: 'WO2', items: [{ lineId: 'm1', productId: it.productId, name: it.name, unitPrice: it.unitPrice,
+        qty: it.qty, options: it.options, station: 'bar', stampEligible: true }] }),
+      op('sendItems', { orderId: 'WO2', lineIds: ['m1'], ticketIds: { bar: 'WO2-b' } }),
+    ] });
+    await term.call('acceptAppOrder', { id: req.id, orderId: 'WO2', orderNo: 'A13', ticketIds: ['WO2-b'] });
+    await seen('Hazırlanıyor', 30000);
+    await term.call('syncOps', { ops: [op('updateTicket', { ticketId: 'WO2-b', status: 'ready' })] });
+    await seen('Birazdan masanda', 30000);
+    await settle(800);
+    await shot('11_hazir');
+    assert.ok(products.Latte);
   } catch (e) {
     await shot('hata').catch(() => {});
     throw e;

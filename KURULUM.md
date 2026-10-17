@@ -225,6 +225,15 @@ Yalnızca Yönetici açıp kapatır; ayar bulutta tutulur ve bütün cihazlara i
    ödülleri hazır gelir; yoksa ad ve KVKK onayıyla üyelik açılır.
 3. Kasada **👤 Müşteri ekle → QR okut**: uygulamadaki QR 60 saniyede bir değişir, ekran görüntüsüyle kullanılamaz.
 
+4. **Masadan sipariş ve gel-al** (Ayarlar → Modüller → Mobil uygulama'da ayrı ayrı açılır): masadaki QR
+   (Salon planından basılan etiket) telefonda uygulamanın web sürümünü açar; müşteri menüden seçer, telefonla
+   girip gönderir. Kasada/garson ekranında **📲 Gelen siparişler** turuncu olur ve ses çıkar: **Onayla** (fişler
+   bara/mutfağa düşer), **Reddet** (gerekçe müşteriye gider). Onay süresi (Pazarlama → Mobil Uygulama, varsayılan
+   2 dk) dolarsa müşteriye "kafe şu an yoğun" yazar. Masadan **Garson çağır / Hesap iste** masada 🙋 / 🧾 olarak
+   görünür; "Tamam" ile kapanır. Gel-al siparişi hazır olunca (mutfak ekranında ya da Fiş Panosu'nda **Hazır**)
+   müşteriye "hazır" yazar; gelmeyen müşteri için **Gelmedi** (üst üste 2 kez olursa gel-al ona kapanır).
+   Kasa internetsizken uygulama siparişleri kendiliğinden kapanır.
+
 ### Yeni kafe için müşteri uygulaması
 
 Uygulama kafeye özel derlenir (kod aynı):
@@ -238,9 +247,11 @@ Uygulama kafeye özel derlenir (kod aynı):
 5. Derleme (Flutter 3.4x):
    ```bash
    cd mobile && flutter pub get
-   flutter build web --release      # build/web → Firebase Hosting'e
+   tool/build_web.sh                # web sürümü → firebase/hosting (mutfak ekranı korunur)
    flutter build apk --release      # Android (Android SDK gerekir)
+   cd ../firebase && firebase deploy --only hosting
    ```
+   Masadaki QR'lar `https://<proje>.web.app/masa/...` adresini açar (Ayarlar → Genel → QR adresi).
 
 ## Mutfak / bar ekranı (tablet)
 

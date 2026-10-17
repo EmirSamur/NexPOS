@@ -41,10 +41,12 @@ PULL_COLLECTIONS = {
     'rewards': lambda docs: database.upsert_cache('rewards', docs),
     'campaigns': lambda docs: database.upsert_cache('campaigns', docs),
     'notifications': lambda docs: database.upsert_cache('notifications', docs),
+    'appOrders': lambda docs: database.upsert_cache('appOrders', docs),     # uygulama siparişleri (11b)
+    'tableCalls': lambda docs: database.upsert_cache('tableCalls', docs),   # garson çağır / hesap iste
 }
 
 # Yalnızca yakın geçmişi gereken koleksiyonlar (ilk senkronda tümü indirilmez)
-RECENT_ONLY = {'kitchenTickets'}
+RECENT_ONLY = {'kitchenTickets', 'appOrders', 'tableCalls'}
 
 # Tek doküman olarak çekilen ayarlar: settings/<ad> → settings_cache[<ad>]
 PULL_SETTINGS = ('permissions', 'general', 'modules', 'loyalty', 'app')

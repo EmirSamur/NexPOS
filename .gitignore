@@ -10,3 +10,7 @@ crash_log.txt
 nexpos_config.json
 terminal.json
 image_cache/
+
+# Müşteri uygulamasının web derlemesi (mobile/tool/build_web.sh üretir)
+/firebase/hosting/*
+!/firebase/hosting/mutfak/
