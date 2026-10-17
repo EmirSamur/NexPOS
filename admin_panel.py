@@ -675,6 +675,14 @@ class AdminPanel(QWidget):
         self.waste_page = WastePage(self.user)
         return self.waste_page
 
+    def _create_kullanicilar_page(self):
+        self.staff_page = StaffPage(self.user)
+        return self.staff_page
+
+    def _create_yetkiler_page(self):
+        self.permissions_page = PermissionsPage(self.user)
+        return self.permissions_page
+
     def _create_raporlar_page(self):
         self.reports_page = ReportsPage(self.user)
         self.reports_page.open_cash_history.connect(lambda: (self._show_page(10), self.cash_page.tabs.setCurrentIndex(2)))
