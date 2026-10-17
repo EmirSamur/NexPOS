@@ -1,0 +1,35 @@
+# Müşteri uygulaması: testler ve Android APK derlemesi (elle başlatılır ya da mobile/ değişince).
+# Derlenen APK "Actions → bu çalıştırma → Artifacts → kafe-app-apk" altından indirilir.
+# Not: depodaki brand.json demo ayarlarıyla (emülatör) derlenir; bir kafeye verilecek APK için
+# brand.json'u o kafenin Firebase ayarlarıyla doldurup emulator.enabled: false yapın (KURULUM.md).
+name: Mobil uygulama
+
+on:
+  workflow_dispatch:
+  push:
+    paths: ['mobile/**', '.github/workflows/mobile.yml']
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - run: flutter build apk --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kafe-app-apk
+          path: mobile/build/app/outputs/flutter-apk/app-release.apk

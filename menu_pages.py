@@ -724,6 +724,14 @@ class ProductDialog(QDialog):
         fb.addRow(self.milk)
         fb.addRow("Sıcaklık:", temp_row)
         fb.addRow("Notalar:", self.notes)
+        # Hazır şablon: yaygın içeceklerin profili tek seçimle dolar (sonra elle ayarlanabilir)
+        import quiz_logic
+        self.flavor_template = QComboBox()
+        self.flavor_template.addItem("Hazır şablondan doldur…", None)
+        for t in quiz_logic.flavor_templates():
+            self.flavor_template.addItem(t['name'], t['flavor'])
+        self.flavor_template.currentIndexChanged.connect(self._apply_flavor_template)
+        fb.insertRow(0, "Şablon:", self.flavor_template)
         fl.addRow(self.flavor_box)
         self.has_flavor.toggled.connect(self.flavor_box.setEnabled)
         self.flavor_box.setEnabled(self.has_flavor.isChecked())
@@ -764,6 +772,16 @@ class ProductDialog(QDialog):
         s.setValue(-1 if value is None else value)
         s.setFixedWidth(200)
         return s
+
+    def _apply_flavor_template(self, *_):
+        f = self.flavor_template.currentData()
+        if not f:
+            return
+        for key, slider in self.sliders.items():
+            slider.setValue(f[key])
+        self.milk.setChecked(f['milk'])
+        (self.iced if f['temperature'] == 'iced' else self.hot).setChecked(True)
+        self.notes.setText(", ".join(f['notes']))
 
     def _update_flavor_tab(self):
         is_bar = _category_is_bar(self.category.currentData())

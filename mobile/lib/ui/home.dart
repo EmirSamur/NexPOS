@@ -9,6 +9,7 @@ import '../state.dart';
 import 'common.dart';
 import 'menu.dart';
 import 'order.dart';
+import 'quiz.dart';
 
 class HomeTab extends StatefulWidget {
   final VoidCallback onLogin;
@@ -80,15 +81,27 @@ class _HomeTabState extends State<HomeTab> {
                   ]),
                 ),
               ),
-            if (s.canPickup && s.table == null) ...[
-              const SizedBox(height: 12),
-              FilledButton.icon(
-                key: const Key('orderPickup'),
-                onPressed: widget.onMenu,
-                icon: const Icon(Icons.shopping_bag_outlined),
-                label: const Text('☕ Gel-al sipariş ver'),
+            const SizedBox(height: 12),
+            Row(children: [
+              if (s.canPickup && s.table == null) ...[
+                Expanded(
+                  child: FilledButton(
+                    key: const Key('orderPickup'),
+                    onPressed: widget.onMenu,
+                    child: const Text('☕ Gel-al sipariş'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+              ],
+              Expanded(
+                child: OutlinedButton(
+                  key: const Key('quiz'),
+                  style: OutlinedButton.styleFrom(minimumSize: const Size(48, 52)),
+                  onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const QuizScreen())),
+                  child: const Text('✨ Bana öner'),
+                ),
               ),
-            ],
+            ]),
             const ActiveOrders(),
             if (c != null)
               FutureBuilder<List<PastOrder>>(

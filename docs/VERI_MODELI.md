@@ -485,6 +485,10 @@ Siparişi değiştiren her işlem bir **callable function** üzerinden yapılır
 > dakikada bir). `cancelMyAppOrder` (yalnızca bekleyen), `appOrderNoShow` (gel-al; `customers.noShows`,
 > 2'de `pickupBlocked`). `appOrderingInfo`: kasa çevrimiçi mi, masadan/gel-al açık mı, masa adı (giriş gerekmez).
 
+> Raporlar (11c): `dailyStats/{isteğin iş günü}.app { requests, table, pickup, accepted, acceptedAmount, acceptSeconds,
+> rejected, expired, cancelled, noShow }` (artırımla). `appReport({ from, to })` (`reports` yetkisi) gün aralığını ve
+> önerilen ürünleri döndürür.
+
 ### `tableCalls/{tableId}_{waiter|bill}`: masadan garson çağır / hesap iste (11b)
 ```ts
 { tableId, tableName, kind: "waiter"|"bill", status: "open"|"done", at: ISO, by?: customerId, doneBy?, doneAt? }
@@ -522,8 +526,17 @@ Siparişi değiştiren her işlem bir **callable function** üzerinden yapılır
 > Günlük özette `campaign` ve `byCampaign`, ödülde `rewards`, üyede `members` alanları.
 
 ### `notifications/{id}` (`saveNotification`, `campaigns` yetkisi)
-`{ title, body, segment: "all"|"inactive30"|"silver"|"gold"|"birthday", campaignId?, reach, status: "waiting_app"|"sent", createdBy, createdAt }`
-> Yalnızca `marketingConsent` olan üyeler; kişi başı günde en fazla 1 bildirim. Gönderim 11. ekranda (FCM).
+`{ title, body, segment: "all"|"inactive30"|"silver"|"gold"|"birthday", campaignId?, reach, status: "waiting_app"|"queued"|"sent", sentCount?, skipped?, sentAt?, createdBy, createdAt }`
+> Yalnızca `marketingConsent` olan üyeler; kişi başı günde en fazla 1 (`customers.lastMarketingPushDay`).
+> Mobil uygulama modülü açıksa `queued` → `sendNotificationOnCreate` tetikleyicisi gönderir → `sent`.
+
+### Telefon bildirimleri (11c, Firebase Cloud Messaging)
+- `customers/{id}/devices/{sha256(token)[:40]}` `{ token, platform: "android"|"ios"|"web", updatedAt }` — `registerDevice`
+  (en fazla 10 cihaz; geçersiz anahtar gönderimde silinir; hesap silinince hepsi silinir). Yalnızca fonksiyonlar.
+- Gönderen: `pushAppOrderStatus` (appOrders durum değişimi: onaylandı / hazır / alınamadı / yoğun — izin gerekmez),
+  `pushRewardCreated` (ödül; izinle), `sendNotificationOnCreate` (kampanya; izin + günde 1), `dailyLoyaltyPush`
+  (her gün 10:00: doğum günü, 7 gün sonra dolan ödül; izinle). Kurallar `src/push.js`.
+- Emülatörde gerçek gönderim yerine `pushLog/{id}` `{ customerId, kind, title, body, data, devices, at }` yazılır.
 
 ---
 
@@ -556,8 +569,16 @@ Siparişi değiştiren her işlem bir **callable function** üzerinden yapılır
 - Kalan ürünlerin `flavor` alanı hedef profille karşılaştırılır; en yakın üç ürün önerilir.
 - Bağlam bonusu eklenir: saat 17:00'den sonra kafeinsiz ürüne +, hava 25 derecenin üstündeyse `iced` ürünlere +, müşterinin hiç denemediği ürüne +.
 
-### `customers/{uid}/recommendations/{id}`
-`{ productIds: [], answers: {}, chosenProductId?, at }`
+### `customers/{id}/recommendations/{rid}` (11c; `logRecommendation`, yalnızca fonksiyonlar yazar)
+`{ productIds: [en fazla 3], answers: { soruId: cevapId }, chosenProductId: null|id, appOrderId?, at: yerel ISO, orderedAt? }`
+> `createAppOrder({ recommendationId })` sepette önerilen ürün varsa `chosenProductId` yazar. Sayaçlar:
+> `dailyStats/{gün}.recs { shown, ordered }`. Sahibi müşteri ve manager+ okur.
+
+> Uygulanan hesap (`src/quiz.js`, `quiz_logic.py`, `mobile/lib/quiz.dart`; ortak `quiz_vectors.json`): hedef profil
+> 3/5'ten başlar, cevap ağırlıkları eklenir (1–5 sınırı); uzaklık = 4 boyutun mutlak farkı toplamı, puan =
+> 1 − uzaklık/16; nota eşleşmesi +0,15, 17:00 sonrası kafeinsiz +0,1, sıcak gün soğuk +0,1, denenmemiş +0,05;
+> süzgece uyan yoksa önce sıcaklık, sonra süt gevşetilir; eşit puanda ürün kimliği sırası. `settings/quiz`:
+> `saveQuiz` (`editMenu` yetkisi; `{ reset: true }` hazır sorulara döner), herkes okur.
 > Müşterinin öneriyi sipariş edip etmediği buraya kaydedilir. Hangi önerinin tuttuğu bu veriyle ölçülür;
 > ileride yapay zekâ barista bu geçmişi ve menüyü bağlam olarak kullanır.
 

@@ -64,7 +64,7 @@ service cloud.firestore {
     // Ayarlar: settings/permissions vb. Yazma yalnızca fonksiyonlardan.
     match /settings/{docId} {
       allow read: if isStaff() || isActiveTerminal() || (isActiveKds() && docId in ['modules', 'general'])
-        || docId in ['app', 'loyalty', 'modules'];   // müşteri uygulaması (11. ekran): kafe bilgisi, kart kuralları
+        || docId in ['app', 'loyalty', 'modules', 'quiz'];   // müşteri uygulaması (11. ekran): kafe bilgisi, kart kuralları, öneri soruları
       allow write: if false;
     }
 
@@ -138,6 +138,18 @@ service cloud.firestore {
     match /rewards/{id} {
       allow read: if isManagerPlus() || isActiveTerminal()
         || (customerId() != '' && resource.data.customerId == customerId());
+      allow write: if false;
+    }
+    // Bildirim cihazları ve gönderim günlüğü (11c): yalnızca fonksiyonlar
+    match /customers/{cid}/devices/{id} {
+      allow read, write: if false;
+    }
+    match /pushLog/{id} {
+      allow read, write: if false;
+    }
+    // Kahve önerisi geçmişi (11c): müşteri kendininkini okur; yazma fonksiyonlardan
+    match /customers/{cid}/recommendations/{id} {
+      allow read: if isManagerPlus() || (customerId() != '' && customerId() == cid);
       allow write: if false;
     }
     match /loyaltyEvents/{id} {

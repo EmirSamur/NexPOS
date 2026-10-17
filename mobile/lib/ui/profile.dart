@@ -135,6 +135,20 @@ class _ProfileTabState extends State<ProfileTab> {
                 value: c.marketingConsent,
                 onChanged: _consent,
               ),
+              SwitchListTile(
+                key: const Key('pushToggle'),
+                secondary: const Icon(Icons.phone_iphone),
+                title: const Text('Telefon bildirimleri'),
+                subtitle: Text(s.pushEnabled ? 'Açık: siparişin hazır olunca haber veririz.'
+                    : 'Kapalı: açmak için izin verin (telefon ayarlarından da kapatılabilir).'),
+                value: s.pushEnabled,
+                onChanged: s.pushEnabled
+                    ? null
+                    : (_) async {
+                        final on = await s.turnOnPush();
+                        if (!on && context.mounted) showMessage(context, 'Bildirim izni verilmedi.');
+                      },
+              ),
             ]),
           ),
           SectionTitle('Ödüllerim', trailing: Text('${s.usableRewards.length}')),

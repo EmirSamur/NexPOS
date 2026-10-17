@@ -16,6 +16,7 @@ class Brand {
   final String functionsRegion;
   final bool useEmulator;
   final String emulatorHost;
+  final String webPushKey; // web bildirimleri için VAPID anahtarı (Firebase → Cloud Messaging)
 
   const Brand({
     required this.appName,
@@ -27,6 +28,7 @@ class Brand {
     this.functionsRegion = 'europe-west1',
     this.useEmulator = false,
     this.emulatorHost = '127.0.0.1',
+    this.webPushKey = '',
   });
 
   static Color _color(Object? hex, Color fallback) {
@@ -47,6 +49,7 @@ class Brand {
       functionsRegion: d['functionsRegion'] is String ? d['functionsRegion'] as String : 'europe-west1',
       useEmulator: emu['enabled'] == true,
       emulatorHost: emu['host'] is String ? emu['host'] as String : '127.0.0.1',
+      webPushKey: d['webPushKey'] is String ? d['webPushKey'] as String : '',
     );
   }
 

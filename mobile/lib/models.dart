@@ -70,6 +70,25 @@ class OptionGroup {
   }
 }
 
+/// Tat profili (kahve önerisi): sertlik, tatlılık, asidite, gövde 1–5
+class Flavor {
+  final Map<String, int> dims;
+  final bool milk;
+  final String temperature; // hot | iced
+  final List<String> notes;
+  const Flavor({required this.dims, this.milk = false, this.temperature = 'hot', this.notes = const []});
+
+  static Flavor? fromMap(Object? v) {
+    if (v is! Map) return null;
+    return Flavor(
+      dims: {for (final k in const ['strength', 'sweetness', 'acidity', 'body']) k: _int(v[k], 3)},
+      milk: _bool(v['milk']),
+      temperature: _str(v['temperature'], 'hot'),
+      notes: _strings(v['notes']),
+    );
+  }
+}
+
 const allergenLabels = {'milk': 'Süt', 'gluten': 'Gluten', 'nuts': 'Kuruyemiş', 'soy': 'Soya', 'egg': 'Yumurta'};
 
 class Product {
@@ -87,6 +106,7 @@ class Product {
   final int? caffeineMg;
   final List<String> tags;
   final bool? stampEligible;
+  final Flavor? flavor;
 
   const Product({
     required this.id,
@@ -103,6 +123,7 @@ class Product {
     this.caffeineMg,
     this.tags = const [],
     this.stampEligible,
+    this.flavor,
   });
 
   static Product? fromDoc(String id, Map<String, dynamic> d) {
@@ -122,6 +143,7 @@ class Product {
       caffeineMg: d['caffeineMg'] is num ? _int(d['caffeineMg']) : null,
       tags: _strings(d['tags']),
       stampEligible: d['stampEligible'] is bool ? d['stampEligible'] as bool : null,
+      flavor: Flavor.fromMap(d['flavor']),
     );
   }
 }

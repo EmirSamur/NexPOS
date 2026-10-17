@@ -47,7 +47,8 @@
   "hosting": {
     "public": "hosting",
     "ignore": [
-      "**/.*"
+      "**/.DS_Store",
+      "**/.git/**"
     ],
     "rewrites": [
       {
@@ -56,6 +57,14 @@
       },
       {
         "source": "/masa/**",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/gizlilik",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/hesap-sil",
         "destination": "/index.html"
       }
     ],

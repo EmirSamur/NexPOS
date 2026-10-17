@@ -234,21 +234,32 @@ Yalnızca Yönetici açıp kapatır; ayar bulutta tutulur ve bütün cihazlara i
    müşteriye "hazır" yazar; gelmeyen müşteri için **Gelmedi** (üst üste 2 kez olursa gel-al ona kapanır).
    Kasa internetsizken uygulama siparişleri kendiliğinden kapanır.
 
+5. **Bana öner** (kahve önerisi): Menü → ürün → **Tat Profili**'nde içeceklerin profilini girin ("Hazır şablondan
+   doldur" yaygın içecekleri tek seçimle doldurur). Sorular Pazarlama → **Kahve Önerisi**'nde düzenlenir; sağdaki
+   "Dene" ile sonucu hemen görürsünüz. Tat profili olmayan ve tükenen ürün önerilmez.
+6. **Telefon bildirimleri**: müşteri uygulamada izin verince sipariş durumu (onaylandı, hazır), ödül ve doğum günü
+   bildirimleri gelir. Pazarlama → **Bildirimler**'den kampanya bildirimi gönderilir (izinli üyelere, günde en fazla 1).
+7. **Raporlar → Uygulama**: uygulama siparişleri, onay süresi, reddedilenler, öneri tutma oranı (buluttan gelir;
+   "Buluttan yükle").
+
 ### Yeni kafe için müşteri uygulaması
 
 Uygulama kafeye özel derlenir (kod aynı):
 
 1. Kafe için ayrı bir Firebase projesi açın; Authentication'da **Telefon** girişini açın, web ve Android
    uygulaması ekleyin.
-2. `mobile/assets/brand.json`: `appName`, `slogan`, `primaryColor`, `accentColor`, `firebase` (projenin web
-   ayarları), `functionsRegion`. **`emulator.enabled` canlıda `false` olmalı.**
-3. Logo: `mobile/assets/logo.png` koyup `brand.json`'da `"logoAsset": "assets/logo.png"`.
-4. Android paket adı: `mobile/android/app/build.gradle.kts` içindeki `applicationId` (ör. `com.kafeadi.app`).
+2. `mobile/assets/brand.json`: `appName`, `slogan`, `primaryColor`, `accentColor`, `androidPackage`
+   (ör. `com.kafeadi.app`), `webHost` (`<proje>.web.app`), `webPushKey` (Cloud Messaging → web anahtarı),
+   `firebase` (web ayarları + `androidAppId`), `functionsRegion`. **`emulator.enabled` canlıda `false` olmalı.**
+3. Logo (isteğe bağlı): `mobile/assets/logo.png` koyup `brand.json`'da `"logoAsset": "assets/logo.png"`
+   (yoksa marka renginde baş harf kullanılır).
+4. `cd mobile && python3 tool/apply_brand.py` — ad, paket adı, simgeler, masa QR bağlantısı, bildirim ayarı.
+   Mağaza adımları (imzalama, Play formu, gizlilik/hesap silme sayfaları): `docs/MAGAZA.md`.
 5. Derleme (Flutter 3.4x):
    ```bash
    cd mobile && flutter pub get
    tool/build_web.sh                # web sürümü → firebase/hosting (mutfak ekranı korunur)
-   flutter build apk --release      # Android (Android SDK gerekir)
+   flutter build apk --release      # Android (Android SDK gerekir; yoksa GitHub Actions → "Mobil uygulama")
    cd ../firebase && firebase deploy --only hosting
    ```
    Masadaki QR'lar `https://<proje>.web.app/masa/...` adresini açar (Ayarlar → Genel → QR adresi).

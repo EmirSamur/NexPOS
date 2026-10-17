@@ -7,6 +7,7 @@ import 'brand.dart';
 import 'data/repo.dart';
 import 'logic.dart';
 import 'models.dart';
+import 'quiz.dart';
 
 enum Phase { loading, signedOut, needsProfile, ready }
 
@@ -38,6 +39,12 @@ class AppState extends ChangeNotifier {
   String? notice; // tek seferlik bildirim: "Siparişin hazır" gibi (ekran gösterip temizler)
   final _lastStatus = <String, String>{};
 
+  // Kahve önerisi ve bildirimler (11c)
+  Quiz quiz = defaultQuiz;
+  Set<String>? triedIds; // üyenin daha önce sipariş ettiği ürünler (öneride "henüz denemedin")
+  String? lastRecommendationId;
+  bool pushEnabled = false;
+
   final _subs = <StreamSubscription>[];
   final _customerSubs = <StreamSubscription>[];
 
@@ -61,6 +68,9 @@ class AppState extends ChangeNotifier {
     _subs.add(repo.authChanges().listen(_onAuth, onError: _onError));
     repo.favorites().then((f) => _set(() => favorites = f));
     if (table == null) refreshOrdering();
+    _subs.add(repo.quiz().listen((q) => _set(() => quiz = q), onError: (_) {}));
+    _subs.add(repo.pushMessages().listen((m) => _set(() => notice = m.$2.isEmpty ? m.$1 : '${m.$1} — ${m.$2}'),
+        onError: (_) {}));
   }
 
   void _set(VoidCallback fn) {
@@ -109,6 +119,33 @@ class AppState extends ChangeNotifier {
     _customerSubs.add(repo.appOrders(id).listen(_onAppOrders, onError: _onError));
     notifyListeners();
     refreshOrdering(); // gel-al bu müşteriye kapalı olabilir
+    repo.myOrders().then((list) => _set(() => triedIds = {
+          for (final o in list)
+            for (final i in o.items) ?i.productId,
+        }), onError: (_) {});
+    repo.enablePush(ask: false).then((on) => _set(() => pushEnabled = on), onError: (_) {});
+  }
+
+  /// "Bana öner": en uyumlu 3 ürün; üye ise öneri kaydedilir (sipariş edilirse "tuttu" sayılır)
+  Future<List<Recommendation>> runQuiz(Map<String, String> answers) async {
+    final now = clock();
+    final recs = recommend(menu.products, quiz, answers, hour: now.hour, triedIds: triedIds);
+    lastRecommendationId = null;
+    if (signedIn && recs.isNotEmpty) {
+      try {
+        lastRecommendationId = await repo.logRecommendation([for (final r in recs) r.productId], answers);
+      } catch (_) {
+        // Kayıt olmasa da öneri gösterilir
+      }
+    }
+    return recs;
+  }
+
+  /// Telefon bildirimlerini aç (izin sorar)
+  Future<bool> turnOnPush() async {
+    final on = await repo.enablePush();
+    _set(() => pushEnabled = on);
+    return on;
   }
 
   void _onAppOrders(List<AppOrder> list) {
@@ -183,6 +220,7 @@ class AppState extends ChangeNotifier {
       pickup: pickup,
       note: note,
       expectedTotal: cartTotal(cart),
+      recommendationId: lastRecommendationId,
     );
     _set(() => cart = const []);
     return id;

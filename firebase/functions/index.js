@@ -11,13 +11,14 @@
 //   - Terminal (kafedeki NexPOS): uid = "terminal-<id>", custom claim
 //     { terminal: true, terminalId }.
 
-const { randomInt, randomBytes } = require('crypto');
+const { randomInt, randomBytes, createHash } = require('crypto');
 const { initializeApp } = require('firebase-admin/app');
 const { getAuth } = require('firebase-admin/auth');
 const { getFirestore, FieldValue, Timestamp } = require('firebase-admin/firestore');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
+const { onDocumentCreated, onDocumentUpdated } = require('firebase-functions/v2/firestore');
 
 const {
   ROLES,
@@ -64,6 +65,8 @@ const { OrderError, applyOrderOp, mergeOrders, tableStatusFor, stampCount, compu
 const loyaltyCalc = require('./src/loyalty');
 const campaignCalc = require('./src/campaigns');
 const appOrderCalc = require('./src/appOrders');
+const quizCalc = require('./src/quiz');
+const pushCalc = require('./src/push');
 const { businessDayOf, contribution, refundContribution, merge } = require('./src/stats');
 
 initializeApp();
@@ -2249,6 +2252,8 @@ exports.updateMyProfile = onCall(async (request) => {
 // Hesabı sil (KVKK, mağaza zorunluluğu): kişisel bilgiler silinir, giriş hesabı kapanır.
 exports.deleteMyAccount = onCall(async (request) => {
   const c = await requireCustomer(request);
+  const devices = await c.ref.collection('devices').get();
+  await Promise.all(devices.docs.map((d) => d.ref.delete()));
   await anonymizeCustomer(c.id, request.auth.uid);
   await getAuth().deleteUser(request.auth.uid);
   return { deleted: true };
@@ -2307,7 +2312,17 @@ exports.saveAppSettings = onCall(async (request) => {
 // bildirir. Fişler hazırlandıkça istek "hazırlanıyor / hazır" olur; adisyon kapanınca tamamlanır.
 // ---------------------------------------------------------------------------
 
+// Türkiye saatiyle yerel ISO (yaz saati yok: UTC+3); iş günü bundan hesaplanır
+const localIso = (ms = Date.now()) => `${new Date(ms + 3 * 3600_000).toISOString().slice(0, 19)}+03:00`;
+
 const msOf = (v) => (v instanceof Timestamp ? v.toMillis() : typeof v === 'string' ? Date.parse(v) || 0 : 0);
+
+// Raporlar (11c): uygulama siparişi sayaçları isteğin iş gününe (dailyStats/{gün}.app) eklenir
+function appStat(w, createdAt, fields) {
+  const day = businessDayOf(localIso(msOf(createdAt) || Date.now()));
+  const app = Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, FieldValue.increment(v)]));
+  w.set(db.doc(`dailyStats/${day}`), { app, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+}
 
 async function appSettings() {
   const [modulesSnap, appSnap] = await Promise.all([db.doc('settings/modules').get(), db.doc('settings/app').get()]);
@@ -2398,7 +2413,11 @@ exports.createAppOrder = onCall(async (request) => {
 
   const ref = db.collection('appOrders').doc();
   const now = Date.now();
+  // Kahve önerisinden geldiyse öneri "tuttu" sayılır (önerilen ürün sepetteyse)
+  const recRef = typeof d.recommendationId === 'string' && /^[\w-]{1,64}$/.test(d.recommendationId)
+    ? db.doc(`customers/${c.id}/recommendations/${d.recommendationId}`) : null;
   await db.runTransaction(async (tx) => {
+    const rec = recRef ? await tx.get(recRef) : null;
     const mine = await tx.get(db.collection('appOrders').where('customerId', '==', c.id));
     const live = (doc) => appOrderCalc.ACTIVE.includes(doc.status) && !(doc.status === 'pending' && msOf(doc.expiresAt) < now);
     if (mine.docs.filter((x) => live(x.data())).length >= appOrderCalc.MAX_ACTIVE_PER_CUSTOMER) {
@@ -2416,8 +2435,17 @@ exports.createAppOrder = onCall(async (request) => {
       items: priced.items, total: priced.total, note: note.trim(), pickupAt,
       status: 'pending', reason: null, orderId: null, orderNo: null, ticketIds: [],
       createdAt: new Date(now).toISOString(), expiresAt: Timestamp.fromMillis(now + s.acceptMinutes * 60_000),
+      recommendationId: rec?.exists ? recRef.id : null,
       updatedAt: FieldValue.serverTimestamp(),
     });
+    appStat(tx, new Date(now).toISOString(), { requests: 1, [d.kind]: 1 });
+    const chosen = rec?.exists && !rec.data().chosenProductId
+      ? priced.items.map((i) => i.productId).find((id) => rec.data().productIds.includes(id)) : null;
+    if (chosen) {
+      tx.update(recRef, { chosenProductId: chosen, appOrderId: ref.id, orderedAt: new Date(now).toISOString() });
+      tx.set(db.doc(`dailyStats/${businessDayOf(rec.data().at)}`), { recs: { ordered: FieldValue.increment(1) },
+        updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    }
   });
   return { id: ref.id, total: priced.total, pickupAt };
 });
@@ -2431,6 +2459,7 @@ exports.cancelMyAppOrder = onCall(async (request) => {
     if (!snap.exists || snap.data().customerId !== c.id) throw new HttpsError('not-found', 'Sipariş bulunamadı.');
     if (snap.data().status !== 'pending') throw new HttpsError('failed-precondition', 'Onaylanmış sipariş uygulamadan iptal edilemez; kasaya başvurun.');
     tx.update(ref, { status: 'cancelled', reason: 'Müşteri iptal etti.', updatedAt: FieldValue.serverTimestamp() });
+    appStat(tx, snap.data().createdAt, { cancelled: 1 });
     return { status: 'cancelled' };
   });
 });
@@ -2452,12 +2481,15 @@ exports.acceptAppOrder = onCall(async (request) => {
     if (a.status === 'pending' && msOf(a.expiresAt) < Date.now()) {
       // Hata fırlatılırsa yazma geri alınır; süresi dolan istek önce kaydedilir, hata sonra döner
       tx.update(ref, { status: 'expired', reason: 'Kafe şu an yoğun.', updatedAt: FieldValue.serverTimestamp() });
+      appStat(tx, a.createdAt, { expired: 1 });
       return { status: 'expired' };
     }
     if (a.status !== 'pending') throw new HttpsError('failed-precondition', 'Sipariş zaten işlenmiş.');
     const at = new Date().toISOString();
     tx.update(ref, { status: 'accepted', orderId, orderNo, ticketIds, acceptedAt: at, acceptedBy: d.staffId || null,
       terminalId, updatedAt: FieldValue.serverTimestamp() });
+    appStat(tx, a.createdAt, { accepted: 1, acceptedAmount: a.total || 0,
+      acceptSeconds: Math.max(0, Math.round((Date.now() - msOf(a.createdAt)) / 1000)) });
     return { status: 'accepted' };
   });
   if (result.status === 'expired') {
@@ -2476,6 +2508,7 @@ exports.rejectAppOrder = onCall(async (request) => {
     if (!snap.exists) throw new HttpsError('not-found', 'Sipariş bulunamadı.');
     if (!['pending', 'expired'].includes(snap.data().status)) throw new HttpsError('failed-precondition', 'Sipariş zaten işlenmiş.');
     tx.update(ref, { status: 'rejected', reason, rejectedBy: d.staffId || null, terminalId, updatedAt: FieldValue.serverTimestamp() });
+    appStat(tx, snap.data().createdAt, { rejected: 1 });
     return { status: 'rejected' };
   });
 });
@@ -2494,6 +2527,7 @@ exports.appOrderNoShow = onCall(async (request) => {
     const noShows = (cust.exists ? cust.data().noShows || 0 : 0) + 1;
     const blocked = noShows >= appOrderCalc.NO_SHOW_LIMIT;
     tx.update(ref, { status: 'no_show', reason: 'Gelinmedi.', terminalId, updatedAt: FieldValue.serverTimestamp() });
+    appStat(tx, a.createdAt, { noShow: 1 });
     if (cust.exists) tx.update(cust.ref, { noShows, ...(blocked ? { pickupBlocked: true } : {}), updatedAt: FieldValue.serverTimestamp() });
     audit(tx, { action: 'app_no_show', actor: d.staffId || terminalId, target: `appOrders/${ref.id}`, detail: a.customerId, terminalId });
     return { status: 'no_show', pickupBlocked: blocked };
@@ -2570,10 +2604,172 @@ exports.expireAppOrders = onSchedule('every 1 minutes', async () => {
   for (const d of snap.docs) {
     if (msOf(d.data().expiresAt) < now) {
       batch.update(d.ref, { status: 'expired', reason: 'Kafe şu an yoğun.', updatedAt: FieldValue.serverTimestamp() });
+      appStat(batch, d.data().createdAt, { expired: 1 });
       n += 1;
     }
   }
   if (n) await batch.commit();
+});
+
+// ---------------------------------------------------------------------------
+// Kahve önerisi (11c): sorular panelden (settings/quiz, herkes okur); eşleştirme uygulamada internetsiz yapılır.
+// Üyenin gördüğü öneri kaydedilir; o ürünü uygulamadan sipariş ederse "tuttu" sayılır (Raporlar).
+// ---------------------------------------------------------------------------
+
+// Uygulama ve öneri raporu (Raporlar → Uygulama): gün aralığındaki sayaçlar ve önerilen ürünler
+exports.appReport = onCall(async (request) => {
+  await requireStaff(request, 'reports');
+  const day = (v, f) => {
+    if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new HttpsError('invalid-argument', `${f} YYYY-AA-GG olmalıdır.`);
+    return v;
+  };
+  const from = day(request.data?.from, 'Başlangıç');
+  const to = day(request.data?.to, 'Bitiş');
+  if (from > to || Date.parse(to) - Date.parse(from) > 366 * 86400_000) throw new HttpsError('invalid-argument', 'Tarih aralığı geçersiz.');
+  const { FieldPath } = require('firebase-admin/firestore');
+  const snap = await db.collection('dailyStats').where(FieldPath.documentId(), '>=', from).where(FieldPath.documentId(), '<=', to).get();
+  const days = snap.docs.map((d) => ({ day: d.id, app: d.data().app || {}, recs: d.data().recs || {} }))
+    .filter((d) => Object.keys(d.app).length || Object.keys(d.recs).length);
+  const totals = { app: {}, recs: {} };
+  for (const d of days) {
+    for (const part of ['app', 'recs']) for (const [k, v] of Object.entries(d[part])) totals[part][k] = (totals[part][k] || 0) + v;
+  }
+  // Önerilen ve tutan ürünler (son 500 öneri)
+  const recs = await db.collectionGroup('recommendations').where('at', '>=', from).orderBy('at', 'desc').limit(500).get();
+  const products = {};
+  for (const r of recs.docs) {
+    if (r.data().at.slice(0, 10) > to) continue;
+    const top = r.data().productIds[0];
+    products[top] ??= { shown: 0, ordered: 0 };
+    products[top].shown += 1;
+    if (r.data().chosenProductId) {
+      products[r.data().chosenProductId] ??= { shown: 0, ordered: 0 };
+      products[r.data().chosenProductId].ordered += 1;
+    }
+  }
+  return { days, totals, products };
+});
+
+exports.saveQuiz = onCall(async (request) => {
+  const actor = await requireStaff(request, 'editMenu');
+  const reset = request.data?.reset === true;
+  let quiz;
+  try {
+    quiz = reset ? quizCalc.DEFAULT_QUIZ : quizCalc.validateQuiz(request.data);
+  } catch (e) {
+    if (e instanceof quizCalc.QuizError) throw new HttpsError('invalid-argument', e.message);
+    throw e;
+  }
+  await db.runTransaction(async (tx) => {
+    tx.set(db.doc('settings/quiz'), { ...quiz, updatedAt: FieldValue.serverTimestamp(), updatedBy: actor.uid });
+    audit(tx, { action: 'quiz_save', actor: actor.uid, target: 'settings/quiz', detail: reset ? 'reset' : null });
+  });
+  return quiz;
+});
+
+exports.logRecommendation = onCall(async (request) => {
+  const c = await requireCustomer(request);
+  const d = request.data || {};
+  const ids = Array.isArray(d.productIds) ? d.productIds.filter((x) => typeof x === 'string' && /^[\w-]{1,128}$/.test(x)) : [];
+  if (!ids.length || ids.length > 3) throw new HttpsError('invalid-argument', 'Öneri listesi geçersiz.');
+  const answers = {};
+  for (const [k, v] of Object.entries(d.answers && typeof d.answers === 'object' ? d.answers : {}).slice(0, 6)) {
+    if (/^[a-z0-9_-]{1,24}$/.test(k) && typeof v === 'string' && /^[a-z0-9_-]{1,24}$/.test(v)) answers[k] = v;
+  }
+  const at = localIso();
+  const ref = db.collection(`customers/${c.id}/recommendations`).doc();
+  const batch = db.batch();
+  batch.set(ref, { productIds: ids, answers, chosenProductId: null, at, createdAt: FieldValue.serverTimestamp() });
+  batch.set(db.doc(`dailyStats/${businessDayOf(at)}`), { recs: { shown: FieldValue.increment(1) },
+    updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  await batch.commit();
+  return { id: ref.id };
+});
+
+// ---------------------------------------------------------------------------
+// Telefon bildirimleri (11c, Firebase Cloud Messaging). Uygulama cihaz anahtarını kaydeder
+// (customers/{id}/devices); sipariş durumu, ödül, doğum günü ve panelden kampanya bildirimleri buradan gider.
+// Emülatörde gerçek gönderim yapılmaz; pushLog koleksiyonuna yazılır (testler bunu okur).
+// ---------------------------------------------------------------------------
+
+const today = () => localIso().slice(0, 10);
+
+exports.registerDevice = onCall(async (request) => {
+  const c = await requireCustomer(request);
+  const token = requireString(request.data?.token, 'Cihaz anahtarı', { max: 4096 });
+  const platform = ['android', 'ios', 'web'].includes(request.data?.platform) ? request.data.platform : 'web';
+  const col = db.collection(`customers/${c.id}/devices`);
+  await col.doc(createHash('sha256').update(token).digest('hex').slice(0, 40))
+    .set({ token, platform, updatedAt: FieldValue.serverTimestamp() });
+  // En fazla 10 cihaz: eskiler silinir
+  const all = await col.orderBy('updatedAt', 'desc').get();
+  await Promise.all(all.docs.slice(10).map((d) => d.ref.delete()));
+  return { ok: true };
+});
+
+// kind: order | loyalty | marketing (bkz. src/push.js). → 'sent' | 'skipped' | 'no_device'
+async function pushTo(customerId, msg, kind) {
+  const ref = db.doc(`customers/${customerId}`);
+  const snap = await ref.get();
+  const day = today();
+  if (!snap.exists || !pushCalc.allowed(snap.data(), kind, day)) return 'skipped';
+  const devices = await ref.collection('devices').get();
+  if (devices.empty) return 'no_device';
+  const data = Object.fromEntries(Object.entries(msg.data || {}).map(([k, v]) => [k, String(v)]));
+  if (process.env.FUNCTIONS_EMULATOR === 'true') {
+    await db.collection('pushLog').add({ customerId, kind, title: msg.title, body: msg.body, data, devices: devices.size,
+      at: FieldValue.serverTimestamp() });
+  } else {
+    const { getMessaging } = require('firebase-admin/messaging');
+    const tokens = devices.docs.map((d) => d.data().token);
+    const res = await getMessaging().sendEachForMulticast({ tokens, notification: { title: msg.title, body: msg.body }, data,
+      android: { priority: 'high', notification: { channelId: kind === 'order' ? 'orders' : 'news' } } });
+    // Uygulaması silinmiş cihazların anahtarı temizlenir
+    await Promise.all(res.responses.map((r, i) => (!r.success && ['messaging/registration-token-not-registered',
+      'messaging/invalid-registration-token'].includes(r.error?.code) ? devices.docs[i].ref.delete() : null)));
+  }
+  if (kind === 'marketing') await ref.update({ lastMarketingPushDay: day });
+  return 'sent';
+}
+
+// Sipariş durumu değişince (onaylandı, hazır, reddedildi, yoğun) müşteriye
+exports.pushAppOrderStatus = onDocumentUpdated('appOrders/{id}', async (event) => {
+  const after = event.data.after.data();
+  const msg = pushCalc.orderMessage(event.data.before.data(), { ...after, id: event.params.id });
+  if (msg && after.customerId) await pushTo(after.customerId, msg, 'order');
+});
+
+// Kart dolunca / doğum günü ödülü (bildirim izniyle)
+exports.pushRewardCreated = onDocumentCreated('rewards/{id}', async (event) => {
+  const r = event.data.data();
+  const msg = pushCalc.rewardMessage(r);
+  if (msg && r.customerId) await pushTo(r.customerId, msg, 'loyalty');
+});
+
+// Panelden hazırlanan kampanya bildirimi: kitleye gönderilir (izin + günde 1)
+exports.sendNotificationOnCreate = onDocumentCreated('notifications/{id}', async (event) => {
+  const n = event.data.data();
+  if (n.status !== 'queued') return;
+  const day = today();
+  const customers = await db.collection('customers').where('marketingConsent', '==', true).get();
+  const counts = { sent: 0, skipped: 0, no_device: 0 };
+  for (const c of customers.docs.filter((x) => inSegment(x.data(), n.segment, day))) {
+    counts[await pushTo(c.id, { title: n.title, body: n.body, data: { type: 'campaign', campaignId: n.campaignId || '' } }, 'marketing')] += 1;
+  }
+  await event.data.ref.update({ status: 'sent', sentCount: counts.sent, skipped: counts.skipped + counts.no_device,
+    sentAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
+});
+
+// Her sabah 10:00: doğum günü ve süresi 7 gün sonra dolan ödül (bildirim izniyle)
+exports.dailyLoyaltyPush = onSchedule({ schedule: '0 10 * * *', timeZone: 'Europe/Istanbul' }, async () => {
+  const day = today();
+  const [customers, rewards] = await Promise.all([
+    db.collection('customers').where('marketingConsent', '==', true).get(),
+    db.collection('rewards').where('expiresAt', '==', loyaltyCalc.addDays(day, 7)).get(),
+  ]);
+  const msgs = pushCalc.dailyMessages(customers.docs.map((d) => ({ id: d.id, ...d.data() })),
+    rewards.docs.map((d) => ({ id: d.id, ...d.data() })), day, loyaltyCalc.addDays);
+  for (const m of msgs) await pushTo(m.customerId, { title: m.title, body: m.body, data: { type: 'loyalty' } }, 'loyalty');
 });
 
 // Kampanyalar (10. ekran): panelden (internet); kasa önbelleğe alır ve internetsiz uygular.
@@ -2612,7 +2808,8 @@ exports.deleteCampaign = onCall(async (request) => {
 });
 
 // Bildirim (10. ekran): yalnızca izin veren üyeler. Kitle ve erişim burada hesaplanır; gerçek gönderim
-// müşteri uygulaması (11. ekran) yayınlanınca açılır (durum: waiting_app). Kişi başı günde en fazla 1 bildirim.
+// mobil uygulama modülü açıksa hemen gönderilir (durum: queued → sent; bkz. sendNotificationOnCreate), kapalıysa
+// waiting_app olarak bekler. Kişi başı günde en fazla 1 kampanya bildirimi.
 const SEGMENTS = ['all', 'inactive30', 'silver', 'gold', 'birthday'];
 function inSegment(c, segment, day) {
   if (!c.marketingConsent || c.deleted === true || c.aliasOf) return false;
@@ -2634,9 +2831,10 @@ exports.saveNotification = onCall(async (request) => {
   const customers = await db.collection('customers').where('marketingConsent', '==', true).get();
   const reach = customers.docs.filter((x) => inSegment(x.data(), d.segment, day)).length;
   const ref = db.collection('notifications').doc();
+  const appOn = normalizeModules((await db.doc('settings/modules').get()).data()).app.enabled;
   await db.runTransaction(async (tx) => {
     const now = FieldValue.serverTimestamp();
-    tx.set(ref, { title, body, segment: d.segment, campaignId, reach, status: 'waiting_app', createdBy: actor.uid,
+    tx.set(ref, { title, body, segment: d.segment, campaignId, reach, status: appOn ? 'queued' : 'waiting_app', createdBy: actor.uid,
       createdAt: now, updatedAt: now });
     audit(tx, { action: 'notification_create', actor: actor.uid, target: ref.path, after: { segment: d.segment, reach } });
   });

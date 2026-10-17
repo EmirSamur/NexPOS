@@ -1,0 +1,756 @@
+{
+ "quiz": {
+  "questions": [
+   {
+    "id": "mood",
+    "text": "Bugün nasıl hissediyorsun?",
+    "answers": [
+     {
+      "id": "sleepy",
+      "text": "Uykuluyum 😴",
+      "weights": {
+       "strength": 2,
+       "body": 1
+      }
+     },
+     {
+      "id": "happy",
+      "text": "Keyifliyim 🙂",
+      "weights": {
+       "sweetness": 1
+      }
+     },
+     {
+      "id": "calm",
+      "text": "Sakin bir şey",
+      "weights": {
+       "strength": -2
+      }
+     }
+    ]
+   },
+   {
+    "id": "milk",
+    "text": "Sütlü mü?",
+    "answers": [
+     {
+      "id": "yes",
+      "text": "Evet",
+      "filter": {
+       "milk": true
+      }
+     },
+     {
+      "id": "no",
+      "text": "Hayır",
+      "filter": {
+       "milk": false
+      }
+     },
+     {
+      "id": "any",
+      "text": "Fark etmez"
+     }
+    ]
+   },
+   {
+    "id": "temp",
+    "text": "Sıcak mı soğuk mu?",
+    "answers": [
+     {
+      "id": "hot",
+      "text": "Sıcak ☕",
+      "filter": {
+       "temperature": "hot"
+      }
+     },
+     {
+      "id": "iced",
+      "text": "Buz gibi 🧊",
+      "filter": {
+       "temperature": "iced"
+      }
+     }
+    ]
+   },
+   {
+    "id": "taste",
+    "text": "Hangisi sana yakın?",
+    "answers": [
+     {
+      "id": "choc",
+      "text": "Çikolata 🍫",
+      "weights": {
+       "sweetness": 1,
+       "body": 1
+      },
+      "notes": [
+       "çikolata"
+      ]
+     },
+     {
+      "id": "fruit",
+      "text": "Meyvemsi 🍓",
+      "weights": {
+       "acidity": 2
+      },
+      "notes": [
+       "meyvemsi"
+      ]
+     },
+     {
+      "id": "nut",
+      "text": "Fındık 🌰",
+      "weights": {
+       "body": 1
+      },
+      "notes": [
+       "fındık",
+       "karamel"
+      ]
+     },
+     {
+      "id": "plain",
+      "text": "Sade",
+      "weights": {
+       "sweetness": -1
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "products": [
+  {
+   "id": "p00",
+   "name": "Espresso",
+   "flavor": {
+    "strength": 5,
+    "sweetness": 1,
+    "acidity": 3,
+    "body": 4,
+    "milk": false,
+    "temperature": "hot",
+    "notes": [
+     "kakao"
+    ]
+   },
+   "caffeineMg": 80,
+   "soldOut": false
+  },
+  {
+   "id": "p01",
+   "name": "Americano",
+   "flavor": {
+    "strength": 4,
+    "sweetness": 1,
+    "acidity": 3,
+    "body": 2,
+    "milk": false,
+    "temperature": "hot",
+    "notes": []
+   },
+   "caffeineMg": 80,
+   "soldOut": false
+  },
+  {
+   "id": "p02",
+   "name": "Filtre kahve",
+   "flavor": {
+    "strength": 3,
+    "sweetness": 1,
+    "acidity": 4,
+    "body": 2,
+    "milk": false,
+    "temperature": "hot",
+    "notes": [
+     "meyvemsi"
+    ]
+   },
+   "caffeineMg": 80,
+   "soldOut": false
+  },
+  {
+   "id": "p03",
+   "name": "Türk kahvesi",
+   "flavor": {
+    "strength": 5,
+    "sweetness": 2,
+    "acidity": 2,
+    "body": 5,
+    "milk": false,
+    "temperature": "hot",
+    "notes": [
+     "kakao"
+    ]
+   },
+   "caffeineMg": 80,
+   "soldOut": false
+  },
+  {
+   "id": "p04",
+   "name": "Latte",
+   "flavor": {
+    "strength": 2,
+    "sweetness": 2,
+    "acidity": 1,
+    "body": 3,
+    "milk": true,
+    "temperature": "hot",
+    "notes": []
+   },
+   "caffeineMg": 80,
+   "soldOut": false
+  },
+  {
+   "id": "p05",
+   "name": "Cappuccino",
+   "flavor": {
+    "strength": 3,
+    "sweetness": 2,
+    "acidity": 2,
+    "body": 3,
+    "milk": true,
+    "temperature": "hot",
+    "notes": []
+   },
+   "caffeineMg": 80,
+   "soldOut": false
+  },
+  {
+   "id": "p06",
+   "name": "Flat White",
+   "flavor": {
+    "strength": 4,
+    "sweetness": 2,
+    "acidity": 2,
+    "body": 4,
+    "milk": true,
+    "temperature": "hot",
+    "notes": []
+   },
+   "caffeineMg": 80,
+   "soldOut": false
+  },
+  {
+   "id": "p07",
+   "name": "Mocha",
+   "flavor": {
+    "strength": 2,
+    "sweetness": 4,
+    "acidity": 1,
+    "body": 4,
+    "milk": true,
+    "temperature": "hot",
+    "notes": [
+     "çikolata"
+    ]
+   },
+   "caffeineMg": 80,
+   "soldOut": false
+  },
+  {
+   "id": "p08",
+   "name": "Karamel Macchiato",
+   "flavor": {
+    "strength": 2,
+    "sweetness": 5,
+    "acidity": 1,
+    "body": 3,
+    "milk": true,
+    "temperature": "hot",
+    "notes": [
+     "karamel"
+    ]
+   },
+   "caffeineMg": 80,
+   "soldOut": false
+  },
+  {
+   "id": "p09",
+   "name": "Fındıklı Latte",
+   "flavor": {
+    "strength": 2,
+    "sweetness": 4,
+    "acidity": 1,
+    "body": 3,
+    "milk": true,
+    "temperature": "hot",
+    "notes": [
+     "fındık"
+    ]
+   },
+   "caffeineMg": 80,
+   "soldOut": false
+  },
+  {
+   "id": "p10",
+   "name": "Cold Brew",
+   "flavor": {
+    "strength": 4,
+    "sweetness": 2,
+    "acidity": 2,
+    "body": 3,
+    "milk": false,
+    "temperature": "iced",
+    "notes": [
+     "çikolata"
+    ]
+   },
+   "caffeineMg": 80,
+   "soldOut": false
+  },
+  {
+   "id": "p11",
+   "name": "Iced Americano",
+   "flavor": {
+    "strength": 4,
+    "sweetness": 1,
+    "acidity": 3,
+    "body": 2,
+    "milk": false,
+    "temperature": "iced",
+    "notes": []
+   },
+   "caffeineMg": 80,
+   "soldOut": false
+  },
+  {
+   "id": "p12",
+   "name": "Iced Latte",
+   "flavor": {
+    "strength": 2,
+    "sweetness": 2,
+    "acidity": 1,
+    "body": 3,
+    "milk": true,
+    "temperature": "iced",
+    "notes": []
+   },
+   "caffeineMg": 80,
+   "soldOut": true
+  },
+  {
+   "id": "p13",
+   "name": "Iced Mocha",
+   "flavor": {
+    "strength": 2,
+    "sweetness": 4,
+    "acidity": 1,
+    "body": 4,
+    "milk": true,
+    "temperature": "iced",
+    "notes": [
+     "çikolata"
+    ]
+   },
+   "caffeineMg": 80,
+   "soldOut": false
+  },
+  {
+   "id": "p14",
+   "name": "Frappe",
+   "flavor": {
+    "strength": 2,
+    "sweetness": 5,
+    "acidity": 1,
+    "body": 4,
+    "milk": true,
+    "temperature": "iced",
+    "notes": [
+     "karamel"
+    ]
+   },
+   "caffeineMg": 80,
+   "soldOut": false
+  },
+  {
+   "id": "p15",
+   "name": "Sıcak çikolata",
+   "flavor": {
+    "strength": 1,
+    "sweetness": 5,
+    "acidity": 1,
+    "body": 4,
+    "milk": true,
+    "temperature": "hot",
+    "notes": [
+     "çikolata"
+    ]
+   },
+   "caffeineMg": 0,
+   "soldOut": false
+  },
+  {
+   "id": "p16",
+   "name": "Çay",
+   "flavor": {
+    "strength": 3,
+    "sweetness": 1,
+    "acidity": 2,
+    "body": 1,
+    "milk": false,
+    "temperature": "hot",
+    "notes": []
+   },
+   "caffeineMg": 80,
+   "soldOut": false
+  },
+  {
+   "id": "p17",
+   "name": "Bitki çayı",
+   "flavor": {
+    "strength": 1,
+    "sweetness": 2,
+    "acidity": 2,
+    "body": 1,
+    "milk": false,
+    "temperature": "hot",
+    "notes": [
+     "meyvemsi"
+    ]
+   },
+   "caffeineMg": 0,
+   "soldOut": false
+  },
+  {
+   "id": "p18",
+   "name": "Limonata",
+   "flavor": {
+    "strength": 1,
+    "sweetness": 4,
+    "acidity": 5,
+    "body": 1,
+    "milk": false,
+    "temperature": "iced",
+    "notes": [
+     "meyvemsi"
+    ]
+   },
+   "caffeineMg": 0,
+   "soldOut": false
+  },
+  {
+   "id": "p99",
+   "name": "Kurabiye",
+   "flavor": null
+  }
+ ],
+ "cases": [
+  {
+   "name": "uykulu, sütsüz, sıcak, sade: sert kahveler",
+   "answers": {
+    "mood": "sleepy",
+    "milk": "no",
+    "temp": "hot",
+    "taste": "plain"
+   },
+   "ctx": {
+    "hour": 9
+   },
+   "without": [],
+   "expect": [
+    {
+     "productId": "p00",
+     "score": 94,
+     "reasons": []
+    },
+    {
+     "productId": "p03",
+     "score": 88,
+     "reasons": []
+    },
+    {
+     "productId": "p01",
+     "score": 75,
+     "reasons": []
+    }
+   ],
+   "profile": {
+    "target": {
+     "strength": 5,
+     "sweetness": 2,
+     "acidity": 3,
+     "body": 4
+    },
+    "notes": [],
+    "filter": {
+     "milk": false,
+     "temperature": "hot"
+    }
+   }
+  },
+  {
+   "name": "keyifli, sütlü, sıcak, çikolata: nota artısı, eşitlikte kimlik sırası",
+   "answers": {
+    "mood": "happy",
+    "milk": "yes",
+    "temp": "hot",
+    "taste": "choc"
+   },
+   "ctx": {
+    "hour": 15
+   },
+   "without": [],
+   "expect": [
+    {
+     "productId": "p07",
+     "score": 90,
+     "reasons": [
+      "notes"
+     ]
+    },
+    {
+     "productId": "p15",
+     "score": 90,
+     "reasons": [
+      "notes"
+     ]
+    },
+    {
+     "productId": "p08",
+     "score": 75,
+     "reasons": []
+    }
+   ],
+   "profile": {
+    "target": {
+     "strength": 3,
+     "sweetness": 5,
+     "acidity": 3,
+     "body": 4
+    },
+    "notes": [
+     "çikolata"
+    ],
+    "filter": {
+     "milk": true,
+     "temperature": "hot"
+    }
+   }
+  },
+  {
+   "name": "akşam: kafeinsize artı",
+   "answers": {
+    "mood": "calm",
+    "milk": "yes",
+    "temp": "hot",
+    "taste": "nut"
+   },
+   "ctx": {
+    "hour": 19
+   },
+   "without": [],
+   "expect": [
+    {
+     "productId": "p15",
+     "score": 85,
+     "reasons": [
+      "decaf"
+     ]
+    },
+    {
+     "productId": "p09",
+     "score": 84,
+     "reasons": [
+      "notes"
+     ]
+    },
+    {
+     "productId": "p08",
+     "score": 78,
+     "reasons": [
+      "notes"
+     ]
+    }
+   ],
+   "profile": {
+    "target": {
+     "strength": 1,
+     "sweetness": 3,
+     "acidity": 3,
+     "body": 4
+    },
+    "notes": [
+     "fındık",
+     "karamel"
+    ],
+    "filter": {
+     "milk": true,
+     "temperature": "hot"
+    }
+   }
+  },
+  {
+   "name": "tükenen ve tat profili olmayan önerilmez; sıcak günde soğuğa artı",
+   "answers": {
+    "milk": "yes",
+    "temp": "iced"
+   },
+   "ctx": {
+    "hour": 14,
+    "hotDay": true
+   },
+   "without": [],
+   "expect": [
+    {
+     "productId": "p13",
+     "score": 79,
+     "reasons": [
+      "iced"
+     ]
+    },
+    {
+     "productId": "p14",
+     "score": 73,
+     "reasons": [
+      "iced"
+     ]
+    }
+   ],
+   "profile": {
+    "target": {
+     "strength": 3,
+     "sweetness": 3,
+     "acidity": 3,
+     "body": 3
+    },
+    "notes": [],
+    "filter": {
+     "milk": true,
+     "temperature": "iced"
+    }
+   }
+  },
+  {
+   "name": "hiç denenmemiş ürüne artı",
+   "answers": {
+    "milk": "no",
+    "temp": "iced",
+    "taste": "fruit"
+   },
+   "ctx": {
+    "hour": 14,
+    "triedIds": [
+     "p10"
+    ]
+   },
+   "without": [],
+   "expect": [
+    {
+     "productId": "p18",
+     "score": 89,
+     "reasons": [
+      "notes",
+      "new"
+     ]
+    },
+    {
+     "productId": "p10",
+     "score": 69,
+     "reasons": []
+    },
+    {
+     "productId": "p11",
+     "score": 68,
+     "reasons": [
+      "new"
+     ]
+    }
+   ],
+   "profile": {
+    "target": {
+     "strength": 3,
+     "sweetness": 3,
+     "acidity": 5,
+     "body": 3
+    },
+    "notes": [
+     "meyvemsi"
+    ],
+    "filter": {
+     "milk": false,
+     "temperature": "iced"
+    }
+   }
+  },
+  {
+   "name": "cevapsız: ortalama profil",
+   "answers": {},
+   "ctx": {},
+   "without": [],
+   "expect": [
+    {
+     "productId": "p05",
+     "score": 88,
+     "reasons": []
+    },
+    {
+     "productId": "p10",
+     "score": 81,
+     "reasons": []
+    },
+    {
+     "productId": "p01",
+     "score": 75,
+     "reasons": []
+    }
+   ],
+   "profile": {
+    "target": {
+     "strength": 3,
+     "sweetness": 3,
+     "acidity": 3,
+     "body": 3
+    },
+    "notes": [],
+    "filter": {}
+   }
+  },
+  {
+   "name": "süzgece uyan yoksa sıcaklık gevşer",
+   "answers": {
+    "milk": "yes",
+    "temp": "iced"
+   },
+   "ctx": {
+    "hour": 10
+   },
+   "without": [
+    "p12",
+    "p13",
+    "p14"
+   ],
+   "expect": [
+    {
+     "productId": "p05",
+     "score": 88,
+     "reasons": []
+    },
+    {
+     "productId": "p04",
+     "score": 75,
+     "reasons": []
+    },
+    {
+     "productId": "p06",
+     "score": 75,
+     "reasons": []
+    }
+   ],
+   "profile": {
+    "target": {
+     "strength": 3,
+     "sweetness": 3,
+     "acidity": 3,
+     "body": 3
+    },
+    "notes": [],
+    "filter": {
+     "milk": true,
+     "temperature": "iced"
+    }
+   }
+  }
+ ]
+}

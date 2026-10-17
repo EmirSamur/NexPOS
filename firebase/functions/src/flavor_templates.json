@@ -1,0 +1,24 @@
+{
+  "_aciklama": "Yaygın içecekler için hazır tat profilleri (Menü → ürün → Tat Profili → Hazır şablon). Sertlik, tatlılık, asidite, gövde: 1–5.",
+  "templates": [
+    {"name": "Espresso", "flavor": {"strength": 5, "sweetness": 1, "acidity": 3, "body": 4, "milk": false, "temperature": "hot", "notes": ["kakao"]}},
+    {"name": "Americano", "flavor": {"strength": 4, "sweetness": 1, "acidity": 3, "body": 2, "milk": false, "temperature": "hot", "notes": []}},
+    {"name": "Filtre kahve", "flavor": {"strength": 3, "sweetness": 1, "acidity": 4, "body": 2, "milk": false, "temperature": "hot", "notes": ["meyvemsi"]}},
+    {"name": "Türk kahvesi", "flavor": {"strength": 5, "sweetness": 2, "acidity": 2, "body": 5, "milk": false, "temperature": "hot", "notes": ["kakao"]}},
+    {"name": "Latte", "flavor": {"strength": 2, "sweetness": 2, "acidity": 1, "body": 3, "milk": true, "temperature": "hot", "notes": []}},
+    {"name": "Cappuccino", "flavor": {"strength": 3, "sweetness": 2, "acidity": 2, "body": 3, "milk": true, "temperature": "hot", "notes": []}},
+    {"name": "Flat White", "flavor": {"strength": 4, "sweetness": 2, "acidity": 2, "body": 4, "milk": true, "temperature": "hot", "notes": []}},
+    {"name": "Mocha", "flavor": {"strength": 2, "sweetness": 4, "acidity": 1, "body": 4, "milk": true, "temperature": "hot", "notes": ["çikolata"]}},
+    {"name": "Karamel Macchiato", "flavor": {"strength": 2, "sweetness": 5, "acidity": 1, "body": 3, "milk": true, "temperature": "hot", "notes": ["karamel"]}},
+    {"name": "Fındıklı Latte", "flavor": {"strength": 2, "sweetness": 4, "acidity": 1, "body": 3, "milk": true, "temperature": "hot", "notes": ["fındık"]}},
+    {"name": "Cold Brew", "flavor": {"strength": 4, "sweetness": 2, "acidity": 2, "body": 3, "milk": false, "temperature": "iced", "notes": ["çikolata"]}},
+    {"name": "Iced Americano", "flavor": {"strength": 4, "sweetness": 1, "acidity": 3, "body": 2, "milk": false, "temperature": "iced", "notes": []}},
+    {"name": "Iced Latte", "flavor": {"strength": 2, "sweetness": 2, "acidity": 1, "body": 3, "milk": true, "temperature": "iced", "notes": []}},
+    {"name": "Iced Mocha", "flavor": {"strength": 2, "sweetness": 4, "acidity": 1, "body": 4, "milk": true, "temperature": "iced", "notes": ["çikolata"]}},
+    {"name": "Frappe", "flavor": {"strength": 2, "sweetness": 5, "acidity": 1, "body": 4, "milk": true, "temperature": "iced", "notes": ["karamel"]}},
+    {"name": "Sıcak çikolata", "flavor": {"strength": 1, "sweetness": 5, "acidity": 1, "body": 4, "milk": true, "temperature": "hot", "notes": ["çikolata"]}},
+    {"name": "Çay", "flavor": {"strength": 3, "sweetness": 1, "acidity": 2, "body": 1, "milk": false, "temperature": "hot", "notes": []}},
+    {"name": "Bitki çayı", "flavor": {"strength": 1, "sweetness": 2, "acidity": 2, "body": 1, "milk": false, "temperature": "hot", "notes": ["meyvemsi"]}},
+    {"name": "Limonata", "flavor": {"strength": 1, "sweetness": 4, "acidity": 5, "body": 1, "milk": false, "temperature": "iced", "notes": ["meyvemsi"]}}
+  ]
+}

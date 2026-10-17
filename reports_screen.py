@@ -587,7 +587,7 @@ class DashboardPage(QWidget):
 class ReportsPage(QWidget):
     open_cash_history = Signal()
     TAB_SUMMARY, TAB_PRODUCTS, TAB_MENU, TAB_TIME, TAB_STAFF, TAB_LOSSES, TAB_INCOME, TAB_KITCHEN, TAB_STOCK, \
-        TAB_LOYALTY = range(10)
+        TAB_LOYALTY, TAB_APP = range(11)
     MENU_CLASSES = {'star': ("★ Yıldız", "çok satıyor, kârlı — öne çıkarın"),
                     'plowhorse': ("🐴 İş atı", "çok satıyor, az kârlı — maliyeti düşürün ya da fiyatı gözden geçirin"),
                     'puzzle': ("🧩 Bulmaca", "kârlı ama az satıyor — menüde görünürlüğünü artırın"),
@@ -653,6 +653,8 @@ class ReportsPage(QWidget):
         self.tabs.addTab(self._kitchen_tab(), "Mutfak")
         self.tabs.addTab(self._stock_tab(), "Stok")
         self.tabs.addTab(self._loyalty_tab(), "Sadakat ve Kampanya")
+        self.tabs.addTab(self._app_tab(), "Uygulama")
+        self.tabs.currentChanged.connect(lambda i: i == self.TAB_APP and self._load_app())
         ly.addWidget(self.tabs, 1)
         self._loading = True
         self._preset_changed()
@@ -909,6 +911,68 @@ class ReportsPage(QWidget):
                          (text, c['windowChange'] or 0, True)])
         fill_table(self.campaign_table, rows)
 
+    # ---- Uygulama (11c): masadan / gel-al siparişleri ve kahve önerisi (buluttan, internet ister)
+    def _app_tab(self):
+        w = QWidget()
+        ly = QVBoxLayout(w)
+        ly.setContentsMargins(0, 10, 0, 0)
+        self.app_summary = QLabel("")
+        self.app_summary.setTextFormat(Qt.RichText)
+        self.app_summary.setWordWrap(True)
+        self.app_summary.setStyleSheet("font-size: 14px; background: transparent;")
+        ly.addWidget(self.app_summary)
+        self.app_load = QPushButton("Buluttan yükle")
+        self.app_load.setCursor(Qt.PointingHandCursor)
+        self.app_load.setMinimumHeight(34)
+        self.app_load.clicked.connect(lambda: self._load_app(force=True, ask=True))
+        ly.addWidget(self.app_load, 0, Qt.AlignLeft)
+        ly.addWidget(_muted("Kahve önerisi: uygulamada \"Bana öner\" ile gösterilen ilk ürün ve önerilen ürünün "
+                            "uygulamadan sipariş edilme oranı (tutma)."))
+        self.app_table = make_table([("Önerilen ürün", True), ("Gösterildi", False), ("Sipariş edildi", False),
+                                     ("Tutma", False)], sort=(1, Qt.DescendingOrder))
+        ly.addWidget(self.app_table, 1)
+        self._app_period = None
+        return w
+
+    def _load_app(self, force=False, ask=False):
+        """Sekme açılınca yüklenir; yöneticinin bulut oturumu yoksa şifre ancak "Buluttan yükle" ile sorulur."""
+        if not self.tabs.isTabVisible(self.TAB_APP):
+            return
+        period = self.period()
+        if not force and self._app_period == period:
+            return
+        from access import require_admin_api
+        from cloud.context import ctx
+        from cloud.qt_sync import run_async
+        api = require_admin_api(self, self.user) if ask else ctx.admin_api(self.user.get('cloud_id'))
+        if not api:
+            self.app_summary.setText("Uygulama raporu buluttan gelir (internet ve yönetici/müdür e-posta girişi gerekir). "
+                                     "\"Buluttan yükle\"ye basın.")
+            return
+        self._app_period = period
+        self.app_summary.setText("Yükleniyor…")
+
+        def failed(message):
+            self._app_period = None
+            self.app_summary.setText(f"Rapor alınamadı: {message}")
+        run_async(lambda: api.app_report(*period), self._fill_app, failed)
+
+    def _fill_app(self, data):
+        import app_orders
+        names = {p['id']: p['name'] for p in database.cache_rows('products', include_deleted=True)}
+        r = app_orders.report_summary(data, names)
+        wait = f"{r['avgAcceptSeconds'] // 60} dk {r['avgAcceptSeconds'] % 60} sn" if r['avgAcceptSeconds'] >= 60 \
+            else f"{r['avgAcceptSeconds']} sn"
+        self.app_summary.setText(
+            f"Uygulama siparişi: <b>{r['requests']}</b> (masadan {r['table']}, gel-al {r['pickup']}) · "
+            f"onaylanan <b>{r['accepted']}</b> (%{r['acceptRate']}) · tutarı <b>{tl(r['acceptedAmount'])}</b><br>"
+            f"Reddedilen <b>{r['rejected']}</b> · süresi dolan (\"yoğun\") <b>{r['expired']}</b> · müşteri geri çekti "
+            f"<b>{r['cancelled']}</b> · gel-al gelinmedi <b>{r['noShow']}</b> · ortalama onay süresi <b>{wait}</b><br>"
+            f"Kahve önerisi: <b>{r['recsShown']}</b> kez gösterildi, <b>{r['recsOrdered']}</b> sipariş "
+            f"(tutma <b>%{r['recRate']}</b>)")
+        fill_table(self.app_table, [[text_cell(n), num_cell(shown), num_cell(ordered), (f"%{rate}", rate, True)]
+                                    for n, shown, ordered, rate in r['products']])
+
     def _kitchen_tab(self):
         w = QWidget()
         ly = QVBoxLayout(w)
@@ -938,6 +1002,10 @@ class ReportsPage(QWidget):
         self.tabs.setTabVisible(self.TAB_STOCK, database.modules()['stock']['enabled'])
         m = database.modules()
         self.tabs.setTabVisible(self.TAB_LOYALTY, m['loyalty']['enabled'] or m['campaigns']['enabled'])
+        self.tabs.setTabVisible(self.TAB_APP, m['app']['enabled'])
+        self._app_period = None
+        if self.tabs.currentIndex() == self.TAB_APP:
+            self._load_app()
         self.tabs.setTabVisible(self.TAB_LOSSES, self.user.get('role') in PANEL_ROLES)
         self._fill_summary()
         self._fill_products()
@@ -1126,7 +1194,8 @@ class ReportsPage(QWidget):
         names = {self.TAB_SUMMARY: "Satış özeti", self.TAB_PRODUCTS: "Ürünler", self.TAB_MENU: "Menü analizi",
                  self.TAB_TIME: "Saatler",
                  self.TAB_STAFF: "Personel", self.TAB_LOSSES: "Kayıp ve denetim", self.TAB_INCOME: "Gelir-gider",
-                 self.TAB_KITCHEN: "Mutfak", self.TAB_STOCK: "Stok", self.TAB_LOYALTY: "Sadakat ve kampanya"}
+                 self.TAB_KITCHEN: "Mutfak", self.TAB_STOCK: "Stok", self.TAB_LOYALTY: "Sadakat ve kampanya",
+                 self.TAB_APP: "Uygulama ve öneri"}
         title = f"{names[tab]} {a} – {b}"
         if tab == self.TAB_SUMMARY:
             s = self.report.summary()
@@ -1144,7 +1213,8 @@ class ReportsPage(QWidget):
             return title, ["Kalem", "Tutar"], [list(r) for r in self.income_rows()]
         table = {self.TAB_PRODUCTS: self.product_table, self.TAB_MENU: self.menu_table, self.TAB_STAFF: self.staff_table,
                  self.TAB_LOSSES: self.loss_table, self.TAB_KITCHEN: self.kitchen_product_table,
-                 self.TAB_STOCK: self.stock_table, self.TAB_LOYALTY: self.campaign_table}[tab]
+                 self.TAB_STOCK: self.stock_table, self.TAB_LOYALTY: self.campaign_table,
+                 self.TAB_APP: self.app_table}[tab]
         cols = [c for c in range(table.columnCount()) if not table.isColumnHidden(c)]
         headers = [table.horizontalHeaderItem(c).text() for c in cols]
         rows = [[table.item(r, c).text() if table.item(r, c) else '' for c in cols] for r in range(table.rowCount())]

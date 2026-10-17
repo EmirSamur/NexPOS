@@ -155,6 +155,12 @@ class AdminApi:
     def save_loyalty_settings(self, data):
         return self._call('saveLoyaltySettings', data)
 
+    def save_quiz(self, quiz):
+        return self._call('saveQuiz', quiz)
+
+    def app_report(self, day_from, day_to):
+        return self._call('appReport', {'from': day_from, 'to': day_to})
+
     def save_app_settings(self, data):
         """Müşteri uygulamasında görünen kafe bilgisi ve aydınlatma metni (11. ekran, yalnızca yönetici)."""
         return self._call('saveAppSettings', data)

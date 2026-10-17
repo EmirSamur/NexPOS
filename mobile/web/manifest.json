@@ -1,11 +1,11 @@
 {
-    "name": "kafe_app",
-    "short_name": "kafe_app",
+    "name": "Velvet Kafe",
+    "short_name": "Velvet Kafe",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "Kafe müşteri uygulaması",
+    "background_color": "#FAF7F2",
+    "theme_color": "#6B4226",
+    "description": "Kahven seni bekliyor",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

@@ -856,7 +856,7 @@ class AppSettingsPanel(QWidget):
 
 
 class MarketingPage(QWidget):
-    """Pazarlama: Müşteriler · Kampanyalar · Bildirimler · Sadakat Ayarları."""
+    """Pazarlama: Müşteriler · Kampanyalar · Bildirimler · Sadakat Ayarları · Mobil Uygulama · Kahve Önerisi."""
 
     def __init__(self, user, parent=None):
         super().__init__(parent)
@@ -880,6 +880,9 @@ class MarketingPage(QWidget):
         self.tabs.addTab(self.settings, "Sadakat Ayarları")
         self.app_settings = AppSettingsPanel(user)
         self.tabs.addTab(self.app_settings, "Mobil Uygulama")
+        from quiz_pages import QuizPanel
+        self.quiz = QuizPanel(user)
+        self.tabs.addTab(self.quiz, "Kahve Önerisi")
         self.tabs.currentChanged.connect(lambda _: self.refresh())
         ly.addWidget(self.tabs)
 

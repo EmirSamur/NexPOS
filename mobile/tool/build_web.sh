@@ -5,6 +5,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 flutter build web --release --base-href / "$@"
 OUT=../firebase/hosting
-find "$OUT" -mindepth 1 -maxdepth 1 ! -name mutfak -exec rm -rf {} +
+find "$OUT" -mindepth 1 -maxdepth 1 ! -name mutfak ! -name .well-known -exec rm -rf {} +
 cp -r build/web/. "$OUT"/
 echo "Web sürümü: $OUT"

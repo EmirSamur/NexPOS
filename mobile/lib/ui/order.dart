@@ -324,6 +324,23 @@ class OrderStatusScreen extends StatelessWidget {
           style: t.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
         ),
         if (o.orderNo != null) Text('Sipariş no: ${o.orderNo}', style: t.titleMedium),
+        if (!s.pushEnabled && !failed && status != 'completed')
+          Card(
+            margin: const EdgeInsets.only(top: 12),
+            child: ListTile(
+              leading: const Icon(Icons.notifications_active_outlined),
+              title: const Text('Hazır olunca haber verelim mi?'),
+              subtitle: const Text('Uygulama kapalıyken de bildirim gelir.'),
+              trailing: TextButton(
+                key: const Key('enablePush'),
+                onPressed: () async {
+                  final on = await s.turnOnPush();
+                  if (context.mounted) showMessage(context, on ? 'Bildirimler açıldı.' : 'Bildirim izni verilmedi.');
+                },
+                child: const Text('Aç'),
+              ),
+            ),
+          ),
         if (o.kind == 'pickup' && o.pickupAt != null) Text('Geliş saati: ${hm(o.pickupAt!)}'),
         if (status == 'pending') const Text('Kafe onayladığında hazırlanmaya başlar.', style: TextStyle(color: Colors.black54)),
         if (failed) ...[

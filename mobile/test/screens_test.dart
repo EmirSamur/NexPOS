@@ -5,6 +5,7 @@ import 'package:kafe_app/brand.dart';
 import 'package:kafe_app/main.dart';
 import 'package:kafe_app/models.dart';
 import 'package:kafe_app/state.dart';
+import 'package:kafe_app/ui/profile.dart';
 
 import 'fake_repo.dart';
 
@@ -14,8 +15,12 @@ const menu = MenuData(
   categories: [Category(id: 'kahve', name: 'Kahveler', stampEligible: true), Category(id: 'tatli', name: 'Tatlılar')],
   products: [
     Product(id: 'latte', categoryId: 'kahve', name: 'Latte', price: 9500, description: 'Espresso ve süt',
-        optionGroupIds: ['sut'], allergens: ['milk'], calories: 190, caffeineMg: 75),
-    Product(id: 'mocha', categoryId: 'kahve', name: 'Mocha', price: 11000, soldOut: true),
+        optionGroupIds: ['sut'], allergens: ['milk'], calories: 190, caffeineMg: 75,
+        flavor: Flavor(dims: {'strength': 2, 'sweetness': 2, 'acidity': 1, 'body': 3}, milk: true)),
+    Product(id: 'mocha', categoryId: 'kahve', name: 'Mocha', price: 11000, soldOut: true,
+        flavor: Flavor(dims: {'strength': 2, 'sweetness': 4, 'acidity': 1, 'body': 4}, milk: true, notes: ['çikolata'])),
+    Product(id: 'espresso', categoryId: 'kahve', name: 'Espresso', price: 6000,
+        flavor: Flavor(dims: {'strength': 5, 'sweetness': 1, 'acidity': 3, 'body': 4})),
     Product(id: 'kek', categoryId: 'tatli', name: 'Kek', price: 7000),
   ],
   optionGroups: {
@@ -165,7 +170,8 @@ void main() {
     await tester.tap(find.byKey(const Key('profileConsent')));
     await tester.pumpAndSettle();
     expect(state.customer!.marketingConsent, isTrue);
-    await tester.ensureVisible(find.byKey(const Key('deleteAccount')));
+    await tester.scrollUntilVisible(find.byKey(const Key('deleteAccount')), 300,
+        scrollable: find.descendant(of: find.byType(ProfileTab), matching: find.byType(Scrollable)).first);
     await tester.pumpAndSettle();
     expect(find.text('11 Ekim · 190,00 ₺ · +2 damga'), findsOneWidget);
     await tester.tap(find.byKey(const Key('deleteAccount')));
@@ -259,6 +265,8 @@ void main() {
     expect(state.table, isNull);
     await tester.tap(find.byKey(const Key('orderPickup')));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Tatlılar'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Tatlılar'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Kek'));
@@ -285,11 +293,64 @@ void main() {
     // Kasa çevrimdışı: sepet açılır ama gönderilemez
     repo.ordering = const OrderingInfo(online: false, pickup: true);
     await state.refreshOrdering();
-    state.addItem(CartItem(menu.products[2]));
+    state.addItem(CartItem(menu.product('kek')!));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('cartBar')));
     await tester.pumpAndSettle();
     expect(find.text('Şu an çevrimiçi sipariş alınmıyor.'), findsOneWidget);
     expect(find.byKey(const Key('sendOrder')), findsNothing);
+  });
+
+  testWidgets('bana öner: 4 soru → en uyumlu (tükenen önerilmez), kaydedilir, sepete → siparişte öneri kimliği', (tester) async {
+    final (repo, state) = await pump(tester, existing: const Customer(id: 'c1', name: 'Ayşe Kaya'));
+    await login(tester);
+    await tester.tap(find.byKey(const Key('quiz')));
+    await tester.pumpAndSettle();
+    expect(find.text('Bugün nasıl hissediyorsun?'), findsOneWidget);
+    await tester.tap(find.text('Keyifliyim 🙂'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Evet'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sıcak ☕'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Çikolata 🍫'));
+    await tester.pumpAndSettle();
+    // Mocha en uygunu ama tükendi; Latte önerilir
+    expect(find.byKey(const Key('quizTop')), findsOneWidget);
+    expect(tester.widget<Text>(find.byKey(const Key('quizTop'))).data, 'Latte');
+    expect(repo.recLog.single.$1, ['latte']);
+    expect(repo.recLog.single.$2, {'mood': 'happy', 'milk': 'yes', 'temp': 'hot', 'taste': 'choc'});
+    await tester.tap(find.byKey(const Key('quizPick')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('addToCart')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('cartBar')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('sendOrder')));
+    await tester.pumpAndSettle();
+    expect(repo.sent.single['recommendationId'], 'rec1');
+
+    // Telefon bildirimi: sipariş ekranından izin; uygulama açıkken gelen bildirim görünür
+    expect(state.pushEnabled, isFalse);
+    await tester.tap(find.byKey(const Key('enablePush')));
+    await tester.pumpAndSettle();
+    expect(repo.pushAsked, 1);
+    expect(state.pushEnabled, isTrue);
+    expect(find.byKey(const Key('enablePush')), findsNothing);
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    repo.push('Kartın doldu 🎁', 'Bir içecek bizden.');
+    await tester.pumpAndSettle();
+    expect(find.text('Kartın doldu 🎁 — Bir içecek bizden.'), findsOneWidget);
+  });
+
+  testWidgets('herkese açık gizlilik ve hesap silme sayfaları (mağaza)', (tester) async {
+    final repo = FakeRepo(info: const AppInfo(cafeName: 'Velvet Kafe', phone: '0216 000 00 00', kvkkText: 'Aydınlatma metni…'));
+    final state = AppState(brand, repo)..start();
+    await tester.pumpWidget(KafeApp(state: state, page: 'hesap-sil'));
+    await tester.pumpAndSettle();
+    expect(find.text('Hesabını ve verilerini silme'), findsOneWidget);
+    expect(find.textContaining('0216 000 00 00'), findsOneWidget);
+    expect(find.text('Aydınlatma metni…'), findsOneWidget);
   });
 }

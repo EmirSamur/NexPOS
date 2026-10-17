@@ -496,8 +496,9 @@ class NotificationsPage(QWidget):
         form.addRow("Tahmini erişim:", self.reach)
         ly.addLayout(form)
         row = QHBoxLayout()
-        row.addWidget(_muted("Gönderim, müşteri uygulaması yayınlanınca başlar; şimdi kaydedilen bildirim "
-                             "\"uygulama bekleniyor\" olarak görünür. SMS/WhatsApp toplu gönderim yoktur."), 1)
+        row.addWidget(_muted("Mobil uygulama modülü açıksa hemen gönderilir: uygulamayı yükleyip bildirime izin vermiş "
+                             "üyelerin telefonuna düşer. Modül kapalıysa \"uygulama bekleniyor\" olarak kalır. "
+                             "SMS/WhatsApp toplu gönderim yoktur."), 1)
         self.send = _button("Kaydet ve gönder")
         self.send.clicked.connect(self._send)
         row.addWidget(self.send)
@@ -521,11 +522,13 @@ class NotificationsPage(QWidget):
                       key=lambda n: str(n.get('createdAt') or ''), reverse=True)
         self.table.setRowCount(0)
         self.table.setRowCount(len(rows))
-        status = {'waiting_app': 'Uygulama bekleniyor', 'sent': 'Gönderildi'}
+        status = {'waiting_app': 'Uygulama bekleniyor', 'queued': 'Gönderiliyor…', 'sent': 'Gönderildi'}
         for r, n in enumerate(rows):
+            label = status.get(n.get('status'), n.get('status', ''))
+            if n.get('status') == 'sent':
+                label = f"Gönderildi: {n.get('sentCount', 0)} telefon"
             cells = [str(n.get('createdAt') or '')[:16].replace('T', ' '), n.get('title', ''),
-                     SEGMENT_LABELS.get(n.get('segment'), ''), str(n.get('reach', 0)),
-                     status.get(n.get('status'), n.get('status', ''))]
+                     SEGMENT_LABELS.get(n.get('segment'), ''), str(n.get('reach', 0)), label]
             for col, v in enumerate(cells):
                 self.table.setItem(r, col, QTableWidgetItem(v))
 

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:kafe_app/data/repo.dart';
 import 'package:kafe_app/models.dart';
+import 'package:kafe_app/quiz.dart';
 
 /// Bellekte çalışan Repo: ekran testleri için (sunucu davranışı firebase/tests'te ayrıca test edilir).
 class FakeRepo implements Repo {
@@ -160,6 +161,7 @@ class FakeRepo implements Repo {
     PickupChoice? pickup,
     String note = '',
     int? expectedTotal,
+    String? recommendationId,
   }) async {
     final id = 'ao${sent.length + 1}';
     sent.add({
@@ -169,6 +171,7 @@ class FakeRepo implements Repo {
       'pickup': pickup?.toRequest(),
       'note': note,
       'expectedTotal': expectedTotal,
+      'recommendationId': ?recommendationId,
     });
     pushOrders([
       AppOrder(
@@ -203,6 +206,34 @@ class FakeRepo implements Repo {
 
   @override
   Stream<List<AppOrder>> appOrders(String customerId) => _seeded(() => orderList, _orders);
+
+  final recLog = <(List<String>, Map<String, String>)>[];
+  bool pushAllowed = false;
+  int pushAsked = 0;
+  final _push = StreamController<(String, String)>.broadcast();
+
+  @override
+  Stream<Quiz> quiz() => Stream.value(defaultQuiz);
+
+  @override
+  Future<String> logRecommendation(List<String> productIds, Map<String, String> answers) async {
+    recLog.add((productIds, answers));
+    return 'rec${recLog.length}';
+  }
+
+  @override
+  Future<bool> enablePush({bool ask = true}) async {
+    if (ask) {
+      pushAsked++;
+      pushAllowed = true;
+    }
+    return pushAllowed;
+  }
+
+  @override
+  Stream<(String, String)> pushMessages() => _push.stream;
+
+  void push(String title, String body) => _push.add((title, body));
 
   @override
   Future<Set<String>> favorites() async => {...favs};

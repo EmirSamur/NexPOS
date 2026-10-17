@@ -4,11 +4,13 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../brand.dart';
 import '../models.dart';
+import '../quiz.dart';
 
 class AuthUser {
   final String uid;
@@ -56,10 +58,22 @@ abstract class Repo {
     PickupChoice? pickup,
     String note = '',
     int? expectedTotal,
+    String? recommendationId,
   });
   Future<void> cancelAppOrder(String id);
   Future<bool> callTable(TableRef table, String kind); // true: yeni çağrı, false: zaten çağrılmış
   Stream<List<AppOrder>> appOrders(String customerId);
+
+  // Kahve önerisi ve bildirimler (11c)
+  Stream<Quiz> quiz();
+  Future<String> logRecommendation(List<String> productIds, Map<String, String> answers);
+
+  /// Bildirim izni ister ve cihazı kaydeder. ask: false ise yalnızca izin zaten verilmişse kaydeder.
+  /// → izin verildi mi
+  Future<bool> enablePush({bool ask = true});
+
+  /// Uygulama açıkken gelen bildirimler (başlık, metin)
+  Stream<(String, String)> pushMessages();
 }
 
 // =====================================================================
@@ -280,6 +294,7 @@ class FirebaseRepo implements Repo {
     PickupChoice? pickup,
     String note = '',
     int? expectedTotal,
+    String? recommendationId,
   }) async {
     final r = await _call<Map>('createAppOrder', {
       'kind': kind,
@@ -289,6 +304,7 @@ class FirebaseRepo implements Repo {
       if (pickup != null) 'pickup': pickup.toRequest(),
       if (note.isNotEmpty) 'note': note,
       'expectedTotal': ?expectedTotal,
+      'recommendationId': ?recommendationId,
     });
     return r['id'] as String;
   }
@@ -309,6 +325,49 @@ class FirebaseRepo implements Repo {
       .snapshots()
       .map((q) => q.docs.map((d) => AppOrder.fromDoc(d.id, d.data())).toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt)));
+
+  @override
+  Stream<Quiz> quiz() => db.doc('settings/quiz').snapshots().map((s) => Quiz.fromDoc(s.data()));
+
+  @override
+  Future<String> logRecommendation(List<String> productIds, Map<String, String> answers) async {
+    final r = await _call<Map>('logRecommendation', {'productIds': productIds, 'answers': answers});
+    return r['id'] as String;
+  }
+
+  @override
+  Future<bool> enablePush({bool ask = true}) async {
+    try {
+      final m = FirebaseMessaging.instance;
+      final current = await m.getNotificationSettings();
+      var status = current.authorizationStatus;
+      if (status != AuthorizationStatus.authorized && ask) {
+        status = (await m.requestPermission()).authorizationStatus;
+      }
+      if (status != AuthorizationStatus.authorized && status != AuthorizationStatus.provisional) return false;
+      // Sunucu (firebase-admin 13) cihaz anahtarıyla gönderir; yeni "FID ile gönderim" (register/onRegistered)
+      // sunucu kütüphanesi destekleyince geçilecek.
+      // ignore: deprecated_member_use
+      final token = await m.getToken(vapidKey: kIsWeb && brand.webPushKey.isNotEmpty ? brand.webPushKey : null);
+      if (token == null) return false;
+      final platform = kIsWeb ? 'web' : (defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android');
+      await _call<Map>('registerDevice', {'token': token, 'platform': platform});
+      // ignore: deprecated_member_use
+      _tokenSub ??= m.onTokenRefresh.listen((t) => _call<Map>('registerDevice', {'token': t, 'platform': platform}));
+      return true;
+    } on AppError {
+      rethrow;
+    } catch (_) {
+      return false; // tarayıcı/cihaz bildirimi desteklemiyor (ör. emülatör, gizli pencere)
+    }
+  }
+
+  StreamSubscription? _tokenSub;
+
+  @override
+  Stream<(String, String)> pushMessages() => FirebaseMessaging.onMessage
+      .map((m) => (m.notification?.title ?? '', m.notification?.body ?? ''))
+      .handleError((_) {});
 
   @override
   Future<Set<String>> favorites() async =>

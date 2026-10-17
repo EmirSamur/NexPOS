@@ -203,3 +203,31 @@ def ack_call(user, call_doc):
     """Garson çağrıyı gördü: kuyruktan kapatılır (internetsiz de)."""
     database.enqueue_op('ackTableCall', {'callId': call_doc['id'], 'at': call_doc.get('at')}, user['cloud_id'])
     _mark('tableCalls', call_doc['id'], {'status': 'done'})
+
+
+# ---------------------------------------------------------------------------
+# Rapor (11c): Raporlar → Uygulama. Veri buluttaki günlük sayaçlardan gelir (appReport, internet ister).
+# ---------------------------------------------------------------------------
+
+def _pct(a, b):
+    return round(100 * a / b) if b else 0
+
+
+def report_summary(data, product_names=None):
+    """appReport sonucu → ekranda gösterilecek özet ve önerilen ürünler tablosu."""
+    a = (data or {}).get('totals', {}).get('app', {})
+    r = (data or {}).get('totals', {}).get('recs', {})
+    accepted = a.get('accepted', 0)
+    names = product_names or {}
+    products = sorted(((names.get(pid, 'Silinmiş ürün'), v.get('shown', 0), v.get('ordered', 0),
+                        _pct(v.get('ordered', 0), v.get('shown', 0)))
+                       for pid, v in (data or {}).get('products', {}).items()), key=lambda x: (-x[1], -x[2], x[0]))
+    return {
+        'requests': a.get('requests', 0), 'table': a.get('table', 0), 'pickup': a.get('pickup', 0),
+        'accepted': accepted, 'acceptRate': _pct(accepted, a.get('requests', 0)),
+        'rejected': a.get('rejected', 0), 'expired': a.get('expired', 0), 'cancelled': a.get('cancelled', 0),
+        'noShow': a.get('noShow', 0), 'avgAcceptSeconds': round(a.get('acceptSeconds', 0) / accepted) if accepted else 0,
+        'acceptedAmount': a.get('acceptedAmount', 0),
+        'recsShown': r.get('shown', 0), 'recsOrdered': r.get('ordered', 0), 'recRate': _pct(r.get('ordered', 0), r.get('shown', 0)),
+        'products': products,
+    }

@@ -1,4 +1,4 @@
-# 11. Ekran: Müşteri Uygulaması (Flutter) (onaylandı; 11a ve 11b tamam, 11c sırada)
+# 11. Ekran: Müşteri Uygulaması (Flutter) (tamam: 11a, 11b, 11c)
 
 ## Amaç
 
@@ -193,9 +193,9 @@ Bu ekran büyük olduğu için üç parçada gelir; her biri ayrı test edilip g
 - [x] Masadan QR sipariş (uygulama ve tarayıcı): istek → NexPOS onayı → masanın adisyonu → KDS; garson çağır / hesap iste
 - [x] Gel-al: saat seçimi, onay, hazırlanıyor, hazır bildirimi; kasa çevrimdışıyken kapanıyor
 - [x] Fiyatlar sunucuda menüden hesaplanıyor; başka masanın QR'ı ve sahte istek reddediliyor
-- [ ] Kahve önerisi: sorular, tat profili, tükenen ürün elenir, öneri sepete eklenir; tutma oranı raporu
-- [ ] Bildirimler: kampanya (izinli, günde 1), sipariş durumu, ödül ve doğum günü
-- [ ] Testler: Flutter birim/ekran, emülatörde uçtan uca; Android APK derleniyor
+- [x] Kahve önerisi: sorular, tat profili, tükenen ürün elenir, öneri sepete eklenir; tutma oranı raporu
+- [x] Bildirimler: kampanya (izinli, günde 1), sipariş durumu, ödül ve doğum günü
+- [x] Testler: Flutter birim/ekran, emülatörde uçtan uca; Android APK derleniyor (GitHub Actions — bu geliştirme ortamında Android SDK indirilemiyor)
 
 ## Durum
 
@@ -218,6 +218,16 @@ Bu ekran büyük olduğu için üç parçada gelir; her biri ayrı test edilip g
 - Kötüye kullanıma karşı: fiyat sunucuda menüden; masadan bekleyen en fazla 2, müşteri başına en fazla 3 açık
   istek; tek istekte en fazla 50 ürün / 3.000 ₺; başka masanın QR'ı geçmez; üst üste 2 kez gelmeyene gel-al
   kapanır (Pazarlama → Müşteriler'den açılır).
+
+- **11c tamam.** **Bana öner**: panelden düzenlenen sorular (Pazarlama → Kahve Önerisi; "Dene" önizlemesi), ürünlerin
+  tat profili (Menü → ürün → Tat Profili, 19 hazır şablon); eşleştirme telefonda internetsiz yapılır (JS, Python ve
+  Dart aynı sonucu verir: `quiz_vectors.json`). Üyenin gördüğü öneri kaydedilir; önerilen ürün uygulamadan sipariş
+  edilirse "tuttu" sayılır. **Telefon bildirimleri** (Firebase Cloud Messaging): sipariş onaylandı / hazır /
+  alınamadı (her zaman), ödül ve doğum günü, ödülün süresi 7 gün sonra doluyor (izinle), panelden kampanya
+  bildirimi (izin + günde en fazla 1). **Raporlar → Uygulama**: sipariş sayıları, onay oranı ve süresi,
+  reddedilen / süresi dolan / gelinmeyen, öneri tutma oranı ve ürün bazında. **Mağaza**: `tool/apply_brand.py`
+  (ad, paket adı, simgeler, App Links, bildirim servis çalışanı), `/gizlilik` ve `/hesap-sil` sayfaları,
+  GitHub Actions ile APK; adımlar `docs/MAGAZA.md`.
 
 ### Kafeye özel (white-label)
 

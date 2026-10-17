@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kafe_app/logic.dart';
 import 'package:kafe_app/models.dart';
+import 'package:kafe_app/quiz.dart';
 
 Map<String, dynamic> _vectors(String name) =>
     jsonDecode(File('../firebase/functions/test/$name').readAsStringSync()) as Map<String, dynamic>;
@@ -117,5 +118,40 @@ void main() {
     expect(o.statusAt(DateTime(2026, 10, 16, 15, 3)), 'expired');
     expect(o.activeAt(DateTime(2026, 10, 16, 15, 3)), isFalse);
     expect(o.place, 'Masa 4');
+  });
+
+  group('kahve önerisi (quiz_vectors.json)', () {
+    final v = _vectors('quiz_vectors.json');
+    final quiz = Quiz.fromDoc(v['quiz'] as Map<String, dynamic>);
+    final products = [
+      for (final p in (v['products'] as List).cast<Map>())
+        Product(
+          id: p['id'] as String,
+          categoryId: 'k',
+          name: p['name'] as String,
+          price: 0,
+          soldOut: p['soldOut'] == true,
+          caffeineMg: p['caffeineMg'] as int?,
+          flavor: Flavor.fromMap(p['flavor']),
+        ),
+    ];
+    test('hazır sorular sunucuyla aynı', () {
+      expect(quiz.questions.map((q) => '${q.id}:${q.answers.map((a) => '${a.id}${a.weights}${a.notes}${a.milk}${a.temperature}').join(',')}'),
+          defaultQuiz.questions.map((q) => '${q.id}:${q.answers.map((a) => '${a.id}${a.weights}${a.notes}${a.milk}${a.temperature}').join(',')}'));
+    });
+    for (final c in (v['cases'] as List).cast<Map>()) {
+      test(c['name'] as String, () {
+        final without = (c['without'] as List).cast<String>();
+        final ctx = c['ctx'] as Map;
+        final answers = (c['answers'] as Map).map((k, v) => MapEntry('$k', '$v'));
+        final prof = profileFrom(quiz, answers);
+        expect(prof.target, (c['profile'] as Map)['target']);
+        final out = recommend(products.where((p) => !without.contains(p.id)).toList(), quiz, answers,
+            hour: ctx['hour'] as int? ?? 12,
+            hotDay: ctx['hotDay'] == true,
+            triedIds: ctx['triedIds'] == null ? null : (ctx['triedIds'] as List).cast<String>().toSet());
+        expect([for (final r in out) {'productId': r.productId, 'score': r.score, 'reasons': r.reasons}], c['expect']);
+      });
+    }
   });
 }

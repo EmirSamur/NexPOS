@@ -1,18 +1,25 @@
 {
-  "_aciklama": "Kafeye özel ayarlar. Yeni bir kafe için yalnızca bu dosya ve assets/logo.png değişir (bkz. KURULUM.md).",
+  "_aciklama": "Kafeye özel ayarlar. Yeni bir kafe için bu dosyayı doldurup python3 tool/apply_brand.py çalıştırın (bkz. KURULUM.md).",
   "appName": "Velvet Kafe",
   "slogan": "Kahven seni bekliyor",
   "primaryColor": "#6B4226",
   "accentColor": "#E8A15A",
   "logoAsset": null,
+  "androidPackage": "com.nexpos.velvetkafe",
+  "webHost": "demo-nexpos.web.app",
+  "webPushKey": "",
   "firebase": {
     "apiKey": "demo-key",
     "appId": "1:000000000000:web:0000000000000000",
     "messagingSenderId": "000000000000",
     "projectId": "demo-nexpos",
     "authDomain": "demo-nexpos.firebaseapp.com",
-    "storageBucket": "demo-nexpos.appspot.com"
+    "storageBucket": "demo-nexpos.appspot.com",
+    "androidAppId": "1:000000000000:android:0000000000000000"
   },
   "functionsRegion": "europe-west1",
-  "emulator": { "enabled": true, "host": "127.0.0.1" }
+  "emulator": {
+    "enabled": true,
+    "host": "127.0.0.1"
+  }
 }

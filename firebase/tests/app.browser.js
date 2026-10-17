@@ -43,6 +43,10 @@ function serve() {
   }).listen(PORT);
 }
 
+// Hazır tat profili şablonları (Menü → ürün → Tat Profili)
+const TEMPLATES = require('../functions/src/flavor_templates.json').templates;
+const flavor = (name) => TEMPLATES.find((t) => t.name === name).flavor;
+
 async function seed() {
   createOwner(OWNER);
   const owner = await signedInAs(OWNER.email, OWNER.password);
@@ -65,10 +69,12 @@ async function seed() {
   const products = {};
   for (const [name, categoryId, price, extra] of [
     ['Latte', kahve, 9500, { description: 'Çift shot espresso, ipeksi süt köpüğü', optionGroupIds: [sut], allergens: ['milk'],
-      calories: 190, caffeineMg: 128 }],
-    ['Flat White', kahve, 10000, { description: 'Daha yoğun, az köpüklü', optionGroupIds: [sut], allergens: ['milk'] }],
-    ['Americano', kahve, 8500, { description: 'Espresso ve sıcak su', caffeineMg: 128 }],
-    ['Cold Brew', kahve, 11000, { description: '18 saat soğuk demleme' }],
+      calories: 190, caffeineMg: 128, flavor: flavor('Latte') }],
+    ['Flat White', kahve, 10000, { description: 'Daha yoğun, az köpüklü', optionGroupIds: [sut], allergens: ['milk'],
+      flavor: flavor('Flat White') }],
+    ['Americano', kahve, 8500, { description: 'Espresso ve sıcak su', caffeineMg: 128, flavor: flavor('Americano') }],
+    ['Cold Brew', kahve, 11000, { description: '18 saat soğuk demleme', flavor: flavor('Cold Brew') }],
+    ['Mocha', kahve, 11500, { description: 'Espresso, bitter çikolata ve süt', allergens: ['milk'], flavor: flavor('Mocha') }],
     ['Cheesecake', tatli, 14000, { description: 'Limonlu, bisküvi tabanlı', allergens: ['milk', 'gluten', 'egg'] }],
     ['Brownie', tatli, 12000, { description: 'Bitter çikolatalı, cevizli', allergens: ['gluten', 'nuts', 'egg'] }],
   ]) {
@@ -205,6 +211,26 @@ async function main() {
     await seen('Geçmiş siparişler');
     await settle(1500);
     await shot('07_profil');
+
+    // ---- Bana öner (11c): 4 soru → öneri; üyenin önerisi kaydedilir
+    await page.getByRole('tab', { name: 'Ana sayfa' }).or(button('Ana sayfa')).first().click();
+    await settle(800);
+    await button('Bana öner').click();
+    await seen('Bugün nasıl hissediyorsun?');
+    await settle(600);
+    await shot('07a_oneri_soru');
+    for (const answer of ['Keyifliyim', 'Evet', 'Sıcak', 'Çikolata']) {
+      await button(answer).click();
+      await settle(700);
+    }
+    await seen('Sana önerimiz');
+    await seen('Mocha');
+    await settle(1000);
+    await shot('07b_oneri');
+    const recs = await adminDb.collection('customers/WEB1/recommendations').get();
+    assert.equal(recs.size, 1);
+    await button('Geri').click();
+    await settle(800);
 
     // ---- Masadaki QR (11b): telefonun kamerası masa adresini tarayıcıda açar → menü (girişsiz), garson çağır,
     // sepet; sipariş gönderirken telefonla giriş istenir

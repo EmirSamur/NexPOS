@@ -148,3 +148,16 @@ def test_internet_yoksa_onay_hata_verir(db, env):
     with pytest.raises(OrderError, match='internet'):
         app_orders.accept(user, app_orders.pending()[0])
     assert pos.open_orders() == []
+
+
+def test_uygulama_raporu_ozeti():
+    import app_orders
+    r = app_orders.report_summary({
+        'totals': {'app': {'requests': 8, 'table': 5, 'pickup': 3, 'accepted': 6, 'rejected': 1, 'expired': 1,
+                           'acceptSeconds': 270, 'acceptedAmount': 64000},
+                   'recs': {'shown': 10, 'ordered': 3}},
+        'products': {'mocha': {'shown': 6, 'ordered': 2}, 'gone': {'shown': 1, 'ordered': 0},
+                     'latte': {'shown': 3, 'ordered': 1}}}, {'mocha': 'Mocha', 'latte': 'Latte'})
+    assert (r['acceptRate'], r['avgAcceptSeconds'], r['recRate'], r['noShow']) == (75, 45, 30, 0)
+    assert r['products'] == [('Mocha', 6, 2, 33), ('Latte', 3, 1, 33), ('Silinmiş ürün', 1, 0, 0)]
+    assert app_orders.report_summary({})['requests'] == 0

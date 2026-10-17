@@ -4,6 +4,7 @@ import '../logic.dart';
 import '../models.dart';
 import '../state.dart';
 import 'common.dart';
+import 'quiz.dart';
 
 const _favorites = '__fav__';
 
@@ -57,6 +58,13 @@ class _MenuTabState extends State<MenuTab> {
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: ActionChip(
+                    label: const Text('✨ Bana öner'),
+                    onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const QuizScreen())),
+                  ),
+                ),
                 if (s.favorites.isNotEmpty)
                   _chip(context, '♥ Favoriler', selected == _favorites, () => setState(() => _category = _favorites)),
                 for (final c in cats) _chip(context, c.name, selected == c.id, () => setState(() => _category = c.id)),
