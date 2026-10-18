@@ -81,6 +81,7 @@ sipariş durumu ekranda bildirim olarak görünür. Gerçek bildirim canlıya al
 |---|---|
 | `firebase` / `node` / `java` tanınmıyor | Programı kurduktan sonra Komut İstemi'ni kapatıp aç |
 | 1. pencerede "port taken" | Önceki emülatör açık kalmış: o pencereyi kapat ya da bilgisayarı yeniden başlat |
+| "HTTP 404" ya da 1. pencerede "Failed to load function definition … Timeout" | Fonksiyonlar zamanında yüklenemedi: 1. pencereyi Ctrl+C ile kapatıp `1-bulut.bat`'ı tekrar açın (yeni sürümde bekleme süresi 120 sn). Açılışta "Loaded functions definitions" satırını görün |
 | NexPOS "bağlanamadı" | 1. pencere açık mı, "All emulators ready!" yazdı mı? |
 | Uygulama boş beyaz sayfa | B adımı yapılmamış: `firebase\hosting\index.html` var mı? |
 | Baştan başlamak | Emülatörü kapat, `firebase\demo-veri` klasörünü ve `nexpos_demo.db` dosyasını sil |
