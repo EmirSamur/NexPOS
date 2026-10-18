@@ -154,7 +154,10 @@ class FirebaseClient:
         try:
             body = r.json()
         except ValueError:
-            raise ApiError('internal', f'Sunucu yanıtı okunamadı (HTTP {r.status_code}).')
+            # Ör. emülatörde fonksiyon yüklenmemişse 404 ve düz metin döner; nedeni mesajda görünsün
+            detail = (r.text or '').strip().replace('\n', ' ')[:160]
+            raise ApiError('internal', f'Sunucu yanıtı okunamadı (HTTP {r.status_code}, {name})'
+                                       + (f': {detail}' if detail else '.'))
         if 'error' in body:
             err = body['error']
             code = CALLABLE_STATUS.get(err.get('status'), 'internal')
